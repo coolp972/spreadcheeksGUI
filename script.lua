@@ -14800,8 +14800,16 @@ if rayfieldLoaded and Rayfield then
 		window:CreateSection({ name = "OVERVIEW" })
 		local homeTab = withIcon(window, "CreateTab", { name = "Home" }, "house", "home", "layout-grid")
 
+		-- Quick controls are split into tabs by what they're for, like the admin commands. Rayfield
+		-- lists a tab's rows in the order they're made and each tab keeps its own order, so rows are
+		-- added to their tab further down as the code that needs them comes along. The names differ
+		-- from the admin command tabs (Movement, Camera...) so no two tabs share a name.
 		window:CreateSection({ name = "QUICK CONTROLS" })
-		local controlsTab = withIcon(window, "CreateTab", { name = "Controls" }, "sliders-horizontal")
+		local mobilityTab = withIcon(window, "CreateTab", { name = "Mobility" }, "move", "footprints")
+		local combatTab = withIcon(window, "CreateTab", { name = "Combat" }, "swords", "crosshair")
+		local viewTab = withIcon(window, "CreateTab", { name = "View" }, "aperture", "eye")
+		local protectionTab = withIcon(window, "CreateTab", { name = "Protection" }, "shield")
+		local interfaceTab = withIcon(window, "CreateTab", { name = "Interface" }, "layout-dashboard", "app-window")
 		-- Rayfield's gear button opens this built-in tab; keep appearance options there.
 		withIcon(window.rfSettings, "CreateSection", { name = "Appearance" }, "palette")
 		withIcon(window.rfSettings, "CreateDropdown", {
@@ -14819,81 +14827,6 @@ if rayfieldLoaded and Rayfield then
 				updateAuxiliaryUiTheme(window.theme)
 			end,
 		}, "palette")
-		withIcon(controlsTab, "CreateSection", { name = "Common toggles" }, "toggle-right")
-		controlsTab:CreateText({
-			text = "These switches run the matching start and stop commands. Right-click Fly, Vehicle Fly, Freecam, ESP, Chams or Aimbot to change their settings. One-time actions remain in their category tabs.",
-		})
-
-		withIcon(controlsTab, "CreateSection", { name = "Logo animation" }, "sparkles")
-		local logoBounceGui, logoBounceConnection
-		local logoBounceToggle
-		local function stopLogoBounce()
-			if logoBounceConnection then
-				logoBounceConnection:Disconnect()
-				logoBounceConnection = nil
-			end
-			if logoBounceGui then
-				logoBounceGui:Destroy()
-				logoBounceGui = nil
-			end
-		end
-		logoBounceToggle = withIcon(controlsTab, "CreateToggle", {
-			name = "DVD Logo Bounce",
-			description = "Bounce the SpreadCheeksGUI logo around the screen",
-			value = false,
-			callback = function(enabled)
-				if not enabled then
-					stopLogoBounce()
-					return
-				end
-				if not spreadLogoLoaded then
-					notify("Logo unavailable", "Place SpreadCheeksLogo.png in the executor workspace first.")
-					logoBounceToggle:Set(false, true)
-					return
-				end
-				stopLogoBounce()
-
-				local bounceGui = Instance.new("ScreenGui")
-				bounceGui.Name = "SpreadCheeksLogoBounce"
-				bounceGui.ResetOnSpawn = false
-				bounceGui.IgnoreGuiInset = true
-				bounceGui.DisplayOrder = 10000
-				bounceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-				bounceGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
-				logoBounceGui = bounceGui
-
-				local logoImage = Instance.new("ImageLabel")
-				logoImage.Name = "BouncingLogo"
-				logoImage.BackgroundTransparency = 1
-				logoImage.BorderSizePixel = 0
-				logoImage.Image = spreadLogo
-				logoImage.ScaleType = Enum.ScaleType.Fit
-				logoImage.Size = UDim2.fromOffset(112, 112)
-				logoImage.Position = UDim2.fromOffset(24, 72)
-				logoImage.Active = false
-				logoImage.Parent = bounceGui
-
-				local x, y = 24, 72
-				local speedX, speedY = 210, 165
-				logoBounceConnection = RunService.RenderStepped:Connect(function(deltaTime)
-					if not bounceGui.Parent then
-						stopLogoBounce()
-						return
-					end
-					local viewport = bounceGui.AbsoluteSize
-					local maxX = math.max(0, viewport.X - logoImage.AbsoluteSize.X)
-					local maxY = math.max(0, viewport.Y - logoImage.AbsoluteSize.Y)
-					x += speedX * deltaTime
-					y += speedY * deltaTime
-					if x <= 0 then x, speedX = 0, math.abs(speedX) end
-					if x >= maxX then x, speedX = maxX, -math.abs(speedX) end
-					if y <= 0 then y, speedY = 0, math.abs(speedY) end
-					if y >= maxY then y, speedY = maxY, -math.abs(speedY) end
-					logoImage.Position = UDim2.fromOffset(x, y)
-				end)
-			end,
-		}, "disc")
-
 		-- Feature settings (fly speeds and so on) are kept between sessions in this file and
 		-- changed from the settings cards further down.
 		local featureSettingsFile = "SpreadCheeksGUI_Features.json"
@@ -14908,6 +14841,10 @@ if rayfieldLoaded and Rayfield then
 			aimbotFovColorMode = "Theme", aimbotFovColor = "B1A4FF",
 			-- How far Free aim moves the mouse, as a multiple of what Roblox's own camera needs.
 			aimbotFreeAimSpeed = 1,
+			-- Aim at a random body part instead of always aimbotPart.
+			aimbotRandomPart = false,
+			-- The Performance Stats window, and where it was dragged to (like keybindListX/Y).
+			performanceStats = false, performanceStatsX = -1, performanceStatsY = -1,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14944,7 +14881,7 @@ if rayfieldLoaded and Rayfield then
 		local quickToggles = {}
 		local quickToggleByName = {}
 
-		local function addQuickToggle(name, description, apply, ...)
+		local function addQuickToggle(tab, name, description, apply, ...)
 			-- icons is kept for the Home page, which shows what's switched on.
 			local entry = { name = name, state = false, key = nil, icons = { ... } }
 			-- The switch callback and keybinds both land here, and Rayfield may or
@@ -14958,7 +14895,7 @@ if rayfieldLoaded and Rayfield then
 					pcall(function() entry.object:Set(false, true) end)
 				end
 			end
-			entry.object = withIcon(controlsTab, "CreateToggle", {
+			entry.object = withIcon(tab, "CreateToggle", {
 				name = name,
 				description = description,
 				value = false,
@@ -14968,8 +14905,8 @@ if rayfieldLoaded and Rayfield then
 			quickToggleByName[name] = entry
 		end
 
-		local function addCommandToggle(name, enabledCommand, disabledCommand, description, ...)
-			addQuickToggle(name, description, function(enabled)
+		local function addCommandToggle(tab, name, enabledCommand, disabledCommand, description, ...)
+			addQuickToggle(tab, name, description, function(enabled)
 				execCmd(enabled and enabledCommand or disabledCommand, Players.LocalPlayer, true)
 			end, ...)
 		end
@@ -15039,20 +14976,56 @@ if rayfieldLoaded and Rayfield then
 				pcall(function() other.object:Set(false, true) end)
 			end
 		end
-		addQuickToggle("Fly", "Right-click for fly speed and controls", function(enabled)
+		-- Mobility: flying and getting around. Its speed and gravity sliders are added further down.
+		withIcon(mobilityTab, "CreateSection", { name = "Flight" }, "plane")
+		addQuickToggle(mobilityTab, "Fly", "Right-click for fly speed and controls", function(enabled)
 			if enabled then markOff("Vehicle Fly") end
 			execCmd(enabled and "fly" or "unfly", Players.LocalPlayer, true)
 		end, "plane")
-		addQuickToggle("Vehicle Fly", "Fly the vehicle you're sitting in. Right-click for its speed", function(enabled)
+		addQuickToggle(mobilityTab, "Vehicle Fly", "Fly the vehicle you're sitting in. Right-click for its speed", function(enabled)
 			if enabled then markOff("Fly") end
 			execCmd(enabled and "vfly" or "unvfly", Players.LocalPlayer, true)
 		end, "car")
-		addCommandToggle("Fling", "fling", "unfling", nil, "tornado")
+		withIcon(mobilityTab, "CreateSection", { name = "Getting around" }, "footprints")
+		addCommandToggle(mobilityTab, "Noclip", "noclip", "clip", nil, "ghost")
+		addCommandToggle(mobilityTab, "Infinite Jump", "infjump", "uninfjump", nil, "chevrons-up")
+
+		-- Combat: seeing and aiming at players, then flinging them.
+		withIcon(combatTab, "CreateSection", { name = "ESP & aim" }, "scan-eye")
+		addCommandToggle(combatTab, "ESP", "esp", "noesp", "Right-click or use the arrow for ESP settings", "scan-eye")
+		-- ESP's row has the settings arrow where the key box would go, so it gets no keybind.
+		quickToggleByName["ESP"].noKeybind = true
+		-- Aimbot sits right under ESP. Rayfield lists rows in the order they're made, so its switch
+		-- is made here; the aim key box, its settings and the aiming itself come from buildAimbot
+		-- further down, once everything they use exists.
+		local aimbotState = { enabled = false, held = false, target = nil }
+		local function aimbotKeyText()
+			local name = featureSettings.aimbotKey
+			return name == "RightClick" and "RMB" or name == "LeftClick" and "LMB" or name
+		end
+		local aimbotToggle = withIcon(combatTab, "CreateToggle", {
+			name = "Aimbot",
+			description = "Hold the key to aim. Right-click for settings",
+			value = false,
+			callback = function(enabled)
+				enabled = enabled == true
+				if enabled == aimbotState.enabled then return end
+				aimbotState.enabled = enabled
+				aimbotState.held = false
+				aimbotState.target = nil
+				if enabled then
+					notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
+				end
+			end,
+		}, "crosshair")
+		addCommandToggle(combatTab, "Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
+		withIcon(combatTab, "CreateSection", { name = "Fling" }, "tornado")
+		addCommandToggle(combatTab, "Fling", "fling", "unfling", nil, "tornado")
 		-- Walk Fling and No Fall Damage both rewrite the character's velocity every frame and
 		-- undo each other, so No Fall Damage pauses while Walk Fling is on and comes back
 		-- afterwards if it was on before.
 		local restoreNoFall = false
-		addQuickToggle("Walk Fling", "Pauses No Fall Damage while it runs", function(enabled)
+		addQuickToggle(combatTab, "Walk Fling", "Pauses No Fall Damage while it runs", function(enabled)
 			local noFall = quickToggleByName["No Fall Damage"]
 			if enabled then
 				if noFall and noFall.state then
@@ -15078,52 +15051,36 @@ if rayfieldLoaded and Rayfield then
 				end
 			end
 		end, "footprints")
-		addCommandToggle("Noclip", "noclip", "clip", nil, "ghost")
-		addCommandToggle("Infinite Jump", "infjump", "uninfjump", nil, "chevrons-up")
-		addCommandToggle("Freecam", "freecam", "unfreecam", "Right-click for freecam speed", "video")
-		addCommandToggle("First Person", "firstp", "thirdp", nil, "glasses", "eye")
-		addCommandToggle("ESP", "esp", "noesp", "Right-click or use the arrow for ESP settings", "scan-eye")
-		-- ESP's row has the settings arrow where the key box would go, so it gets no keybind.
-		quickToggleByName["ESP"].noKeybind = true
-		-- Aimbot sits right under ESP. Rayfield lists rows in the order they're made, so its switch
-		-- is made here; the aim key box, its settings and the aiming itself come from buildAimbot
-		-- further down, once everything they use exists.
-		local aimbotState = { enabled = false, held = false, target = nil }
-		local function aimbotKeyText()
-			local name = featureSettings.aimbotKey
-			return name == "RightClick" and "RMB" or name == "LeftClick" and "LMB" or name
-		end
-		local aimbotToggle = withIcon(controlsTab, "CreateToggle", {
-			name = "Aimbot",
-			description = "Hold the key to aim. Right-click for settings",
-			value = false,
-			callback = function(enabled)
-				enabled = enabled == true
-				if enabled == aimbotState.enabled then return end
-				aimbotState.enabled = enabled
-				aimbotState.held = false
-				aimbotState.target = nil
-				if enabled then
-					notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
-				end
-			end,
-		}, "crosshair")
-		addCommandToggle("Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
-		addCommandToggle("Invisible", "invisible", "visible", nil, "eye-off")
 
+		-- View: the camera. The Field of View slider is added further down.
+		withIcon(viewTab, "CreateSection", { name = "Camera" }, "camera")
+		addCommandToggle(viewTab, "Freecam", "freecam", "unfreecam", "Right-click for freecam speed", "video")
+		addCommandToggle(viewTab, "First Person", "firstp", "thirdp", nil, "glasses", "eye")
+
+		-- Protection: staying safe and unseen.
+		withIcon(protectionTab, "CreateSection", { name = "Safety" }, "shield-check", "shield")
 		local function setAntiFling(enabled)
 			local command = findCmd(enabled and "antifling" or "unantifling")
 			if command and command.FUNC then
 				command.FUNC({}, Players.LocalPlayer)
 			end
 		end
-		addQuickToggle("Anti-Fling", "Toggle Infinite Yield's Anti-Fling module", setAntiFling, "shield")
-		addQuickToggle("No Fall Damage", "Prevents fall damage in Natural Disaster Survival", setNoFall, "feather")
+		addQuickToggle(protectionTab, "Anti-Fling", "Toggle Infinite Yield's Anti-Fling module", setAntiFling, "shield")
+		addQuickToggle(protectionTab, "No Fall Damage", "Prevents fall damage in Natural Disaster Survival", setNoFall, "feather")
+		withIcon(protectionTab, "CreateSection", { name = "Stealth" }, "eye-off")
+		addCommandToggle(protectionTab, "Invisible", "invisible", "visible", nil, "eye-off")
 
-		withIcon(controlsTab, "CreateSection", { name = "Keybinds" }, "keyboard")
-		controlsTab:CreateText({
-			text = "Click the key box next to a switch, then press a key to bind it. Press Esc instead to clear it, or click the box again to cancel. Keybinds are ignored while you're typing in chat or a text box.",
-		})
+		-- Interface: windows on screen, keybinds and extras. Performance Stats is made here, with the
+		-- other switches, so it gets a key box; its window is built further down (buildPerformanceStats).
+		withIcon(interfaceTab, "CreateSection", { name = "Overlays" }, "layers", "app-window")
+		local performanceStats = nil
+		addQuickToggle(interfaceTab, "Performance Stats", "FPS, ping and more in a window of their own. Drag it to move it", function(enabled)
+			if featureSettings.performanceStats ~= enabled then
+				featureSettings.performanceStats = enabled
+				saveFeatureSettings()
+			end
+			if performanceStats then performanceStats.setShown(enabled) end
+		end, "activity", "gauge")
 
 		local keybindFile = "SpreadCheeksGUI_Keybinds.json"
 		-- Semicolon opens the quick command bar; Escape and Backspace are used while capturing.
@@ -15870,7 +15827,7 @@ if rayfieldLoaded and Rayfield then
 			warn("[SpreadCheeksGUI] The keybind list couldn't be added: " .. tostring(keybindList))
 			keybindList = nil
 		end
-		withIcon(controlsTab, "CreateToggle", {
+		withIcon(interfaceTab, "CreateToggle", {
 			name = "Keybind List",
 			description = "Shows your keybinds on screen. Drag it to move it",
 			value = featureSettings.keybindList,
@@ -15885,10 +15842,525 @@ if rayfieldLoaded and Rayfield then
 		}, "layout-list", "list")
 		if keybindList then keybindList.setShown(featureSettings.keybindList) end
 
-		-- Clears the keys set on the switches above. The first click asks for a second one, so a
-		-- stray click can't wipe them all.
+		-- Performance Stats: FPS, ping, memory and more in a window of their own that can be dragged
+		-- anywhere. The Performance Stats switch in Interface shows it, and it's remembered.
+		local function buildPerformanceStats()
+			local localPlayer = Players.LocalPlayer
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild("SpreadCheeksPerformance")
+			if previousGui then previousGui:Destroy() end
+			-- Kept in the shared environment so running the script again drops the old listeners.
+			if sharedEnv.SpreadCheeksPerformanceConnections then
+				for _, connection in ipairs(sharedEnv.SpreadCheeksPerformanceConnections) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			local connections = {}
+			sharedEnv.SpreadCheeksPerformanceConnections = connections
+
+			local panelWidth, headerHeight, heroHeight, rowHeight, padding = 236, 36, 62, 22, 12
+			local goodColor = Color3.fromRGB(74, 222, 128)
+			local fairColor = Color3.fromRGB(255, 212, 59)
+			local badColor = Color3.fromRGB(255, 90, 90)
+			local function fpsColor(fps)
+				if fps >= 50 then return goodColor end
+				if fps >= 30 then return fairColor end
+				return badColor
+			end
+			local function pingColor(ping)
+				if ping < 100 then return goodColor end
+				if ping < 200 then return fairColor end
+				return badColor
+			end
+
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksPerformance"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			-- Level with the keybind list: under the ; bar (1000) and the notifications (10001).
+			gui.DisplayOrder = 999
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.Enabled = false
+			gui.Parent = playerGui
+
+			-- The window is a button so clicking it doesn't reach the game, and it's what gets dragged.
+			local panel = Instance.new("TextButton")
+			panel.Name = "PerformanceStats"
+			panel.AutoButtonColor = false
+			panel.Text = ""
+			panel.BackgroundTransparency = 0.04
+			panel.BorderSizePixel = 0
+			panel.ClipsDescendants = true
+			panel.Size = UDim2.fromOffset(panelWidth, headerHeight + heroHeight + 8)
+			bindAuxiliaryUiColor(panel, "BackgroundColor3", "Background")
+			panel.Parent = gui
+			local panelCorner = Instance.new("UICorner")
+			panelCorner.CornerRadius = UDim.new(0, 12)
+			panelCorner.Parent = panel
+			local panelStroke = Instance.new("UIStroke")
+			panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			panelStroke.Transparency = 0.3
+			bindAuxiliaryUiColor(panelStroke, "Color", "Stroke")
+			panelStroke.Parent = panel
+
+			local function makeLabel(parent, font, size, role, alignX)
+				local label = Instance.new("TextLabel")
+				label.BackgroundTransparency = 1
+				label.Font = font
+				label.TextSize = size
+				label.Text = ""
+				label.TextXAlignment = alignX or Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(label, "TextColor3", role)
+				label.Parent = parent
+				return label
+			end
+			local function makeIcon(parent, size, role, ...)
+				local image = Instance.new("ImageLabel")
+				image.BackgroundTransparency = 1
+				image.Size = UDim2.fromOffset(size, size)
+				local icon = menuIcons.get(...)
+				if icon then menuIcons.apply(image, icon) end
+				image.Visible = icon ~= nil
+				bindAuxiliaryUiColor(image, "ImageColor3", role)
+				image.Parent = parent
+				return image
+			end
+
+			-- Header: an icon, the title, and a one-word verdict on how the game is running.
+			local headerIcon = makeIcon(panel, 15, "AccentText", "activity", "gauge")
+			headerIcon.AnchorPoint = Vector2.new(0, 0.5)
+			headerIcon.Position = UDim2.new(0, 12, 0, headerHeight / 2)
+			local title = makeLabel(panel, Enum.Font.GothamBold, 13, "Text")
+			title.AnchorPoint = Vector2.new(0, 0.5)
+			title.Position = UDim2.new(0, 35, 0, headerHeight / 2)
+			title.Size = UDim2.new(1, -110, 0, 16)
+			title.Text = "Performance"
+			local verdict = Instance.new("TextLabel")
+			verdict.AnchorPoint = Vector2.new(1, 0.5)
+			verdict.Position = UDim2.new(1, -10, 0, headerHeight / 2)
+			verdict.Size = UDim2.fromOffset(64, 18)
+			verdict.BorderSizePixel = 0
+			verdict.Font = Enum.Font.GothamBold
+			verdict.Text = "..."
+			verdict.TextSize = 10
+			verdict.TextColor3 = goodColor
+			bindAuxiliaryUiColor(verdict, "BackgroundColor3", "Inset")
+			verdict.Parent = panel
+			local verdictCorner = Instance.new("UICorner")
+			verdictCorner.CornerRadius = UDim.new(1, 0)
+			verdictCorner.Parent = verdict
+			local verdictStroke = Instance.new("UIStroke")
+			verdictStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			verdictStroke.Transparency = 0.5
+			verdictStroke.Color = goodColor
+			verdictStroke.Parent = verdict
+
+			-- The frame rate, large, with its average and low point, beside a graph of the last
+			-- 13 seconds (a bar every half second, newest on the right).
+			local fpsValue = makeLabel(panel, Enum.Font.GothamBold, 28, "Text")
+			fpsValue.Position = UDim2.fromOffset(padding, headerHeight)
+			fpsValue.Size = UDim2.fromOffset(92, 30)
+			fpsValue.Text = "--"
+			local fpsCaption = makeLabel(panel, Enum.Font.GothamBold, 10, "Muted")
+			fpsCaption.Position = UDim2.fromOffset(padding, headerHeight + 30)
+			fpsCaption.Size = UDim2.fromOffset(92, 13)
+			fpsCaption.Text = "FPS"
+			local fpsDetail = makeLabel(panel, Enum.Font.Gotham, 10, "SubText")
+			fpsDetail.Position = UDim2.fromOffset(padding, headerHeight + 44)
+			fpsDetail.Size = UDim2.fromOffset(100, 13)
+			local barCount, barWidth, barGap, graphHeight = 26, 3, 1, 46
+			local graph = Instance.new("Frame")
+			graph.AnchorPoint = Vector2.new(1, 0)
+			graph.Position = UDim2.new(1, -padding, 0, headerHeight + 4)
+			graph.Size = UDim2.fromOffset(barCount * (barWidth + barGap) - barGap + 10, graphHeight)
+			graph.BorderSizePixel = 0
+			graph.ClipsDescendants = true
+			bindAuxiliaryUiColor(graph, "BackgroundColor3", "Inset")
+			graph.Parent = panel
+			local graphCorner = Instance.new("UICorner")
+			graphCorner.CornerRadius = UDim.new(0, 8)
+			graphCorner.Parent = graph
+			local graphStroke = Instance.new("UIStroke")
+			graphStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			graphStroke.Transparency = 0.5
+			bindAuxiliaryUiColor(graphStroke, "Color", "Stroke")
+			graphStroke.Parent = graph
+			local bars = {}
+			for index = 1, barCount do
+				local bar = Instance.new("Frame")
+				bar.AnchorPoint = Vector2.new(0, 1)
+				bar.Position = UDim2.new(0, 5 + (index - 1) * (barWidth + barGap), 1, -5)
+				bar.Size = UDim2.fromOffset(barWidth, 0)
+				bar.BorderSizePixel = 0
+				bar.BackgroundColor3 = goodColor
+				bar.Parent = graph
+				local barCorner = Instance.new("UICorner")
+				barCorner.CornerRadius = UDim.new(0, 1)
+				barCorner.Parent = bar
+				bars[index] = bar
+			end
+
+			-- Everything else, a line each. A line stays hidden while its number can't be read.
+			local rowDefinitions = {
+				{ "frame", "Frame time", { "timer", "clock" } },
+				{ "ping", "Ping", { "wifi" } },
+				{ "memory", "Memory", { "memory-stick", "cpu" } },
+				{ "physics", "Physics", { "atom", "orbit" } },
+				{ "network", "Network", { "arrow-down-up", "network" } },
+				{ "instances", "Instances", { "boxes", "box" } },
+				{ "players", "Players", { "users" } },
+				{ "uptime", "Server up", { "server", "clock" } },
+			}
+			local rowList = Instance.new("Frame")
+			rowList.Position = UDim2.fromOffset(padding, headerHeight + heroHeight)
+			rowList.Size = UDim2.new(1, -padding * 2, 0, 0)
+			rowList.AutomaticSize = Enum.AutomaticSize.Y
+			rowList.BackgroundTransparency = 1
+			rowList.Parent = panel
+			local rowLayout = Instance.new("UIListLayout")
+			rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			rowLayout.Parent = rowList
+			local rows = {}
+			for index, definition in ipairs(rowDefinitions) do
+				local row = Instance.new("Frame")
+				row.LayoutOrder = index
+				row.Size = UDim2.new(1, 0, 0, rowHeight)
+				row.BackgroundTransparency = 1
+				row.Visible = false
+				row.Parent = rowList
+				local icon = makeIcon(row, 12, "SubText", table.unpack(definition[3]))
+				icon.AnchorPoint = Vector2.new(0, 0.5)
+				icon.Position = UDim2.fromScale(0, 0.5)
+				local label = makeLabel(row, Enum.Font.Gotham, 12, "SubText")
+				label.Position = UDim2.fromOffset(19, 0)
+				label.Size = UDim2.new(0, 76, 1, 0)
+				label.Text = definition[2]
+				local value = makeLabel(row, Enum.Font.GothamMedium, 12, "Text", Enum.TextXAlignment.Right)
+				value.Position = UDim2.fromOffset(96, 0)
+				value.Size = UDim2.new(1, -96, 1, 0)
+				rows[definition[1]] = { frame = row, value = value }
+			end
+			local function setRow(key, text, color)
+				local row = rows[key]
+				row.frame.Visible = type(text) == "string"
+				if row.frame.Visible then
+					row.value.Text = text
+					row.value.TextColor3 = color or auxiliaryUiTheme.Text
+				end
+			end
+
+			local function readNumber(read)
+				local readOk, value = pcall(read)
+				return (readOk and type(value) == "number") and value or nil
+			end
+			-- Round trip to the server in milliseconds, from the player, or else from Stats.
+			local function readPing()
+				local ping = readNumber(function() return localPlayer:GetNetworkPing() * 1000 end)
+				if ping and ping > 0 then return ping end
+				return readNumber(function() return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+			end
+			local function formatDuration(seconds)
+				seconds = math.max(0, math.floor(seconds))
+				if seconds < 60 then return seconds .. "s" end
+				local minutes = math.floor(seconds / 60)
+				if minutes < 60 then return minutes .. "m" end
+				return math.floor(minutes / 60) .. "h " .. minutes % 60 .. "m"
+			end
+			local function formatCount(count)
+				if count >= 1e6 then return string.format("%.1fM", count / 1e6) end
+				if count >= 1e3 then return string.format("%.1fk", count / 1e3) end
+				return tostring(math.floor(count))
+			end
+
+			-- Frames are counted all the time, so the graph already has a history when the window opens.
+			local frames, slowestFrame, sampleStart = 0, 0, os.clock()
+			local history = {}
+			local latest = nil
+			table.insert(connections, RunService.RenderStepped:Connect(function(deltaTime)
+				frames += 1
+				if deltaTime > slowestFrame then slowestFrame = deltaTime end
+			end))
+			local function takeSample()
+				local now = os.clock()
+				local elapsed = math.max(now - sampleStart, 0.001)
+				latest = {
+					fps = frames / elapsed,
+					frameMs = frames > 0 and elapsed / frames * 1000 or 0,
+					slowestMs = slowestFrame * 1000,
+				}
+				frames, slowestFrame, sampleStart = 0, 0, now
+				table.insert(history, latest.fps)
+				if #history > barCount then table.remove(history, 1) end
+			end
+
+			local shown, ready, wantShown = false, false, false
+			local dragInput, dragFrom, panelFrom = nil, nil, nil
+			local hovering = false
+			local panelSize = Vector2.new(panelWidth, headerHeight + heroHeight + 8)
+			local function screenSize()
+				local camera = workspace.CurrentCamera
+				return camera and camera.ViewportSize or gui.AbsoluteSize
+			end
+			local function clampToScreen(x, y)
+				local screen = screenSize()
+				x = math.clamp(x, 0, math.max(0, screen.X - panelSize.X))
+				y = math.clamp(y, 0, math.max(0, screen.Y - panelSize.Y))
+				return UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+			end
+			-- Where it was dragged to is kept as a share of the screen, so it stays put at any size.
+			-- It starts on the right, clear of the keybind list on the left.
+			local function placePanel()
+				local screen = screenSize()
+				if featureSettings.performanceStatsX >= 0 and featureSettings.performanceStatsY >= 0 then
+					panel.Position = clampToScreen(featureSettings.performanceStatsX * screen.X, featureSettings.performanceStatsY * screen.Y)
+				else
+					panel.Position = clampToScreen(screen.X - panelSize.X - 16, screen.Y * 0.4)
+				end
+			end
+			-- Tall enough for the lines that are showing.
+			local function resize()
+				local visibleRows = 0
+				for _, row in pairs(rows) do
+					if row.frame.Visible then visibleRows += 1 end
+				end
+				local height = headerHeight + heroHeight + visibleRows * rowHeight + 8
+				if height ~= panelSize.Y then
+					panelSize = Vector2.new(panelWidth, height)
+					panel.Size = UDim2.fromOffset(panelWidth, height)
+					if not dragInput then placePanel() end
+				end
+			end
+
+			local function render()
+				if not latest then return end
+				local fps = latest.fps
+				fpsValue.Text = tostring(math.floor(fps + 0.5))
+				fpsValue.TextColor3 = fpsColor(fps)
+				local total, lowest, highest = 0, math.huge, 60
+				for _, sample in ipairs(history) do
+					total += sample
+					lowest = math.min(lowest, sample)
+					highest = math.max(highest, sample)
+				end
+				fpsDetail.Text = string.format("avg %d  ·  low %d", math.floor(total / #history + 0.5), math.floor(lowest + 0.5))
+				-- The tallest bar is the highest frame rate seen lately, or 60.
+				for index, bar in ipairs(bars) do
+					local sample = history[#history - barCount + index]
+					if sample then
+						bar.Size = UDim2.fromOffset(barWidth, math.max(2, math.floor(sample / highest * (graphHeight - 10) + 0.5)))
+						bar.BackgroundColor3 = fpsColor(sample)
+					else
+						bar.Size = UDim2.fromOffset(barWidth, 0)
+					end
+				end
+
+				local frameText = string.format("%.1f ms", latest.frameMs)
+				if latest.slowestMs >= 25 and latest.slowestMs > latest.frameMs * 2 then
+					-- A hitch in the last half second shows beside the average.
+					frameText ..= string.format("  (max %d)", math.floor(latest.slowestMs + 0.5))
+				end
+				setRow("frame", frameText, latest.slowestMs >= 50 and fairColor or nil)
+				local ping = readPing()
+				setRow("ping", ping and (math.floor(ping + 0.5) .. " ms"), ping and pingColor(ping))
+				local memory = readNumber(function() return StatsService:GetTotalMemoryUsageMb() end)
+				setRow("memory", memory and (memory >= 1024 and string.format("%.2f GB", memory / 1024) or (math.floor(memory + 0.5) .. " MB")))
+				local physics = readNumber(function() return workspace:GetRealPhysicsFPS() end)
+				setRow("physics", physics and (math.floor(physics + 0.5) .. " Hz"))
+				local received = readNumber(function() return StatsService.DataReceiveKbps end)
+				local sent = readNumber(function() return StatsService.DataSendKbps end)
+				setRow("network", received and sent and string.format("%.1f / %.1f KB/s", received, sent))
+				local instances = readNumber(function() return StatsService.InstanceCount end)
+				setRow("instances", instances and formatCount(instances))
+				setRow("players", #Players:GetPlayers() .. " / " .. Players.MaxPlayers)
+				setRow("uptime", formatDuration(workspace.DistributedGameTime))
+
+				-- The verdict goes by the frame rate and ping together.
+				local pingValue = ping or 0
+				if fps >= 50 and pingValue < 150 then
+					verdict.Text, verdict.TextColor3, verdictStroke.Color = "SMOOTH", goodColor, goodColor
+				elseif fps >= 30 and pingValue < 300 then
+					verdict.Text, verdict.TextColor3, verdictStroke.Color = "OKAY", fairColor, fairColor
+				else
+					verdict.Text, verdict.TextColor3, verdictStroke.Color = "LAGGY", badColor, badColor
+				end
+				resize()
+			end
+
+			-- Fading: each part goes fully see-through and back to the transparency it was made with,
+			-- recorded the first time it's seen (always at rest).
+			local resting = setmetatable({}, { __mode = "k" })
+			local fadeProperties = {
+				{ "GuiObject", "BackgroundTransparency" },
+				{ "TextLabel", "TextTransparency" },
+				{ "ImageLabel", "ImageTransparency" },
+				{ "UIStroke", "Transparency" },
+			}
+			local function fadeParts()
+				local parts = {}
+				local function visit(object)
+					local record = resting[object]
+					if not record then
+						record = {}
+						for _, entry in ipairs(fadeProperties) do
+							if object:IsA(entry[1]) then
+								record[entry[2]] = object[entry[2]]
+							end
+						end
+						resting[object] = record
+					end
+					for property, value in pairs(record) do
+						if value < 1 then
+							table.insert(parts, { object, property, value })
+						end
+					end
+				end
+				visit(panel)
+				for _, descendant in ipairs(panel:GetDescendants()) do
+					visit(descendant)
+				end
+				return parts
+			end
+			local fadeSerial = 0
+			local function applyShown()
+				local visible = wantShown and ready
+				if visible == shown then return end
+				fadeSerial += 1
+				local serial = fadeSerial
+				if visible then
+					-- Filled in first, while still hidden, so it appears with numbers and at its full size.
+					pcall(render)
+					shown = true
+					placePanel()
+					local parts = fadeParts()
+					for _, part in ipairs(parts) do
+						part[1][part[2]] = 1
+					end
+					gui.Enabled = true
+					local info = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+					for _, part in ipairs(parts) do
+						TweenService:Create(part[1], info, { [part[2]] = part[3] }):Play()
+					end
+				else
+					shown = false
+					dragInput = nil
+					local info = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+					for _, part in ipairs(fadeParts()) do
+						TweenService:Create(part[1], info, { [part[2]] = 1 }):Play()
+					end
+					-- Switched off once faded, so the hidden window can't be clicked.
+					task.delay(0.2, function()
+						if fadeSerial == serial then
+							gui.Enabled = false
+						end
+					end)
+				end
+			end
+
+			-- Dragging. Drags are measured from where they started, so screen insets cancel out.
+			local function showBorder()
+				panelStroke.Color = (hovering or dragInput) and auxiliaryUiTheme.Accent or auxiliaryUiTheme.Stroke
+			end
+			panel.MouseEnter:Connect(function()
+				hovering = true
+				showBorder()
+			end)
+			panel.MouseLeave:Connect(function()
+				hovering = false
+				showBorder()
+			end)
+			panel.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					dragInput = input
+					dragFrom = Vector2.new(input.Position.X, input.Position.Y)
+					panelFrom = Vector2.new(panel.Position.X.Offset, panel.Position.Y.Offset)
+					showBorder()
+				end
+			end)
+			table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+				if dragInput and (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then
+					panel.Position = clampToScreen(panelFrom.X + input.Position.X - dragFrom.X, panelFrom.Y + input.Position.Y - dragFrom.Y)
+				end
+			end))
+			table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+				if dragInput and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+					dragInput = nil
+					showBorder()
+					local screen = screenSize()
+					featureSettings.performanceStatsX = panel.Position.X.Offset / math.max(screen.X, 1)
+					featureSettings.performanceStatsY = panel.Position.Y.Offset / math.max(screen.Y, 1)
+					saveFeatureSettings()
+				end
+			end))
+
+			-- Colours that depend on the numbers are set again after a theme change.
+			table.insert(auxiliaryUiThemeListeners, function()
+				showBorder()
+				if shown then pcall(render) end
+			end)
+
+			-- A sample every half second; the window shows it while it's open.
+			local lastScreen = nil
+			task.spawn(function()
+				while gui.Parent do
+					task.wait(0.5)
+					if not gui.Parent then break end
+					takeSample()
+					if shown then
+						local renderOk, problem = pcall(render)
+						if not renderOk then
+							warn("[SpreadCheeksGUI] Performance Stats stopped updating: " .. tostring(problem))
+							break
+						end
+						local screen = screenSize()
+						if screen ~= lastScreen and not dragInput then
+							lastScreen = screen
+							placePanel()
+						end
+					end
+				end
+			end)
+
+			-- Appears as the menu finishes opening, along with everything in it.
+			task.spawn(function()
+				local waited = 0
+				while not windowOpenedAt and waited < 15 do
+					waited += task.wait(0.1)
+				end
+				task.wait(math.max(0, (windowOpenedAt or os.clock()) + 1.45 - os.clock()))
+				ready = true
+				applyShown()
+			end)
+
+			return {
+				setShown = function(on)
+					wantShown = on == true
+					applyShown()
+				end,
+			}
+		end
+
+		-- Kept separate so a problem in the window can't stop the rest of the menu loading.
+		local performanceStatsOk, builtPerformanceStats = pcall(buildPerformanceStats)
+		if performanceStatsOk then
+			performanceStats = builtPerformanceStats
+		else
+			warn("[SpreadCheeksGUI] The Performance Stats window couldn't be added: " .. tostring(builtPerformanceStats))
+		end
+		-- Opens again if it was open last time.
+		if featureSettings.performanceStats and quickToggleByName["Performance Stats"] then
+			setQuickToggle(quickToggleByName["Performance Stats"], true)
+		end
+
+		withIcon(interfaceTab, "CreateSection", { name = "Keybinds" }, "keyboard")
+		interfaceTab:CreateText({
+			text = "Click the key box next to any switch in Quick Controls, then press a key to bind it. Press Esc instead to clear it, or click the box again to cancel. Keybinds are ignored while you're typing in chat or a text box.",
+		})
+
+		-- Clears the keys set on the Quick Controls switches. The first click asks for a second
+		-- one, so a stray click can't wipe them all.
 		local clearConfirmUntil = 0
-		withIcon(controlsTab, "CreateButton", {
+		withIcon(interfaceTab, "CreateButton", {
 			name = "Clear All Keybinds",
 			callback = function()
 				local count = 0
@@ -15916,6 +16388,76 @@ if rayfieldLoaded and Rayfield then
 			end,
 		}, "trash-2", "eraser")
 
+		withIcon(interfaceTab, "CreateSection", { name = "Extras" }, "sparkles")
+		local logoBounceGui, logoBounceConnection
+		local logoBounceToggle
+		local function stopLogoBounce()
+			if logoBounceConnection then
+				logoBounceConnection:Disconnect()
+				logoBounceConnection = nil
+			end
+			if logoBounceGui then
+				logoBounceGui:Destroy()
+				logoBounceGui = nil
+			end
+		end
+		logoBounceToggle = withIcon(interfaceTab, "CreateToggle", {
+			name = "DVD Logo Bounce",
+			description = "Bounce the SpreadCheeksGUI logo around the screen",
+			value = false,
+			callback = function(enabled)
+				if not enabled then
+					stopLogoBounce()
+					return
+				end
+				if not spreadLogoLoaded then
+					notify("Logo unavailable", "Place SpreadCheeksLogo.png in the executor workspace first.")
+					logoBounceToggle:Set(false, true)
+					return
+				end
+				stopLogoBounce()
+
+				local bounceGui = Instance.new("ScreenGui")
+				bounceGui.Name = "SpreadCheeksLogoBounce"
+				bounceGui.ResetOnSpawn = false
+				bounceGui.IgnoreGuiInset = true
+				bounceGui.DisplayOrder = 10000
+				bounceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+				bounceGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+				logoBounceGui = bounceGui
+
+				local logoImage = Instance.new("ImageLabel")
+				logoImage.Name = "BouncingLogo"
+				logoImage.BackgroundTransparency = 1
+				logoImage.BorderSizePixel = 0
+				logoImage.Image = spreadLogo
+				logoImage.ScaleType = Enum.ScaleType.Fit
+				logoImage.Size = UDim2.fromOffset(112, 112)
+				logoImage.Position = UDim2.fromOffset(24, 72)
+				logoImage.Active = false
+				logoImage.Parent = bounceGui
+
+				local x, y = 24, 72
+				local speedX, speedY = 210, 165
+				logoBounceConnection = RunService.RenderStepped:Connect(function(deltaTime)
+					if not bounceGui.Parent then
+						stopLogoBounce()
+						return
+					end
+					local viewport = bounceGui.AbsoluteSize
+					local maxX = math.max(0, viewport.X - logoImage.AbsoluteSize.X)
+					local maxY = math.max(0, viewport.Y - logoImage.AbsoluteSize.Y)
+					x += speedX * deltaTime
+					y += speedY * deltaTime
+					if x <= 0 then x, speedX = 0, math.abs(speedX) end
+					if x >= maxX then x, speedX = maxX, -math.abs(speedX) end
+					if y <= 0 then y, speedY = 0, math.abs(speedY) end
+					if y >= maxY then y, speedY = maxY, -math.abs(speedY) end
+					logoImage.Position = UDim2.fromOffset(x, y)
+				end)
+			end,
+		}, "disc")
+
 		-- Settings cards open under a switch the way Rayfield's dropdowns do. Right-click a switch's
 		-- row to open or close its card (ESP also has an arrow, in place of its key box).
 		local function createSettingsCard(entry)
@@ -15926,9 +16468,15 @@ if rayfieldLoaded and Rayfield then
 			end
 			local settingsCard = { expanded = false, refreshers = {}, onExpandedChanged = {} }
 
+			-- As wide as its row, wherever the row is (Rayfield's search moves rows; see below).
+			local function cardWidth()
+				local width = row.Size.X
+				if width.Scale == 0 and width.Offset <= 0 then return UDim.new(1, -20) end
+				return width
+			end
 			local card = Instance.new("Frame")
 			card.Name = entry.name .. "Settings"
-			card.Size = UDim2.new(1, -20, 0, 0)
+			card.Size = UDim2.new(cardWidth(), UDim.new(0, 0))
 			card.BorderSizePixel = 0
 			card.ClipsDescendants = true
 			card.Visible = false
@@ -15964,6 +16512,18 @@ if rayfieldLoaded and Rayfield then
 			end
 			card.Parent = row.Parent
 			settingsCard.card = card
+			-- Rayfield's search moves the rows that match into its results page, and puts them back
+			-- when the search closes. The card goes wherever its row goes, so right-clicking a search
+			-- result opens its settings right under it. The search also hides rows that don't match,
+			-- and an open card hides with its row.
+			row:GetPropertyChangedSignal("Parent"):Connect(function()
+				if row.Parent then
+					card.Parent = row.Parent
+				end
+			end)
+			row:GetPropertyChangedSignal("Visible"):Connect(function()
+				card.Visible = row.Visible and settingsCard.expanded
+			end)
 
 			local content = Instance.new("Frame")
 			content.Name = "Content"
@@ -16294,7 +16854,7 @@ if rayfieldLoaded and Rayfield then
 			local function tweenCardHeight(info)
 				if heightTween then heightTween:Cancel() end
 				local height = settingsCard.expanded and content.AbsoluteSize.Y / uiScaleFactor() or 0
-				heightTween = TweenService:Create(card, info, { Size = UDim2.new(1, -20, 0, height) })
+				heightTween = TweenService:Create(card, info, { Size = UDim2.new(cardWidth(), UDim.new(0, height)) })
 				heightTween:Play()
 				return heightTween
 			end
@@ -16706,9 +17266,8 @@ if rayfieldLoaded and Rayfield then
 			warn("[SpreadCheeksGUI] Feature settings couldn't be added: " .. tostring(featureSettingsError))
 		end
 
-		withIcon(controlsTab, "CreateSection", { name = "Movement & camera values" }, "gauge")
-		local function addCommandSlider(name, minValue, maxValue, initialValue, command, increment, suffix, ...)
-			withIcon(controlsTab, "CreateSlider", {
+		local function addCommandSlider(tab, name, minValue, maxValue, initialValue, command, increment, suffix, ...)
+			withIcon(tab, "CreateSlider", {
 				name = name,
 				range = { minValue, maxValue },
 				value = initialValue,
@@ -16720,11 +17279,14 @@ if rayfieldLoaded and Rayfield then
 			}, ...)
 		end
 
-		-- Fly and freecam speed are in those switches' settings cards (right-click them).
-		addCommandSlider("Walk Speed", 0, 150, 16, "speed", 1, nil, "gauge")
-		addCommandSlider("Jump Power", 0, 300, 50, "jpower", 1, nil, "arrow-big-up")
-		addCommandSlider("Gravity", 0, 300, 196, "gravity", 1, nil, "orbit")
-		addCommandSlider("Field of View", 40, 120, 70, "fov", 1, "°", "focus")
+		-- Fly and freecam speed are in those switches' settings cards (right-click them). These land
+		-- at the bottom of their tabs: Mobility gets a section of its own, and Field of View joins
+		-- the Camera section in View.
+		withIcon(mobilityTab, "CreateSection", { name = "Character values" }, "gauge")
+		addCommandSlider(mobilityTab, "Walk Speed", 0, 150, 16, "speed", 1, nil, "gauge")
+		addCommandSlider(mobilityTab, "Jump Power", 0, 300, 50, "jpower", 1, nil, "arrow-big-up")
+		addCommandSlider(mobilityTab, "Gravity", 0, 300, 196, "gravity", 1, nil, "orbit")
+		addCommandSlider(viewTab, "Field of View", 40, 120, 70, "fov", 1, "°", "focus")
 
 		-- Aimbot: while the aim key is held, turns your view (or moves your cursor) onto the player
 		-- nearest the cursor inside the FOV circle, and stays on them until you let go. Its switch
@@ -16891,6 +17453,67 @@ if rayfieldLoaded and Rayfield then
 				return best
 			end
 
+			-- Random target: aim at a random body part instead of always the head or torso. A new part
+			-- is picked for each new target and again every second or so while the key is held, and
+			-- the Head/Torso choice comes up three times as often as any other part. Targets are still
+			-- found and kept by that choice, so the circle, team check and wall check work as before.
+			local bodyRegions = {
+				{ "Head", { "Head" } },
+				{ "Torso", { "UpperTorso", "Torso", "LowerTorso" } },
+				{ "Left arm", { "LeftUpperArm", "LeftLowerArm", "LeftHand", "Left Arm" } },
+				{ "Right arm", { "RightUpperArm", "RightLowerArm", "RightHand", "Right Arm" } },
+				{ "Left leg", { "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "Left Leg" } },
+				{ "Right leg", { "RightUpperLeg", "RightLowerLeg", "RightFoot", "Right Leg" } },
+			}
+			local randomGenerator = Random.new()
+			local randomPick = { target = nil, part = nil, nextPickAt = 0 }
+			-- A random body part of the character; with visibleOnly, only parts the camera can see.
+			local function pickRandomPart(character, visibleOnly)
+				local choices, totalWeight = {}, 0
+				for _, region in ipairs(bodyRegions) do
+					local parts = {}
+					for _, partName in ipairs(region[2]) do
+						local part = character:FindFirstChild(partName)
+						if part and part:IsA("BasePart") and (not visibleOnly or canSee(part, character)) then
+							table.insert(parts, part)
+						end
+					end
+					if #parts > 0 then
+						local weight = region[1] == featureSettings.aimbotPart and 3 or 1
+						table.insert(choices, { parts = parts, weight = weight })
+						totalWeight += weight
+					end
+				end
+				if totalWeight == 0 then return nil end
+				local roll = randomGenerator:NextNumber() * totalWeight
+				local chosen = choices[#choices]
+				for _, choice in ipairs(choices) do
+					roll -= choice.weight
+					if roll <= 0 then
+						chosen = choice
+						break
+					end
+				end
+				return chosen.parts[randomGenerator:NextInteger(1, #chosen.parts)]
+			end
+			-- The part to aim at on the locked target while Random target is on, or the fallback.
+			local function randomPartFor(target, fallback)
+				local character = target.Character
+				if not character then return fallback end
+				local now = os.clock()
+				local part = randomPick.part
+				if randomPick.target ~= target or now >= randomPick.nextPickAt or not part or not part:IsDescendantOf(character) then
+					part = pickRandomPart(character, featureSettings.aimbotWallCheck)
+					randomPick.target = target
+					randomPick.nextPickAt = now + randomGenerator:NextNumber(0.6, 1.6)
+				elseif featureSettings.aimbotWallCheck and not canSee(part, character) then
+					-- The part went behind cover, so swap to one still in view.
+					part = pickRandomPart(character, true)
+				end
+				randomPick.part = part
+				return part or fallback
+			end
+
 			local moveMouse = type(mousemoverel) == "function" and mousemoverel or nil
 			-- Mouse moves are whole pixels, so the part of a move that's left over is carried into the
 			-- next frame; otherwise small corrections would be lost and the aim would stop short.
@@ -16956,6 +17579,7 @@ if rayfieldLoaded and Rayfield then
 				end
 				if not state.enabled or not state.held or not camera then
 					state.target = nil
+					randomPick.target = nil
 					mouseRemainder = Vector2.zero
 					showLocked(false)
 					return
@@ -16974,19 +17598,24 @@ if rayfieldLoaded and Rayfield then
 				showLocked(part ~= nil)
 				if not part then return end
 
+				local aimAt = part
+				if featureSettings.aimbotRandomPart then
+					aimAt = randomPartFor(target, part)
+				end
+
 				-- Smoothness 1 snaps straight on; higher values close the gap more slowly. Scaled by
 				-- frame time so it feels the same at any frame rate.
 				local smoothness = featureSettings.aimbotSmoothness
 				local alpha = smoothness <= 1 and 1 or 1 - (1 - 1 / smoothness) ^ math.clamp(deltaTime * 60, 0, 10)
 				local method = featureSettings.aimbotMethod
 				if method == "Free aim" and moveMouse then
-					freeAim(camera, cursor, camera:WorldToViewportPoint(part.Position), alpha)
+					freeAim(camera, cursor, camera:WorldToViewportPoint(aimAt.Position), alpha)
 				elseif method == "Mouse" and moveMouse then
-					local point = camera:WorldToViewportPoint(part.Position)
+					local point = camera:WorldToViewportPoint(aimAt.Position)
 					nudgeMouse((point.X - cursor.X) * alpha, (point.Y - cursor.Y) * alpha)
 				else
 					local from = camera.CFrame
-					camera.CFrame = from:Lerp(CFrame.lookAt(from.Position, part.Position), alpha)
+					camera.CFrame = from:Lerp(CFrame.lookAt(from.Position, aimAt.Position), alpha)
 				end
 			end
 			-- Right after Roblox's camera has moved for the frame, so this has the final say.
@@ -17122,6 +17751,26 @@ if rayfieldLoaded and Rayfield then
 
 				card.addSectionLabel("TARGET", "target", "crosshair")
 				addChoice({ "Head", "Torso" }, "aimbotPart")
+				card.addSwitchGrid({ setting("Random target", "aimbotRandomPart") }, 1)
+				local randomHint = Instance.new("TextLabel")
+				randomHint.LayoutOrder = card.nextOrder()
+				randomHint.Size = UDim2.new(1, 0, 0, 14)
+				randomHint.AutomaticSize = Enum.AutomaticSize.Y
+				randomHint.BackgroundTransparency = 1
+				randomHint.Font = Enum.Font.Gotham
+				randomHint.TextSize = 11
+				randomHint.TextWrapped = true
+				randomHint.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(randomHint, "TextColor3", "SubText")
+				randomHint.Parent = card.content
+				table.insert(card.refreshers, function()
+					local choice = string.lower(featureSettings.aimbotPart)
+					if featureSettings.aimbotRandomPart then
+						randomHint.Text = "Aims at a random body part, mostly the " .. choice .. ", and picks another every second or so."
+					else
+						randomHint.Text = "Always aims at the " .. choice .. ". Turn on Random target to mix it up."
+					end
+				end)
 				card.addSwitchGrid({ setting("Team check", "aimbotTeamCheck"), setting("Wall check", "aimbotWallCheck") })
 
 				card.addSectionLabel("AIM", "mouse-pointer-2", "mouse-pointer")
@@ -17801,7 +18450,7 @@ if rayfieldLoaded and Rayfield then
 			end,
 		}, "chevron-right")
 
-		window:CreateSection({ name = "MODULES" })
+		window:CreateSection({ name = "ADMIN COMMANDS" })
 		for _, category in ipairs(categories) do
 			local categoryCommands = commandsByCategory[category.name]
 			if #categoryCommands > 0 then
@@ -18131,7 +18780,7 @@ if rayfieldLoaded and Rayfield then
 			})
 			local activeChips = makeFlowRow(active, UDim2.fromOffset(0, 25), 0)
 			local emptyText = makeLabel(active, {
-				text = "Nothing's switched on. Turn features on in the Controls tab.", size = 12, role = "SubText",
+				text = "Nothing's switched on. Turn features on in Quick Controls.", size = 12, role = "SubText",
 				position = UDim2.fromOffset(0, 25), frameSize = UDim2.new(1, 0, 0, 24),
 			})
 
