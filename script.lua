@@ -14841,14 +14841,19 @@ if rayfieldLoaded and Rayfield then
 			aimbotFovColorMode = "Theme", aimbotFovColor = "B1A4FF",
 			-- How far Free aim moves the mouse, as a multiple of what Roblox's own camera needs.
 			aimbotFreeAimSpeed = 1,
-			-- Aim at a random body part instead of always aimbotPart.
+			-- The Target choice "Random": aim at a random body part instead of always aimbotPart.
 			aimbotRandomPart = false,
+			-- Trigger bot: "Tap" or "Hold", the wait before the first shot and between taps (in
+			-- milliseconds), and when it may fire.
+			triggerMode = "Tap", triggerDelay = 60, triggerInterval = 150,
+			triggerTeamCheck = true, triggerWhileAiming = false, triggerIndicator = true,
 			-- The Performance Stats window, and where it was dragged to (like keybindListX/Y).
 			performanceStats = false, performanceStatsX = -1, performanceStatsY = -1,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
 			aimbotFov = { 20, 600 }, aimbotSmoothness = { 1, 10 }, aimbotFreeAimSpeed = { 0.1, 3 },
+			triggerDelay = { 0, 500 }, triggerInterval = { 50, 1000 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15018,6 +15023,14 @@ if rayfieldLoaded and Rayfield then
 				end
 			end,
 		}, "crosshair")
+		-- Trigger Bot fires for you while your crosshair is on another player. Its switch is made
+		-- here, under Aimbot, so it gets a key box; the rest comes from buildTriggerBot further down.
+		local triggerBotState = { enabled = false, stop = nil }
+		addQuickToggle(combatTab, "Trigger Bot", "Fires when your crosshair is on a player. Right-click for settings", function(enabled)
+			triggerBotState.enabled = enabled
+			-- Lets go of the mouse if it was holding it down for you.
+			if not enabled and triggerBotState.stop then triggerBotState.stop() end
+		end, "mouse-pointer-click", "target")
 		addCommandToggle(combatTab, "Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
 		withIcon(combatTab, "CreateSection", { name = "Fling" }, "tornado")
 		addCommandToggle(combatTab, "Fling", "fling", "unfling", nil, "tornado")
@@ -16591,6 +16604,79 @@ if rayfieldLoaded and Rayfield then
 				label.Parent = holder
 			end
 
+			-- A row of buttons, one per choice, like the ESP colour modes. get returns the current
+			-- choice; set is called with the one clicked.
+			function settingsCard.addChoice(options, get, set)
+				local choiceRow = Instance.new("Frame")
+				choiceRow.LayoutOrder = settingsCard.nextOrder()
+				choiceRow.Size = UDim2.new(1, 0, 0, 28)
+				choiceRow.BackgroundTransparency = 1
+				choiceRow.Parent = content
+				local rowWidth = Instance.new("UISizeConstraint")
+				rowWidth.MaxSize = Vector2.new(110 * #options, 28)
+				rowWidth.Parent = choiceRow
+				local layout = Instance.new("UIListLayout")
+				layout.FillDirection = Enum.FillDirection.Horizontal
+				layout.Padding = UDim.new(0, 6)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				layout.Parent = choiceRow
+				local buttons = {}
+				for index, option in ipairs(options) do
+					local button = Instance.new("TextButton")
+					button.LayoutOrder = index
+					button.Size = UDim2.new(1 / #options, -6 * (#options - 1) / #options, 1, 0)
+					button.AutoButtonColor = false
+					button.BorderSizePixel = 0
+					button.Font = Enum.Font.GothamMedium
+					button.Text = option
+					button.TextSize = 12
+					button.Parent = choiceRow
+					local buttonCorner = Instance.new("UICorner")
+					buttonCorner.CornerRadius = UDim.new(0, 8)
+					buttonCorner.Parent = button
+					button.Activated:Connect(function()
+						set(option)
+						settingsCard.refresh()
+					end)
+					buttons[option] = button
+				end
+				table.insert(settingsCard.refreshers, function()
+					local theme = auxiliaryUiTheme
+					local current = get()
+					for option, button in pairs(buttons) do
+						local selected = current == option
+						button.BackgroundColor3 = selected and theme.Accent or theme.Inset
+						button.TextColor3 = selected and Color3.new(1, 1, 1) or theme.SubText
+					end
+				end)
+			end
+
+			-- A line of small print under the setting above it: the text, or a function returning
+			-- it, which is asked again on every refresh. With no text, the line is hidden.
+			function settingsCard.addHint(text)
+				local hint = Instance.new("TextLabel")
+				hint.LayoutOrder = settingsCard.nextOrder()
+				hint.Size = UDim2.new(1, 0, 0, 14)
+				hint.AutomaticSize = Enum.AutomaticSize.Y
+				hint.BackgroundTransparency = 1
+				hint.Font = Enum.Font.Gotham
+				hint.TextSize = 11
+				hint.TextWrapped = true
+				hint.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(hint, "TextColor3", "SubText")
+				hint.Parent = content
+				local function show(value)
+					hint.Text = value or ""
+					hint.Visible = hint.Text ~= ""
+				end
+				if type(text) == "function" then
+					table.insert(settingsCard.refreshers, function() show(text()) end)
+				else
+					show(text)
+				end
+				return hint
+			end
+
 			-- On/off cells: the whole cell is clickable, with a small switch on the right.
 			-- Each option is { text = ..., get = function() -> on, set = function(on) }.
 			local function addSwitch(parent, order, option)
@@ -17288,6 +17374,23 @@ if rayfieldLoaded and Rayfield then
 		addCommandSlider(mobilityTab, "Gravity", 0, 300, 196, "gravity", 1, nil, "orbit")
 		addCommandSlider(viewTab, "Field of View", 40, 120, 70, "fov", 1, "°", "focus")
 
+		-- Whether the pointer is over this menu. Clicks there are for the menu (right-clicking a switch
+		-- for its settings, say): they never count as the aim key, and the trigger bot doesn't fire.
+		local function pointerOverMenu()
+			local main = window.main
+			if typeof(main) ~= "Instance" or not main.Visible or window.hidden then return false end
+			local point = UserInputService:GetMouseLocation()
+			-- Mouse positions count from the very top of the screen; a GUI's positions start under
+			-- Roblox's top bar unless it ignores the bar.
+			local screenGui = main:FindFirstAncestorWhichIsA("ScreenGui")
+			if screenGui and not screenGui.IgnoreGuiInset then
+				point -= (GuiService:GetGuiInset())
+			end
+			local position, size = main.AbsolutePosition, main.AbsoluteSize
+			return point.X >= position.X and point.X <= position.X + size.X
+				and point.Y >= position.Y and point.Y <= position.Y + size.Y
+		end
+
 		-- Aimbot: while the aim key is held, turns your view (or moves your cursor) onto the player
 		-- nearest the cursor inside the FOV circle, and stays on them until you let go. Its switch
 		-- (aimbotToggle) is under ESP.
@@ -17329,22 +17432,6 @@ if rayfieldLoaded and Rayfield then
 					cachedKeyCode = keyOk and keyCode or nil
 				end
 				return cachedKeyCode ~= nil and UserInputService:IsKeyDown(cachedKeyCode)
-			end
-			-- Whether the pointer is over this menu. Clicks there are for the menu (right-clicking a
-			-- switch for its settings, say), never the aim key.
-			local function pointerOverMenu()
-				local main = window.main
-				if typeof(main) ~= "Instance" or not main.Visible or window.hidden then return false end
-				local point = UserInputService:GetMouseLocation()
-				-- Mouse positions count from the very top of the screen; a GUI's positions start under
-				-- Roblox's top bar unless it ignores the bar.
-				local screenGui = main:FindFirstAncestorWhichIsA("ScreenGui")
-				if screenGui and not screenGui.IgnoreGuiInset then
-					point -= (GuiService:GetGuiInset())
-				end
-				local position, size = main.AbsolutePosition, main.AbsoluteSize
-				return point.X >= position.X and point.X <= position.X + size.X
-					and point.Y >= position.Y and point.Y <= position.Y + size.Y
 			end
 
 			-- The FOV circle, centred on the cursor. Targets are picked from inside it.
@@ -17455,8 +17542,9 @@ if rayfieldLoaded and Rayfield then
 
 			-- Random target: aim at a random body part instead of always the head or torso. A new part
 			-- is picked for each new target and again every second or so while the key is held, and
-			-- the Head/Torso choice comes up three times as often as any other part. Targets are still
-			-- found and kept by that choice, so the circle, team check and wall check work as before.
+			-- the head and torso come up twice as often as an arm or leg. Targets are still found and
+			-- kept by the last Head/Torso choice (the head at first), so the circle, team check and
+			-- wall check work as before.
 			local bodyRegions = {
 				{ "Head", { "Head" } },
 				{ "Torso", { "UpperTorso", "Torso", "LowerTorso" } },
@@ -17479,7 +17567,7 @@ if rayfieldLoaded and Rayfield then
 						end
 					end
 					if #parts > 0 then
-						local weight = region[1] == featureSettings.aimbotPart and 3 or 1
+						local weight = (region[1] == "Head" or region[1] == "Torso") and 2 or 1
 						table.insert(choices, { parts = parts, weight = weight })
 						totalWeight += weight
 					end
@@ -17703,100 +17791,47 @@ if rayfieldLoaded and Rayfield then
 						end,
 					}
 				end
-				-- A row of buttons, one per choice, like the ESP colour modes.
+				-- Buttons for a saved choice, like the ESP colour modes.
 				local function addChoice(options, key)
-					local choiceRow = Instance.new("Frame")
-					choiceRow.LayoutOrder = card.nextOrder()
-					choiceRow.Size = UDim2.new(1, 0, 0, 28)
-					choiceRow.BackgroundTransparency = 1
-					choiceRow.Parent = card.content
-					local rowWidth = Instance.new("UISizeConstraint")
-					rowWidth.MaxSize = Vector2.new(110 * #options, 28)
-					rowWidth.Parent = choiceRow
-					local layout = Instance.new("UIListLayout")
-					layout.FillDirection = Enum.FillDirection.Horizontal
-					layout.Padding = UDim.new(0, 6)
-					layout.SortOrder = Enum.SortOrder.LayoutOrder
-					layout.Parent = choiceRow
-					local buttons = {}
-					for index, option in ipairs(options) do
-						local button = Instance.new("TextButton")
-						button.LayoutOrder = index
-						button.Size = UDim2.new(1 / #options, -6 * (#options - 1) / #options, 1, 0)
-						button.AutoButtonColor = false
-						button.BorderSizePixel = 0
-						button.Font = Enum.Font.GothamMedium
-						button.Text = option
-						button.TextSize = 12
-						button.Parent = choiceRow
-						local buttonCorner = Instance.new("UICorner")
-						buttonCorner.CornerRadius = UDim.new(0, 8)
-						buttonCorner.Parent = button
-						button.Activated:Connect(function()
-							featureSettings[key] = option
-							saveFeatureSettings()
-							card.refresh()
-						end)
-						buttons[option] = button
-					end
-					table.insert(card.refreshers, function()
-						local theme = auxiliaryUiTheme
-						for option, button in pairs(buttons) do
-							local selected = featureSettings[key] == option
-							button.BackgroundColor3 = selected and theme.Accent or theme.Inset
-							button.TextColor3 = selected and Color3.new(1, 1, 1) or theme.SubText
-						end
+					card.addChoice(options, function() return featureSettings[key] end, function(option)
+						featureSettings[key] = option
+						saveFeatureSettings()
 					end)
 				end
 
 				card.addSectionLabel("TARGET", "target", "crosshair")
-				addChoice({ "Head", "Torso" }, "aimbotPart")
-				card.addSwitchGrid({ setting("Random target", "aimbotRandomPart") }, 1)
-				local randomHint = Instance.new("TextLabel")
-				randomHint.LayoutOrder = card.nextOrder()
-				randomHint.Size = UDim2.new(1, 0, 0, 14)
-				randomHint.AutomaticSize = Enum.AutomaticSize.Y
-				randomHint.BackgroundTransparency = 1
-				randomHint.Font = Enum.Font.Gotham
-				randomHint.TextSize = 11
-				randomHint.TextWrapped = true
-				randomHint.TextXAlignment = Enum.TextXAlignment.Left
-				bindAuxiliaryUiColor(randomHint, "TextColor3", "SubText")
-				randomHint.Parent = card.content
-				table.insert(card.refreshers, function()
-					local choice = string.lower(featureSettings.aimbotPart)
-					if featureSettings.aimbotRandomPart then
-						randomHint.Text = "Aims at a random body part, mostly the " .. choice .. ", and picks another every second or so."
+				-- Random is saved apart from the Head/Torso choice, which finding targets still goes by.
+				card.addChoice({ "Head", "Torso", "Random" }, function()
+					return featureSettings.aimbotRandomPart and "Random" or featureSettings.aimbotPart
+				end, function(option)
+					if option == "Random" then
+						featureSettings.aimbotRandomPart = true
 					else
-						randomHint.Text = "Always aims at the " .. choice .. ". Turn on Random target to mix it up."
+						featureSettings.aimbotPart = option
+						featureSettings.aimbotRandomPart = false
 					end
+					saveFeatureSettings()
+				end)
+				card.addHint(function()
+					if featureSettings.aimbotRandomPart then
+						return "Picks a random body part, mostly the head and torso, and switches every second or so."
+					end
+					return nil
 				end)
 				card.addSwitchGrid({ setting("Team check", "aimbotTeamCheck"), setting("Wall check", "aimbotWallCheck") })
 
 				card.addSectionLabel("AIM", "mouse-pointer-2", "mouse-pointer")
 				addChoice({ "Camera", "Mouse", "Free aim" }, "aimbotMethod")
-				local methodHint = Instance.new("TextLabel")
-				methodHint.LayoutOrder = card.nextOrder()
-				methodHint.Size = UDim2.new(1, 0, 0, 14)
-				methodHint.AutomaticSize = Enum.AutomaticSize.Y
-				methodHint.BackgroundTransparency = 1
-				methodHint.Font = Enum.Font.Gotham
-				methodHint.TextSize = 11
-				methodHint.TextWrapped = true
-				methodHint.TextXAlignment = Enum.TextXAlignment.Left
-				bindAuxiliaryUiColor(methodHint, "TextColor3", "SubText")
-				methodHint.Parent = card.content
-				table.insert(card.refreshers, function()
+				card.addHint(function()
 					local method = featureSettings.aimbotMethod
 					if method == "Camera" then
-						methodHint.Text = "Turns your view onto them. Best in first person or shift lock. If the game runs its own camera and this doesn't stick, use Free aim."
+						return "Turns your view onto them. Best in first person or shift lock. If the game runs its own camera and this doesn't stick, use Free aim."
 					elseif not moveMouse then
-						methodHint.Text = "Your executor can't move the mouse, so the camera is used instead."
+						return "Your executor can't move the mouse, so the camera is used instead."
 					elseif method == "Mouse" then
-						methodHint.Text = "Moves your cursor onto them, for games that shoot where you click."
-					else
-						methodHint.Text = "For games that run their own camera. Never touches the camera; moves your mouse like you would, so the game turns it. If it stops short, raise Free aim speed; if it overshoots or shakes, lower it."
+						return "Moves your cursor onto them, for games that shoot where you click."
 					end
+					return "For games that run their own camera. Never touches the camera; moves your mouse like you would, so the game turns it. If it stops short, raise Free aim speed; if it overshoots or shakes, lower it."
 				end)
 				card.addSlider({
 					text = "Smoothness",
@@ -17996,6 +18031,270 @@ if rayfieldLoaded and Rayfield then
 		if not aimbotOk then
 			warn("[SpreadCheeksGUI] The aimbot couldn't be added: " .. tostring(aimbot))
 			aimbot = nil
+		end
+
+		-- Trigger Bot: while it's on, clicks for you when the player under your crosshair (or cursor)
+		-- is one you can shoot. Tap clicks once per shot delay; Hold keeps the button down while
+		-- you're on them, for automatic guns. Its switch is under Aimbot.
+		local function buildTriggerBot()
+			local localPlayer = Players.LocalPlayer
+			local state = triggerBotState
+			if featureSettings.triggerMode ~= "Hold" then featureSettings.triggerMode = "Tap" end
+
+			-- How clicks are made: the executor's own mouse functions when it has them, then Roblox's
+			-- virtual input, and for guns that are Roblox tools, the equipped tool as a last resort.
+			local virtualInput = nil
+			pcall(function() virtualInput = game:GetService("VirtualInputManager") end)
+			local clickMethod = "tool"
+			if type(mouse1press) == "function" and type(mouse1release) == "function" then
+				clickMethod = "mouse"
+			elseif virtualInput then
+				clickMethod = "virtual"
+			end
+			-- Presses or releases the left mouse button; false when it can't, which leaves the tool.
+			local function sendMouse(down)
+				if clickMethod == "mouse" then
+					if down then mouse1press() else mouse1release() end
+					return true
+				elseif clickMethod == "virtual" then
+					local cursor = UserInputService:GetMouseLocation()
+					local sent = pcall(function()
+						virtualInput:SendMouseButtonEvent(cursor.X, cursor.Y, 0, down, game, 0)
+					end)
+					if sent then return true end
+					-- Blocked here, so the tool is used from now on.
+					clickMethod = "tool"
+				end
+				return false
+			end
+			local function activateTool()
+				local character = localPlayer.Character
+				local tool = character and character:FindFirstChildOfClass("Tool")
+				if tool then pcall(function() tool:Activate() end) end
+			end
+			local holding = false
+			local function startHold()
+				if not holding and sendMouse(true) then holding = true end
+			end
+			local function stopHold()
+				if holding then
+					holding = false
+					sendMouse(false)
+				end
+			end
+			state.stop = stopHold
+			-- One click: press, then let go a moment later so the game sees a whole click.
+			local function tap()
+				if sendMouse(true) then
+					task.delay(0.03, function() sendMouse(false) end)
+				else
+					activateTool()
+				end
+			end
+
+			local rayParams = RaycastParams.new()
+			rayParams.FilterType = Enum.RaycastFilterType.Exclude
+			rayParams.IgnoreWater = true
+			-- The player whose character a part belongs to (hats and held tools included), if any.
+			local function playerFromPart(part)
+				local model = part:FindFirstAncestorOfClass("Model")
+				while model do
+					local player = Players:GetPlayerFromCharacter(model)
+					if player then return player end
+					model = model:FindFirstAncestorOfClass("Model")
+				end
+				return nil
+			end
+			-- The player a shot at the cursor would hit: the first thing on the line from the camera
+			-- through the cursor, looking past see-through parts like glass and invisible walls.
+			local function playerUnderCursor(camera, cursor)
+				local ray = camera:ViewportPointToRay(cursor.X, cursor.Y)
+				local ignore = { camera }
+				if localPlayer.Character then table.insert(ignore, localPlayer.Character) end
+				for _ = 1, 6 do
+					rayParams.FilterDescendantsInstances = ignore
+					local hit = workspace:Raycast(ray.Origin, ray.Direction * 2000, rayParams)
+					if not hit then return nil end
+					local player = playerFromPart(hit.Instance)
+					if player then
+						local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+						if player == localPlayer or not humanoid or humanoid.Health <= 0 then return nil end
+						-- A teammate in the way blocks the shot rather than being shot.
+						if featureSettings.triggerTeamCheck and espIsTeammate(player) then return nil end
+						return player
+					end
+					if hit.Instance.Transparency < 0.8 then return nil end
+					table.insert(ignore, hit.Instance)
+				end
+				return nil
+			end
+
+			-- A small ring on the cursor: faint while it's watching, lit when a player is under it,
+			-- with a dot while it's firing.
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild("SpreadCheeksTriggerBot")
+			if previousGui then previousGui:Destroy() end
+			local indicatorGui = Instance.new("ScreenGui")
+			indicatorGui.Name = "SpreadCheeksTriggerBot"
+			indicatorGui.ResetOnSpawn = false
+			indicatorGui.IgnoreGuiInset = true
+			-- With the aimbot's circle, under the keybind list, the ; bar and the notifications.
+			indicatorGui.DisplayOrder = 998
+			indicatorGui.Parent = playerGui
+			local indicator = Instance.new("Frame")
+			indicator.AnchorPoint = Vector2.new(0.5, 0.5)
+			indicator.Size = UDim2.fromOffset(18, 18)
+			indicator.BackgroundTransparency = 1
+			indicator.Visible = false
+			indicator.Parent = indicatorGui
+			local indicatorCorner = Instance.new("UICorner")
+			indicatorCorner.CornerRadius = UDim.new(1, 0)
+			indicatorCorner.Parent = indicator
+			local indicatorStroke = Instance.new("UIStroke")
+			indicatorStroke.Thickness = 2
+			indicatorStroke.Parent = indicator
+			local indicatorDot = Instance.new("Frame")
+			indicatorDot.AnchorPoint = Vector2.new(0.5, 0.5)
+			indicatorDot.Position = UDim2.fromScale(0.5, 0.5)
+			indicatorDot.Size = UDim2.fromOffset(6, 6)
+			indicatorDot.BorderSizePixel = 0
+			indicatorDot.Visible = false
+			indicatorDot.Parent = indicator
+			local dotCorner = Instance.new("UICorner")
+			dotCorner.CornerRadius = UDim.new(1, 0)
+			dotCorner.Parent = indicatorDot
+
+			local windowFocused = true
+			local onTargetSince, lastShot = nil, 0
+			local function step()
+				local camera = workspace.CurrentCamera
+				local cursor = UserInputService:GetMouseLocation()
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				-- Never while typing, in Roblox's menu, over this menu, with Roblox in the background or
+				-- while dead; with "Only while aim key held", only while the aim key is down.
+				local active = state.enabled and camera ~= nil and windowFocused and not GuiService.MenuIsOpen
+					and not UserInputService:GetFocusedTextBox() and not pointerOverMenu()
+					and humanoid ~= nil and humanoid.Health > 0
+					and (not featureSettings.triggerWhileAiming or aimbotState.held == true)
+				local target = active and playerUnderCursor(camera, cursor) or nil
+				local now = os.clock()
+				if target then
+					onTargetSince = onTargetSince or now
+				else
+					onTargetSince = nil
+				end
+				-- It fires once the crosshair has stayed on them for the reaction time.
+				local ready = onTargetSince ~= nil and (now - onTargetSince) * 1000 >= featureSettings.triggerDelay
+				if ready and featureSettings.triggerMode == "Hold" and clickMethod ~= "tool" then
+					startHold()
+				else
+					stopHold()
+					if ready and (now - lastShot) * 1000 >= featureSettings.triggerInterval then
+						lastShot = now
+						tap()
+					end
+				end
+
+				indicator.Visible = state.enabled and featureSettings.triggerIndicator
+				if indicator.Visible then
+					local theme = auxiliaryUiTheme
+					indicator.Position = UDim2.fromOffset(cursor.X, cursor.Y)
+					indicatorStroke.Color = target and theme.AccentText or theme.Muted
+					indicatorStroke.Transparency = target and 0 or (active and 0.3 or 0.7)
+					indicatorDot.BackgroundColor3 = theme.AccentText
+					indicatorDot.Visible = ready
+				end
+			end
+			-- After the aimbot (Camera + 1) has turned the view for the frame, so this checks where the
+			-- crosshair ends up.
+			pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksTriggerBot") end)
+			RunService:BindToRenderStep("SpreadCheeksTriggerBot", Enum.RenderPriority.Camera.Value + 2, function()
+				local stepOk, problem = pcall(step)
+				if not stepOk then
+					RunService:UnbindFromRenderStep("SpreadCheeksTriggerBot")
+					pcall(stopHold)
+					indicator.Visible = false
+					warn("[SpreadCheeksGUI] The trigger bot stopped: " .. tostring(problem))
+				end
+			end)
+
+			-- Kept in the shared environment so running the script again drops the old listeners.
+			if sharedEnv.SpreadCheeksTriggerBotConnections then
+				for _, connection in ipairs(sharedEnv.SpreadCheeksTriggerBotConnections) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			local connections = {}
+			sharedEnv.SpreadCheeksTriggerBotConnections = connections
+			-- Clicks only go out while Roblox is the window in front.
+			table.insert(connections, UserInputService.WindowFocused:Connect(function()
+				windowFocused = true
+			end))
+			table.insert(connections, UserInputService.WindowFocusReleased:Connect(function()
+				windowFocused = false
+				stopHold()
+			end))
+
+			-- Settings, opened by right-clicking the switch.
+			local entry = quickToggleByName["Trigger Bot"]
+			local card = entry and createSettingsCard(entry)
+			if card then
+				local function setting(text, key)
+					return {
+						text = text,
+						get = function() return featureSettings[key] == true end,
+						set = function(on)
+							featureSettings[key] = on
+							saveFeatureSettings()
+						end,
+					}
+				end
+				card.addSectionLabel("FIRING", "mouse-pointer-click", "target")
+				card.addChoice({ "Tap", "Hold" }, function() return featureSettings.triggerMode end, function(mode)
+					featureSettings.triggerMode = mode
+					saveFeatureSettings()
+				end)
+				card.addHint(function()
+					if clickMethod == "tool" then
+						return "Your executor can't click for you, so it uses the tool you're holding instead, once per shot delay."
+					elseif featureSettings.triggerMode == "Hold" then
+						return "Holds the mouse button down while you're on them and lets go when you're off, for automatic guns."
+					end
+					return "Clicks once, then again every shot delay while you stay on them, for guns that fire once per click."
+				end)
+				card.addSlider({
+					text = "Reaction time",
+					icon = { "timer", "clock" },
+					min = 0, max = 500, step = 10,
+					get = function() return featureSettings.triggerDelay end,
+					set = function(value) featureSettings.triggerDelay = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return value <= 0 and "Instant" or (math.floor(value + 0.5) .. " ms") end,
+				})
+				card.addSlider({
+					text = "Shot delay",
+					icon = { "repeat", "rotate-cw" },
+					min = 50, max = 1000, step = 10,
+					get = function() return featureSettings.triggerInterval end,
+					set = function(value) featureSettings.triggerInterval = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return math.floor(value + 0.5) .. " ms" end,
+				})
+				card.addSectionLabel("WHEN", "shield-check", "shield")
+				card.addSwitchGrid({ setting("Team check", "triggerTeamCheck"), setting("Show indicator", "triggerIndicator") })
+				card.addSwitchGrid({ setting("Only while aim key held", "triggerWhileAiming") }, 1)
+				card.addHint(function()
+					return "With this on, it only fires while you hold the aimbot's aim key (" .. aimbotKeyText() .. "), so you choose when."
+				end)
+				card.refresh()
+			end
+		end
+
+		-- Kept separate so a problem in the trigger bot can't stop the rest of the menu loading.
+		local triggerBotOk, triggerBotError = pcall(buildTriggerBot)
+		if not triggerBotOk then
+			warn("[SpreadCheeksGUI] The trigger bot couldn't be added: " .. tostring(triggerBotError))
 		end
 
 		window:CreateSection({ name = "PLAYER TOOLS" })
