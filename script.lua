@@ -5749,6 +5749,7 @@ espDefaultSettings = {
 	name = true,
 	distance = true,
 	health = true,
+	enemiesOnly = false, -- hide players on your own team
 	colorMode = "Team", -- "Team", "Theme" or "Custom"
 	customColor = "B1A4FF",
 }
@@ -5812,6 +5813,15 @@ function espColorFor(plr, logic)
 		return plr.TeamColor.Color
 	end
 	return espAccentColor
+end
+
+-- True when plr is on your team. Nobody is a teammate when either of you has no team, so in
+-- games without teams everyone counts as an enemy.
+function espIsTeammate(plr)
+	local me = Players.LocalPlayer
+	if plr == me or me.Neutral or plr.Neutral then return false end
+	if me.Team and plr.Team then return me.Team == plr.Team end
+	return plr.TeamColor == me.TeamColor
 end
 
 function ESP(plr, logic)
@@ -5970,28 +5980,37 @@ function ESP(plr, logic)
 				end)
 				local lastTagText
 				local appliedStyle = -1
+				-- With "Only show enemies" on, a teammate's ESP stays built but hidden, so it comes
+				-- back straight away if either of you changes team or the option is turned off.
+				local hiddenAsTeammate = false
+				local function shouldHide()
+					return espSettings.enemiesOnly == true and espIsTeammate(plr)
+				end
 				local function applyStyle()
 					appliedStyle = espStyleVersion
+					hiddenAsTeammate = shouldHide()
+					local show = not hiddenAsTeammate
 					local color = espColorFor(plr, logic)
-					highlight.Enabled = espSettings.outline or espSettings.fill
+					highlight.Enabled = show and (espSettings.outline or espSettings.fill)
 					highlight.FillColor = color
 					highlight.OutlineColor = color
 					-- esptransparency still controls how strong the fill is.
 					highlight.FillTransparency = espSettings.fill and math.clamp(espTransparency + 0.35, 0.35, 0.95) or 1
 					highlight.OutlineTransparency = espSettings.outline and 0.15 or 1
-					BoxGui.Enabled = espSettings.box
+					BoxGui.Enabled = show and espSettings.box
 					boxStroke.Color = color
-					TracerGui.Enabled = espSettings.tracers
+					TracerGui.Enabled = show and espSettings.tracers
 					tracerLine.BackgroundColor3 = color
-					TagGui.Enabled = espSettings.name or espSettings.distance or espSettings.health
+					TagGui.Enabled = show and (espSettings.name or espSettings.distance or espSettings.health)
 					HealthBackground.Visible = espSettings.health
 					lastTagText = nil
 				end
 				local function espLoop()
 					if COREGUI:FindFirstChild(plr.Name..'_ESP') then
-						if appliedStyle ~= espStyleVersion then
+						if appliedStyle ~= espStyleVersion or shouldHide() ~= hiddenAsTeammate then
 							applyStyle()
 						end
+						if hiddenAsTeammate then return end
 						local myRoot = Players.LocalPlayer.Character and getRoot(Players.LocalPlayer.Character)
 						local targetRoot = plr.Character and getRoot(plr.Character)
 						local targetHumanoid = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
@@ -14802,7 +14821,7 @@ if rayfieldLoaded and Rayfield then
 		}, "palette")
 		withIcon(controlsTab, "CreateSection", { name = "Common toggles" }, "toggle-right")
 		controlsTab:CreateText({
-			text = "These switches run the matching start and stop commands. Right-click Fly, Vehicle Fly, Freecam, ESP or Chams to change their settings. One-time actions remain in their category tabs.",
+			text = "These switches run the matching start and stop commands. Right-click Fly, Vehicle Fly, Freecam, ESP, Chams or Aimbot to change their settings. One-time actions remain in their category tabs.",
 		})
 
 		withIcon(controlsTab, "CreateSection", { name = "Logo animation" }, "sparkles")
@@ -14882,8 +14901,18 @@ if rayfieldLoaded and Rayfield then
 		local featureSettings = {
 			flySpeed = 1, vehicleFlySpeed = 1, freecamSpeed = 1, flyUpDownKeys = true,
 			keybindList = true, keybindListX = -1, keybindListY = -1,
+			-- Aimbot (under ESP). The key is "RightClick", "LeftClick" or a KeyCode name.
+			aimbotKey = "RightClick", aimbotPart = "Head", aimbotMethod = "Camera",
+			aimbotFov = 150, aimbotSmoothness = 3, aimbotShowFov = true, aimbotTeamCheck = true, aimbotWallCheck = true,
+			-- FOV circle colour: "Theme", "Rainbow" or "Custom" (aimbotFovColor, a hex code).
+			aimbotFovColorMode = "Theme", aimbotFovColor = "B1A4FF",
+			-- How far Free aim moves the mouse, as a multiple of what Roblox's own camera needs.
+			aimbotFreeAimSpeed = 1,
 		}
-		local featureLimits = { flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 } }
+		local featureLimits = {
+			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
+			aimbotFov = { 20, 600 }, aimbotSmoothness = { 1, 10 }, aimbotFreeAimSpeed = { 0.1, 3 },
+		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
 			if readOk and type(contents) == "string" and contents ~= "" then
@@ -15056,6 +15085,29 @@ if rayfieldLoaded and Rayfield then
 		addCommandToggle("ESP", "esp", "noesp", "Right-click or use the arrow for ESP settings", "scan-eye")
 		-- ESP's row has the settings arrow where the key box would go, so it gets no keybind.
 		quickToggleByName["ESP"].noKeybind = true
+		-- Aimbot sits right under ESP. Rayfield lists rows in the order they're made, so its switch
+		-- is made here; the aim key box, its settings and the aiming itself come from buildAimbot
+		-- further down, once everything they use exists.
+		local aimbotState = { enabled = false, held = false, target = nil }
+		local function aimbotKeyText()
+			local name = featureSettings.aimbotKey
+			return name == "RightClick" and "RMB" or name == "LeftClick" and "LMB" or name
+		end
+		local aimbotToggle = withIcon(controlsTab, "CreateToggle", {
+			name = "Aimbot",
+			description = "Hold the key to aim. Right-click for settings",
+			value = false,
+			callback = function(enabled)
+				enabled = enabled == true
+				if enabled == aimbotState.enabled then return end
+				aimbotState.enabled = enabled
+				aimbotState.held = false
+				aimbotState.target = nil
+				if enabled then
+					notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
+				end
+			end,
+		}, "crosshair")
 		addCommandToggle("Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
 		addCommandToggle("Invisible", "invisible", "visible", nil, "eye-off")
 
@@ -15381,8 +15433,13 @@ if rayfieldLoaded and Rayfield then
 				return keyName
 			end
 
-			-- Everything a key does right now: the menu key, the Controls switches, then binds made
-			-- in Infinite Yield's own keybind editor. Each row: name, key, kind and, for switches, on.
+			-- Other parts of the menu (the aimbot) add their keys through addSource: each source
+			-- returns a row, or nil while its key does nothing.
+			local extraSources = {}
+
+			-- Everything a key does right now: the menu key, the Controls switches, other sources,
+			-- then binds made in Infinite Yield's own keybind editor. Each row: name, key, kind and,
+			-- for switches, on.
 			local function collectRows()
 				local rows = {}
 				local menuKeyOk, menuKey = pcall(function() return window.settings.toggleKeybind end)
@@ -15393,6 +15450,12 @@ if rayfieldLoaded and Rayfield then
 				for _, entry in ipairs(quickToggles) do
 					if entry.key then
 						table.insert(rows, { name = entry.name, key = entry.key.Name, kind = "toggle", on = entry.state })
+					end
+				end
+				for _, source in ipairs(extraSources) do
+					local sourceOk, row = pcall(source)
+					if sourceOk and type(row) == "table" then
+						table.insert(rows, row)
 					end
 				end
 				if type(binds) == "table" then
@@ -15795,6 +15858,9 @@ if rayfieldLoaded and Rayfield then
 					wantShown = on == true
 					applyShown()
 				end,
+				addSource = function(source)
+					table.insert(extraSources, source)
+				end,
 			}
 		end
 
@@ -15818,6 +15884,37 @@ if rayfieldLoaded and Rayfield then
 			end,
 		}, "layout-list", "list")
 		if keybindList then keybindList.setShown(featureSettings.keybindList) end
+
+		-- Clears the keys set on the switches above. The first click asks for a second one, so a
+		-- stray click can't wipe them all.
+		local clearConfirmUntil = 0
+		withIcon(controlsTab, "CreateButton", {
+			name = "Clear All Keybinds",
+			callback = function()
+				local count = 0
+				for _, entry in ipairs(quickToggles) do
+					if entry.key then count += 1 end
+				end
+				if count == 0 then
+					clearConfirmUntil = 0
+					notify("Keybinds", "No keybinds to clear")
+					return
+				end
+				if os.clock() > clearConfirmUntil then
+					clearConfirmUntil = os.clock() + 4
+					notify("Clear all keybinds?", "Click the button again to clear " .. (count == 1 and "your 1 keybind" or ("all " .. count .. " keybinds")), 4)
+					return
+				end
+				clearConfirmUntil = 0
+				stopKeyRecording()
+				for _, entry in ipairs(quickToggles) do
+					entry.key = nil
+					refreshKeyChip(entry)
+				end
+				saveQuickKeybinds()
+				notify("Keybinds", count == 1 and "Cleared 1 keybind" or ("Cleared " .. count .. " keybinds"))
+			end,
+		}, "trash-2", "eraser")
 
 		-- Settings cards open under a switch the way Rayfield's dropdowns do. Right-click a switch's
 		-- row to open or close its card (ESP also has an arrow, in place of its key box).
@@ -16267,6 +16364,20 @@ if rayfieldLoaded and Rayfield then
 				}
 			end
 
+			espCard.addSectionLabel("PLAYERS", "users-round", "users")
+			espCard.addSwitchGrid({ espOption("Only show enemies", "enemiesOnly") }, 1)
+			local teamHint = Instance.new("TextLabel")
+			teamHint.LayoutOrder = nextOrder()
+			teamHint.Size = UDim2.new(1, 0, 0, 14)
+			teamHint.AutomaticSize = Enum.AutomaticSize.Y
+			teamHint.BackgroundTransparency = 1
+			teamHint.Font = Enum.Font.Gotham
+			teamHint.Text = "Hides your teammates. In games without teams, everyone still shows."
+			teamHint.TextSize = 11
+			teamHint.TextWrapped = true
+			teamHint.TextXAlignment = Enum.TextXAlignment.Left
+			bindAuxiliaryUiColor(teamHint, "TextColor3", "SubText")
+			teamHint.Parent = content
 			espCard.addSectionLabel("DRAW", "pen-line", "pencil")
 			espCard.addSwitchGrid({ espOption("Outline", "outline"), espOption("Fill", "fill"), espOption("Box", "box"), espOption("Tracers", "tracers") })
 			espCard.addSectionLabel("LABEL", "tag")
@@ -16614,6 +16725,629 @@ if rayfieldLoaded and Rayfield then
 		addCommandSlider("Jump Power", 0, 300, 50, "jpower", 1, nil, "arrow-big-up")
 		addCommandSlider("Gravity", 0, 300, 196, "gravity", 1, nil, "orbit")
 		addCommandSlider("Field of View", 40, 120, 70, "fov", 1, "°", "focus")
+
+		-- Aimbot: while the aim key is held, turns your view (or moves your cursor) onto the player
+		-- nearest the cursor inside the FOV circle, and stays on them until you let go. Its switch
+		-- (aimbotToggle) is under ESP.
+		local function buildAimbot()
+			local localPlayer = Players.LocalPlayer
+			local state = aimbotState
+
+			-- Saved choices that no longer make sense go back to their defaults.
+			local savedKey = featureSettings.aimbotKey
+			if savedKey ~= "RightClick" and savedKey ~= "LeftClick" then
+				local keyOk, keyCode = pcall(function() return Enum.KeyCode[savedKey] end)
+				if not keyOk or not keyCode or reservedKeys[keyCode] then
+					featureSettings.aimbotKey = "RightClick"
+				end
+			end
+			if featureSettings.aimbotPart ~= "Torso" then featureSettings.aimbotPart = "Head" end
+			if not table.find({ "Camera", "Mouse", "Free aim" }, featureSettings.aimbotMethod) then
+				featureSettings.aimbotMethod = "Camera"
+			end
+			if not table.find({ "Theme", "Rainbow", "Custom" }, featureSettings.aimbotFovColorMode) then
+				featureSettings.aimbotFovColorMode = "Theme"
+			end
+			if not featureSettings.aimbotFovColor:match("^%x%x%x%x%x%x$") then
+				featureSettings.aimbotFovColor = "B1A4FF"
+			end
+
+			local keyText = aimbotKeyText
+			-- Whether the aim key is physically held down right now. This reads the mouse and
+			-- keyboard directly rather than waiting for input events: games can take those over
+			-- (many claim right click for their own aiming), and then the events never arrive here.
+			local cachedKeyName, cachedKeyCode = nil, nil
+			local function aimInputDown()
+				local name = featureSettings.aimbotKey
+				if name == "RightClick" then return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) end
+				if name == "LeftClick" then return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end
+				if name ~= cachedKeyName then
+					cachedKeyName = name
+					local keyOk, keyCode = pcall(function() return Enum.KeyCode[name] end)
+					cachedKeyCode = keyOk and keyCode or nil
+				end
+				return cachedKeyCode ~= nil and UserInputService:IsKeyDown(cachedKeyCode)
+			end
+			-- Whether the pointer is over this menu. Clicks there are for the menu (right-clicking a
+			-- switch for its settings, say), never the aim key.
+			local function pointerOverMenu()
+				local main = window.main
+				if typeof(main) ~= "Instance" or not main.Visible or window.hidden then return false end
+				local point = UserInputService:GetMouseLocation()
+				-- Mouse positions count from the very top of the screen; a GUI's positions start under
+				-- Roblox's top bar unless it ignores the bar.
+				local screenGui = main:FindFirstAncestorWhichIsA("ScreenGui")
+				if screenGui and not screenGui.IgnoreGuiInset then
+					point -= (GuiService:GetGuiInset())
+				end
+				local position, size = main.AbsolutePosition, main.AbsoluteSize
+				return point.X >= position.X and point.X <= position.X + size.X
+					and point.Y >= position.Y and point.Y <= position.Y + size.Y
+			end
+
+			-- The FOV circle, centred on the cursor. Targets are picked from inside it.
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild("SpreadCheeksAimbot")
+			if previousGui then previousGui:Destroy() end
+			local fovGui = Instance.new("ScreenGui")
+			fovGui.Name = "SpreadCheeksAimbot"
+			fovGui.ResetOnSpawn = false
+			fovGui.IgnoreGuiInset = true
+			-- Under the keybind list (999), the ; bar and the notifications.
+			fovGui.DisplayOrder = 998
+			fovGui.Parent = playerGui
+			local fovCircle = Instance.new("Frame")
+			fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+			fovCircle.BackgroundTransparency = 1
+			fovCircle.Visible = false
+			fovCircle.Parent = fovGui
+			local fovCorner = Instance.new("UICorner")
+			fovCorner.CornerRadius = UDim.new(1, 0)
+			fovCorner.Parent = fovCircle
+			local fovStroke = Instance.new("UIStroke")
+			fovStroke.Thickness = 1.5
+			fovStroke.Transparency = 0.4
+			fovStroke.Color = auxiliaryUiTheme.AccentText
+			fovStroke.Parent = fovCircle
+			-- The circle's colour, set every frame so Rainbow can cycle and theme changes show at once.
+			local parsedHex, parsedColor = nil, nil
+			local function fovColor()
+				local mode = featureSettings.aimbotFovColorMode
+				if mode == "Rainbow" then
+					-- Once round the colour wheel every 4 seconds.
+					return Color3.fromHSV((os.clock() / 4) % 1, 0.7, 1)
+				elseif mode == "Custom" then
+					if parsedHex ~= featureSettings.aimbotFovColor then
+						parsedHex = featureSettings.aimbotFovColor
+						local colorOk, color = pcall(Color3.fromHex, parsedHex)
+						parsedColor = colorOk and color or nil
+					end
+					if parsedColor then return parsedColor end
+				end
+				return auxiliaryUiTheme.AccentText
+			end
+			-- Solid while locked onto someone.
+			local function showLocked(locked)
+				fovStroke.Transparency = locked and 0 or 0.4
+				fovStroke.Thickness = locked and 2 or 1.5
+			end
+
+			local function aimPart(character)
+				if featureSettings.aimbotPart == "Torso" then
+					return character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart")
+				end
+				return character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+			end
+			-- The part to aim at on this player, or nil when they can't be a target.
+			local function targetPart(player)
+				if player == localPlayer then return nil end
+				local character = player.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if not humanoid or humanoid.Health <= 0 then return nil end
+				if featureSettings.aimbotTeamCheck and espIsTeammate(player) then return nil end
+				local part = aimPart(character)
+				return part and part:IsA("BasePart") and part or nil
+			end
+			local wallParams = RaycastParams.new()
+			wallParams.FilterType = Enum.RaycastFilterType.Exclude
+			wallParams.IgnoreWater = true
+			-- Whether the camera can see the part. See-through parts, like glass and invisible
+			-- walls, don't count as cover.
+			local function canSee(part, character)
+				local camera = workspace.CurrentCamera
+				local origin = camera.CFrame.Position
+				local ignore = { camera, character }
+				if localPlayer.Character then table.insert(ignore, localPlayer.Character) end
+				for _ = 1, 5 do
+					wallParams.FilterDescendantsInstances = ignore
+					local hit = workspace:Raycast(origin, part.Position - origin, wallParams)
+					if not hit then return true end
+					if hit.Instance.Transparency < 0.8 then return false end
+					table.insert(ignore, hit.Instance)
+				end
+				return false
+			end
+			-- Whether a target can still be aimed at from here: on screen and, with wall check on, in view.
+			local function canAimAt(part, character)
+				local _, onScreen = workspace.CurrentCamera:WorldToViewportPoint(part.Position)
+				return onScreen and (not featureSettings.aimbotWallCheck or canSee(part, character))
+			end
+			-- The player nearest the cursor inside the circle. Walls are only checked for players
+			-- closer than the best so far, which keeps the raycasts down.
+			local function findTarget(cursor)
+				local camera = workspace.CurrentCamera
+				local best, bestDistance = nil, featureSettings.aimbotFov
+				for _, player in ipairs(Players:GetPlayers()) do
+					local part = targetPart(player)
+					if part then
+						local point, onScreen = camera:WorldToViewportPoint(part.Position)
+						local distance = (Vector2.new(point.X, point.Y) - cursor).Magnitude
+						if onScreen and distance < bestDistance
+							and (not featureSettings.aimbotWallCheck or canSee(part, player.Character)) then
+							best, bestDistance = player, distance
+						end
+					end
+				end
+				return best
+			end
+
+			local moveMouse = type(mousemoverel) == "function" and mousemoverel or nil
+			-- Mouse moves are whole pixels, so the part of a move that's left over is carried into the
+			-- next frame; otherwise small corrections would be lost and the aim would stop short.
+			local mouseRemainder = Vector2.zero
+			local function nudgeMouse(dx, dy)
+				local total = mouseRemainder + Vector2.new(math.clamp(dx, -1000, 1000), math.clamp(dy, -1000, 1000))
+				local wholeX = total.X < 0 and math.ceil(total.X) or math.floor(total.X)
+				local wholeY = total.Y < 0 and math.ceil(total.Y) or math.floor(total.Y)
+				mouseRemainder = total - Vector2.new(wholeX, wholeY)
+				if wholeX ~= 0 or wholeY ~= 0 then
+					moveMouse(wholeX, wholeY)
+				end
+			end
+			-- The player's camera sensitivity from Roblox's settings, which scales how far the camera
+			-- turns for each pixel the mouse moves.
+			local userGameSettings = nil
+			pcall(function() userGameSettings = UserSettings():GetService("UserGameSettings") end)
+			local function mouseSensitivity()
+				local readOk, value = pcall(function() return userGameSettings.MouseSensitivity end)
+				return (readOk and type(value) == "number" and value > 0) and value or 1
+			end
+			-- Free aim never touches the camera. It moves the mouse the way you would, so a game that
+			-- runs its own camera turns it itself.
+			local function freeAim(camera, cursor, point, alpha)
+				local offsetX, offsetY = point.X - cursor.X, point.Y - cursor.Y
+				if UserInputService.MouseBehavior == Enum.MouseBehavior.Default then
+					-- A free cursor moves pixel for pixel, so it's moved straight onto them.
+					nudgeMouse(offsetX * alpha, offsetY * alpha)
+					return
+				end
+				-- A locked mouse turns the camera instead. Work out how far it has to turn to face
+				-- them, then how much mouse movement that is at Roblox's usual camera speed (the
+				-- Free aim speed slider covers games that turn faster or slower).
+				local focalLength = (camera.ViewportSize.Y / 2) / math.tan(math.rad(camera.FieldOfView) / 2)
+				local yaw = math.atan(offsetX / focalLength)
+				local pitch = math.atan(offsetY / focalLength)
+				local scale = alpha * featureSettings.aimbotFreeAimSpeed / mouseSensitivity()
+				nudgeMouse(yaw / (0.002 * math.pi) * scale, pitch / (0.0015 * math.pi) * scale)
+			end
+
+			local wasDown, pressCounts = false, false
+			local function step(deltaTime)
+				-- A press of the aim key counts unless it started on this menu, while typing, or while
+				-- setting a new key, and it keeps counting until the key comes back up.
+				local down = aimInputDown()
+				if not down then
+					pressCounts = false
+					state.ignoreUntilRelease = false
+				elseif not wasDown then
+					pressCounts = not state.ignoreUntilRelease and not UserInputService:GetFocusedTextBox() and not pointerOverMenu()
+				end
+				wasDown = down
+				state.held = down and pressCounts
+
+				local camera = workspace.CurrentCamera
+				local cursor = UserInputService:GetMouseLocation()
+				local radius = featureSettings.aimbotFov
+				fovCircle.Visible = state.enabled and featureSettings.aimbotShowFov
+				if fovCircle.Visible then
+					fovCircle.Position = UDim2.fromOffset(cursor.X, cursor.Y)
+					fovCircle.Size = UDim2.fromOffset(radius * 2, radius * 2)
+					fovStroke.Color = fovColor()
+				end
+				if not state.enabled or not state.held or not camera then
+					state.target = nil
+					mouseRemainder = Vector2.zero
+					showLocked(false)
+					return
+				end
+				-- Stay on the same player while the key is held, for as long as they can be aimed at.
+				local target, part = state.target, nil
+				if target and target.Parent then
+					part = targetPart(target)
+					if part and not canAimAt(part, target.Character) then part = nil end
+				end
+				if not part then
+					target = findTarget(cursor)
+					part = target and targetPart(target)
+				end
+				state.target = part and target or nil
+				showLocked(part ~= nil)
+				if not part then return end
+
+				-- Smoothness 1 snaps straight on; higher values close the gap more slowly. Scaled by
+				-- frame time so it feels the same at any frame rate.
+				local smoothness = featureSettings.aimbotSmoothness
+				local alpha = smoothness <= 1 and 1 or 1 - (1 - 1 / smoothness) ^ math.clamp(deltaTime * 60, 0, 10)
+				local method = featureSettings.aimbotMethod
+				if method == "Free aim" and moveMouse then
+					freeAim(camera, cursor, camera:WorldToViewportPoint(part.Position), alpha)
+				elseif method == "Mouse" and moveMouse then
+					local point = camera:WorldToViewportPoint(part.Position)
+					nudgeMouse((point.X - cursor.X) * alpha, (point.Y - cursor.Y) * alpha)
+				else
+					local from = camera.CFrame
+					camera.CFrame = from:Lerp(CFrame.lookAt(from.Position, part.Position), alpha)
+				end
+			end
+			-- Right after Roblox's camera has moved for the frame, so this has the final say.
+			pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksAimbot") end)
+			RunService:BindToRenderStep("SpreadCheeksAimbot", Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
+				local stepOk, problem = pcall(step, deltaTime)
+				if not stepOk then
+					RunService:UnbindFromRenderStep("SpreadCheeksAimbot")
+					fovCircle.Visible = false
+					warn("[SpreadCheeksGUI] The aimbot stopped: " .. tostring(problem))
+				end
+			end)
+
+			local toggle = aimbotToggle
+
+			-- The aim key box, like the key boxes on the Controls switches. Click it, then press a
+			-- key or click a mouse button in the game; Esc cancels.
+			local recording, recordSerial = false, 0
+			local chip, chipStroke = nil, nil
+			local function showChip()
+				if not chip then return end
+				local text = recording and "Recording" or keyText()
+				local width = TextService:GetTextSize(text, chip.TextSize, chip.Font, Vector2.new(1000, 24)).X
+				chip.Text = text
+				chip.Size = UDim2.fromOffset(math.clamp(width + 22, 40, 130), 24)
+				chipStroke.Color = recording and auxiliaryUiTheme.Accent or auxiliaryUiTheme.Stroke
+				chipStroke.Transparency = recording and 0 or 0.35
+			end
+			local function stopRecording()
+				recording = false
+				recordSerial += 1
+				showChip()
+			end
+			local row = toggle and toggle.main
+			if typeof(row) == "Instance" then
+				chip = Instance.new("TextButton")
+				chip.Name = "AimKeyChip"
+				chip.AnchorPoint = Vector2.new(1, 0.5)
+				-- Where the Controls switches have their key boxes, left of the switch.
+				chip.Position = UDim2.new(1, -73, 0, 20)
+				chip.AutoButtonColor = false
+				chip.BorderSizePixel = 0
+				chip.Font = Enum.Font.GothamMedium
+				chip.TextSize = 13
+				-- Above the toggle's full-row click target (ZIndex 10) so clicking the box doesn't flip the switch.
+				chip.ZIndex = 11
+				bindAuxiliaryUiColor(chip, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(chip, "TextColor3", "Text")
+				local chipCorner = Instance.new("UICorner")
+				chipCorner.CornerRadius = UDim.new(1, 0)
+				chipCorner.Parent = chip
+				chipStroke = Instance.new("UIStroke")
+				chipStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				bindAuxiliaryUiColor(chipStroke, "Color", "Stroke")
+				chipStroke.Parent = chip
+				chip.MouseButton1Click:Connect(function()
+					if recording then
+						stopRecording()
+						return
+					end
+					recording = true
+					recordSerial += 1
+					local serial = recordSerial
+					showChip()
+					-- Stop waiting if nothing is pressed, so a stray press later doesn't change it.
+					task.delay(10, function()
+						if recording and recordSerial == serial then stopRecording() end
+					end)
+				end)
+				chip.Parent = row
+				showChip()
+				table.insert(auxiliaryUiThemeListeners, showChip)
+			end
+
+			-- Settings, opened by right-clicking the switch.
+			local card = createSettingsCard({ name = "Aimbot", object = toggle })
+			if card then
+				local function setting(text, key)
+					return {
+						text = text,
+						get = function() return featureSettings[key] == true end,
+						set = function(on)
+							featureSettings[key] = on
+							saveFeatureSettings()
+						end,
+					}
+				end
+				-- A row of buttons, one per choice, like the ESP colour modes.
+				local function addChoice(options, key)
+					local choiceRow = Instance.new("Frame")
+					choiceRow.LayoutOrder = card.nextOrder()
+					choiceRow.Size = UDim2.new(1, 0, 0, 28)
+					choiceRow.BackgroundTransparency = 1
+					choiceRow.Parent = card.content
+					local rowWidth = Instance.new("UISizeConstraint")
+					rowWidth.MaxSize = Vector2.new(110 * #options, 28)
+					rowWidth.Parent = choiceRow
+					local layout = Instance.new("UIListLayout")
+					layout.FillDirection = Enum.FillDirection.Horizontal
+					layout.Padding = UDim.new(0, 6)
+					layout.SortOrder = Enum.SortOrder.LayoutOrder
+					layout.Parent = choiceRow
+					local buttons = {}
+					for index, option in ipairs(options) do
+						local button = Instance.new("TextButton")
+						button.LayoutOrder = index
+						button.Size = UDim2.new(1 / #options, -6 * (#options - 1) / #options, 1, 0)
+						button.AutoButtonColor = false
+						button.BorderSizePixel = 0
+						button.Font = Enum.Font.GothamMedium
+						button.Text = option
+						button.TextSize = 12
+						button.Parent = choiceRow
+						local buttonCorner = Instance.new("UICorner")
+						buttonCorner.CornerRadius = UDim.new(0, 8)
+						buttonCorner.Parent = button
+						button.Activated:Connect(function()
+							featureSettings[key] = option
+							saveFeatureSettings()
+							card.refresh()
+						end)
+						buttons[option] = button
+					end
+					table.insert(card.refreshers, function()
+						local theme = auxiliaryUiTheme
+						for option, button in pairs(buttons) do
+							local selected = featureSettings[key] == option
+							button.BackgroundColor3 = selected and theme.Accent or theme.Inset
+							button.TextColor3 = selected and Color3.new(1, 1, 1) or theme.SubText
+						end
+					end)
+				end
+
+				card.addSectionLabel("TARGET", "target", "crosshair")
+				addChoice({ "Head", "Torso" }, "aimbotPart")
+				card.addSwitchGrid({ setting("Team check", "aimbotTeamCheck"), setting("Wall check", "aimbotWallCheck") })
+
+				card.addSectionLabel("AIM", "mouse-pointer-2", "mouse-pointer")
+				addChoice({ "Camera", "Mouse", "Free aim" }, "aimbotMethod")
+				local methodHint = Instance.new("TextLabel")
+				methodHint.LayoutOrder = card.nextOrder()
+				methodHint.Size = UDim2.new(1, 0, 0, 14)
+				methodHint.AutomaticSize = Enum.AutomaticSize.Y
+				methodHint.BackgroundTransparency = 1
+				methodHint.Font = Enum.Font.Gotham
+				methodHint.TextSize = 11
+				methodHint.TextWrapped = true
+				methodHint.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(methodHint, "TextColor3", "SubText")
+				methodHint.Parent = card.content
+				table.insert(card.refreshers, function()
+					local method = featureSettings.aimbotMethod
+					if method == "Camera" then
+						methodHint.Text = "Turns your view onto them. Best in first person or shift lock. If the game runs its own camera and this doesn't stick, use Free aim."
+					elseif not moveMouse then
+						methodHint.Text = "Your executor can't move the mouse, so the camera is used instead."
+					elseif method == "Mouse" then
+						methodHint.Text = "Moves your cursor onto them, for games that shoot where you click."
+					else
+						methodHint.Text = "For games that run their own camera. Never touches the camera; moves your mouse like you would, so the game turns it. If it stops short, raise Free aim speed; if it overshoots or shakes, lower it."
+					end
+				end)
+				card.addSlider({
+					text = "Smoothness",
+					icon = { "waves", "activity" },
+					min = 1, max = 10, step = 0.5,
+					get = function() return featureSettings.aimbotSmoothness end,
+					set = function(value) featureSettings.aimbotSmoothness = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return value <= 1 and "Instant" or string.format("%.1f", value) end,
+				})
+				card.addSlider({
+					text = "Free aim speed",
+					icon = { "gauge" },
+					min = 0.1, max = 3, step = 0.1,
+					get = function() return featureSettings.aimbotFreeAimSpeed end,
+					set = function(value) featureSettings.aimbotFreeAimSpeed = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return string.format("%.1f×", value) end,
+				})
+
+				card.addSectionLabel("FOV", "circle-dashed", "circle")
+				card.addSlider({
+					text = "Circle size",
+					icon = { "circle-dashed", "circle" },
+					min = 20, max = 600, step = 10,
+					get = function() return featureSettings.aimbotFov end,
+					set = function(value) featureSettings.aimbotFov = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return math.floor(value + 0.5) .. " px" end,
+				})
+				card.addSwitchGrid({ setting("Show FOV circle", "aimbotShowFov") }, 1)
+
+				-- Circle colour: the theme's accent, a cycling rainbow, or a colour of your own.
+				card.addSectionLabel("CIRCLE COLOUR", "palette")
+				addChoice({ "Theme", "Rainbow", "Custom" }, "aimbotFovColorMode")
+				local function useCustomColor(hex)
+					featureSettings.aimbotFovColorMode = "Custom"
+					featureSettings.aimbotFovColor = string.upper(hex)
+					saveFeatureSettings()
+					card.refresh()
+				end
+				local swatchRow = Instance.new("Frame")
+				swatchRow.LayoutOrder = card.nextOrder()
+				swatchRow.Size = UDim2.new(1, 0, 0, 26)
+				swatchRow.BackgroundTransparency = 1
+				swatchRow.Parent = card.content
+				local swatchLayout = Instance.new("UIListLayout")
+				swatchLayout.FillDirection = Enum.FillDirection.Horizontal
+				swatchLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+				swatchLayout.Padding = UDim.new(0, 8)
+				swatchLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				swatchLayout.Parent = swatchRow
+				local swatchRings = {}
+				for index, hex in ipairs({ "FFFFFF", "FF5A5A", "FF9F43", "FFD43B", "4ADE80", "22D3EE", "60A5FA", "B1A4FF", "F472B6" }) do
+					local swatch = Instance.new("TextButton")
+					swatch.LayoutOrder = index
+					swatch.Size = UDim2.fromOffset(22, 22)
+					swatch.AutoButtonColor = false
+					swatch.BorderSizePixel = 0
+					swatch.Text = ""
+					swatch.BackgroundColor3 = Color3.fromHex(hex)
+					swatch.Parent = swatchRow
+					local swatchCorner = Instance.new("UICorner")
+					swatchCorner.CornerRadius = UDim.new(1, 0)
+					swatchCorner.Parent = swatch
+					-- A ring marks the colour in use.
+					local ring = Instance.new("UIStroke")
+					ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+					ring.Thickness = 2
+					ring.Parent = swatch
+					swatch.Activated:Connect(function() useCustomColor(hex) end)
+					swatchRings[hex] = ring
+				end
+
+				local hexRow = Instance.new("Frame")
+				hexRow.LayoutOrder = card.nextOrder()
+				hexRow.Size = UDim2.new(1, 0, 0, 28)
+				hexRow.BackgroundTransparency = 1
+				hexRow.Parent = card.content
+				local hexLabel = Instance.new("TextLabel")
+				hexLabel.Size = UDim2.new(0, 80, 1, 0)
+				hexLabel.BackgroundTransparency = 1
+				hexLabel.Font = Enum.Font.Gotham
+				hexLabel.Text = "Custom hex"
+				hexLabel.TextSize = 12
+				hexLabel.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(hexLabel, "TextColor3", "SubText")
+				hexLabel.Parent = hexRow
+				local hexInput = Instance.new("TextBox")
+				hexInput.AnchorPoint = Vector2.new(0, 0.5)
+				hexInput.Position = UDim2.new(0, 84, 0.5, 0)
+				hexInput.Size = UDim2.fromOffset(100, 26)
+				hexInput.BorderSizePixel = 0
+				hexInput.ClearTextOnFocus = false
+				hexInput.Font = Enum.Font.GothamMedium
+				hexInput.PlaceholderText = "#B1A4FF"
+				hexInput.Text = ""
+				hexInput.TextSize = 12
+				bindAuxiliaryUiColor(hexInput, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(hexInput, "TextColor3", "Text")
+				bindAuxiliaryUiColor(hexInput, "PlaceholderColor3", "Muted")
+				hexInput.Parent = hexRow
+				local hexCorner = Instance.new("UICorner")
+				hexCorner.CornerRadius = UDim.new(0, 8)
+				hexCorner.Parent = hexInput
+				local hexStroke = Instance.new("UIStroke")
+				hexStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				hexStroke.Transparency = 0.35
+				bindAuxiliaryUiColor(hexStroke, "Color", "Stroke")
+				hexStroke.Parent = hexInput
+				hexInput.FocusLost:Connect(function()
+					local digits = hexInput.Text:gsub("[^%x]", "")
+					if #digits == 6 then
+						useCustomColor(digits)
+					else
+						-- Anything that isn't a 6-digit hex code just snaps back to the current colour.
+						card.refresh()
+					end
+				end)
+				table.insert(card.refreshers, function()
+					local custom = featureSettings.aimbotFovColorMode == "Custom"
+					local customHex = string.upper(featureSettings.aimbotFovColor)
+					for hex, ring in pairs(swatchRings) do
+						ring.Color = auxiliaryUiTheme.Text
+						ring.Transparency = (custom and hex == customHex) and 0 or 1
+					end
+					if not hexInput:IsFocused() then
+						hexInput.Text = "#" .. customHex
+					end
+				end)
+				card.refresh()
+			end
+
+			-- Kept in the shared environment so running the script again drops the old listeners.
+			if sharedEnv.SpreadCheeksAimbotConnections then
+				for _, connection in ipairs(sharedEnv.SpreadCheeksAimbotConnections) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			local connections = {}
+			sharedEnv.SpreadCheeksAimbotConnections = connections
+			-- Only used to set a new aim key; holding the key is read each frame in step.
+			table.insert(connections, UserInputService.InputBegan:Connect(function(input)
+				if UserInputService:GetFocusedTextBox() then return end
+				if recording then
+					-- Whatever is pressed while setting the key doesn't start aiming.
+					state.ignoreUntilRelease = true
+					local newKey = nil
+					if input.UserInputType == Enum.UserInputType.Keyboard then
+						if input.KeyCode == Enum.KeyCode.Escape then
+							stopRecording()
+							return
+						elseif reservedKeys[input.KeyCode] then
+							notify("Aimbot", input.KeyCode.Name .. " is reserved, pick another key")
+							return
+						elseif isMenuToggleKey(input.KeyCode) then
+							notify("Aimbot", input.KeyCode.Name .. " already opens and closes the menu, pick another key")
+							return
+						end
+						newKey = input.KeyCode.Name
+					-- Clicks on the menu (such as on this box, to cancel) aren't taken as the key. Clicks
+					-- in the game are, even where the game claims the button for itself.
+					elseif input.UserInputType == Enum.UserInputType.MouseButton2 and not pointerOverMenu() then
+						newKey = "RightClick"
+					elseif input.UserInputType == Enum.UserInputType.MouseButton1 and not pointerOverMenu() then
+						newKey = "LeftClick"
+					end
+					if newKey then
+						featureSettings.aimbotKey = newKey
+						saveFeatureSettings()
+						stopRecording()
+					end
+				end
+			end))
+			-- A key held while Roblox loses focus is never seen coming back up, so it doesn't count.
+			table.insert(connections, UserInputService.WindowFocusReleased:Connect(function()
+				state.ignoreUntilRelease = true
+			end))
+
+			-- The on-screen keybind list shows the aim key while the aimbot is on.
+			if keybindList and keybindList.addSource then
+				keybindList.addSource(function()
+					if state.enabled then
+						return { name = "Aimbot", key = featureSettings.aimbotKey, kind = "hold" }
+					end
+					return nil
+				end)
+			end
+
+			return {
+				isEnabled = function() return state.enabled end,
+			}
+		end
+
+		-- Kept separate so a problem in the aimbot can't stop the rest of the menu loading.
+		local aimbotOk, aimbot = pcall(buildAimbot)
+		if not aimbotOk then
+			warn("[SpreadCheeksGUI] The aimbot couldn't be added: " .. tostring(aimbot))
+			aimbot = nil
+		end
 
 		window:CreateSection({ name = "PLAYER TOOLS" })
 		local playerTab = withIcon(window, "CreateTab", { name = "Players" }, "users-round", "users")
@@ -17554,6 +18288,9 @@ if rayfieldLoaded and Rayfield then
 				end
 				if locatedPlayerName then
 					table.insert(items, { text = "Locating " .. locatedPlayerName, icons = { "locate" } })
+				end
+				if aimbot and aimbot.isEnabled() then
+					table.insert(items, { text = "Aimbot", icons = { "crosshair" } })
 				end
 				local names = {}
 				for _, item in ipairs(items) do
