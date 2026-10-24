@@ -14878,7 +14878,11 @@ if rayfieldLoaded and Rayfield then
 		-- Feature settings (fly speeds and so on) are kept between sessions in this file and
 		-- changed from the settings cards further down.
 		local featureSettingsFile = "SpreadCheeksGUI_Features.json"
-		local featureSettings = { flySpeed = 1, vehicleFlySpeed = 1, freecamSpeed = 1, flyUpDownKeys = true }
+		-- keybindListX/Y place the on-screen keybind list as a share of the screen (-1 until it's dragged).
+		local featureSettings = {
+			flySpeed = 1, vehicleFlySpeed = 1, freecamSpeed = 1, flyUpDownKeys = true,
+			keybindList = true, keybindListX = -1, keybindListY = -1,
+		}
 		local featureLimits = { flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 } }
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15236,6 +15240,584 @@ if rayfieldLoaded and Rayfield then
 				end
 			end
 		end)
+
+		-- Keybind list: a small panel on screen with every key that does something, and a switch
+		-- on the ones that turn a feature on and off. Drag it anywhere; the Keybind List switch
+		-- in this section shows or hides it.
+		local function buildKeybindList()
+			local playerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui") or Players.LocalPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild("SpreadCheeksKeybindList")
+			if previousGui then previousGui:Destroy() end
+			-- Kept in the shared environment so running the script again drops the old listeners.
+			if sharedEnv.SpreadCheeksKeybindListConnections then
+				for _, connection in ipairs(sharedEnv.SpreadCheeksKeybindListConnections) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			local connections = {}
+			sharedEnv.SpreadCheeksKeybindListConnections = connections
+
+			local headerHeight, rowHeight, rowGap, padding = 36, 28, 4, 8
+
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksKeybindList"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			-- Under the ; bar (1000) and the notifications (10001).
+			gui.DisplayOrder = 999
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.Enabled = false
+			gui.Parent = playerGui
+
+			-- The panel is a button so clicking it doesn't reach the game, and it's what gets dragged.
+			local panel = Instance.new("TextButton")
+			panel.Name = "KeybindList"
+			panel.AutoButtonColor = false
+			panel.Text = ""
+			panel.BackgroundTransparency = 0.04
+			panel.BorderSizePixel = 0
+			panel.ClipsDescendants = true
+			panel.Size = UDim2.fromOffset(200, headerHeight + rowHeight + padding)
+			bindAuxiliaryUiColor(panel, "BackgroundColor3", "Background")
+			panel.Parent = gui
+			local panelCorner = Instance.new("UICorner")
+			panelCorner.CornerRadius = UDim.new(0, 12)
+			panelCorner.Parent = panel
+			local panelStroke = Instance.new("UIStroke")
+			panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			panelStroke.Transparency = 0.3
+			bindAuxiliaryUiColor(panelStroke, "Color", "Stroke")
+			panelStroke.Parent = panel
+
+			-- Header: the logo (or a keyboard icon), the title and how many keys are listed.
+			local headerIcon = Instance.new("ImageLabel")
+			headerIcon.AnchorPoint = Vector2.new(0, 0.5)
+			headerIcon.Position = UDim2.new(0, 12, 0, headerHeight / 2)
+			headerIcon.BackgroundTransparency = 1
+			if spreadLogoLoaded then
+				-- A little wider than tall, since the logo is wide in the menu's top bar.
+				headerIcon.Size = UDim2.fromOffset(24, 20)
+				headerIcon.Image = spreadLogo
+				headerIcon.ScaleType = Enum.ScaleType.Fit
+			else
+				headerIcon.Size = UDim2.fromOffset(15, 15)
+				local icon = menuIcons.get("keyboard")
+				if icon then menuIcons.apply(headerIcon, icon) end
+				bindAuxiliaryUiColor(headerIcon, "ImageColor3", "AccentText")
+			end
+			headerIcon.Parent = panel
+			local titleX = 12 + headerIcon.Size.X.Offset + 8
+			local title = Instance.new("TextLabel")
+			title.AnchorPoint = Vector2.new(0, 0.5)
+			title.Position = UDim2.new(0, titleX, 0, headerHeight / 2)
+			title.Size = UDim2.new(1, -(titleX + 46), 0, 16)
+			title.BackgroundTransparency = 1
+			title.Font = Enum.Font.GothamBold
+			title.Text = "Active Keybinds"
+			title.TextSize = 13
+			title.TextXAlignment = Enum.TextXAlignment.Left
+			title.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(title, "TextColor3", "Text")
+			title.Parent = panel
+			local countPill = Instance.new("TextLabel")
+			countPill.AnchorPoint = Vector2.new(1, 0.5)
+			countPill.Position = UDim2.new(1, -10, 0, headerHeight / 2)
+			countPill.Size = UDim2.fromOffset(24, 18)
+			countPill.BorderSizePixel = 0
+			countPill.Font = Enum.Font.GothamBold
+			countPill.Text = "0"
+			countPill.TextSize = 11
+			bindAuxiliaryUiColor(countPill, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(countPill, "TextColor3", "SubText")
+			countPill.Parent = panel
+			local countCorner = Instance.new("UICorner")
+			countCorner.CornerRadius = UDim.new(1, 0)
+			countCorner.Parent = countPill
+			local countStroke = Instance.new("UIStroke")
+			countStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			countStroke.Transparency = 0.35
+			bindAuxiliaryUiColor(countStroke, "Color", "Stroke")
+			countStroke.Parent = countPill
+
+			local list = Instance.new("Frame")
+			list.Name = "Rows"
+			list.Position = UDim2.fromOffset(padding, headerHeight)
+			list.Size = UDim2.new(1, -padding * 2, 1, -(headerHeight + padding))
+			list.BackgroundTransparency = 1
+			list.Parent = panel
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, rowGap)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local emptyLabel = Instance.new("TextLabel")
+			emptyLabel.Size = UDim2.new(1, 0, 0, rowHeight)
+			emptyLabel.BackgroundTransparency = 1
+			emptyLabel.Font = Enum.Font.Gotham
+			emptyLabel.Text = "No keybinds set yet"
+			emptyLabel.TextSize = 12
+			emptyLabel.TextXAlignment = Enum.TextXAlignment.Left
+			emptyLabel.Visible = false
+			bindAuxiliaryUiColor(emptyLabel, "TextColor3", "SubText")
+			emptyLabel.Parent = list
+
+			local function textWidth(text, font, size)
+				return TextService:GetTextSize(text, size, font, Vector2.new(1000, 100)).X
+			end
+			-- Short names for keys whose KeyCode name is long or spelled out.
+			local keyLabels = {
+				Zero = "0", One = "1", Two = "2", Three = "3", Four = "4",
+				Five = "5", Six = "6", Seven = "7", Eight = "8", Nine = "9",
+				LeftShift = "LShift", RightShift = "RShift", LeftControl = "LCtrl", RightControl = "RCtrl",
+				LeftAlt = "LAlt", RightAlt = "RAlt", LeftSuper = "Win", RightSuper = "Win", CapsLock = "Caps",
+				Return = "Enter", PageUp = "PgUp", PageDown = "PgDn", Insert = "Ins", Delete = "Del",
+				Backquote = "`", Minus = "-", Equals = "=", LeftBracket = "[", RightBracket = "]",
+				BackSlash = "\\", Quote = "'", Comma = ",", Period = ".", Slash = "/",
+				LeftClick = "LMB", RightClick = "RMB",
+			}
+			local function keyLabel(keyName)
+				if keyLabels[keyName] then return keyLabels[keyName] end
+				local keypadKey = keyName:match("^Keypad(.+)$")
+				if keypadKey then return "Num" .. (keyLabels[keypadKey] or keypadKey) end
+				return keyName
+			end
+
+			-- Everything a key does right now: the menu key, the Controls switches, then binds made
+			-- in Infinite Yield's own keybind editor. Each row: name, key, kind and, for switches, on.
+			local function collectRows()
+				local rows = {}
+				local menuKeyOk, menuKey = pcall(function() return window.settings.toggleKeybind end)
+				local menuKeyName = menuKeyOk and (typeof(menuKey) == "EnumItem" and menuKey.Name or (type(menuKey) == "string" and menuKey)) or nil
+				if menuKeyName and menuKeyName ~= "" then
+					table.insert(rows, { name = "Menu", key = menuKeyName, kind = "toggle", on = not window.hidden })
+				end
+				for _, entry in ipairs(quickToggles) do
+					if entry.key then
+						table.insert(rows, { name = entry.name, key = entry.key.Name, kind = "toggle", on = entry.state })
+					end
+				end
+				if type(binds) == "table" then
+					for _, bind in ipairs(binds) do
+						local rawKey = tostring(bind.KEY)
+						local key = (rawKey == "LeftClick" or rawKey == "RightClick") and rawKey or rawKey:match("^Enum%.KeyCode%.(.+)$")
+						local command = type(bind.COMMAND) == "string" and bind.COMMAND or nil
+						if key and command then
+							-- One bind can run several commands, split with a backslash.
+							local row = { key = key, name = (command:gsub("\\", " + "):gsub("^%l", string.upper)), kind = "run" }
+							if command == "clicktp" or command == "clickdel" then
+								-- These work while the key is held down and you click.
+								row.name = command == "clicktp" and "Click Teleport" or "Click Delete"
+								row.kind = "hold"
+							elseif bind.TOGGLE then
+								row.kind = "toggle"
+								row.on = type(toggleOn) == "table" and toggleOn[bind] == true
+							end
+							table.insert(rows, row)
+						end
+					end
+				end
+				return rows
+			end
+
+			local function makeBadge(parent, text, textSize, textRole)
+				local badge = Instance.new("TextLabel")
+				badge.AnchorPoint = Vector2.new(1, 0.5)
+				badge.Size = UDim2.fromOffset(math.max(20, textWidth(text, Enum.Font.GothamBold, textSize) + 12), 18)
+				badge.BorderSizePixel = 0
+				badge.Font = Enum.Font.GothamBold
+				badge.Text = text
+				badge.TextSize = textSize
+				bindAuxiliaryUiColor(badge, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(badge, "TextColor3", textRole)
+				local badgeCorner = Instance.new("UICorner")
+				badgeCorner.CornerRadius = UDim.new(0, 5)
+				badgeCorner.Parent = badge
+				local badgeStroke = Instance.new("UIStroke")
+				badgeStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				badgeStroke.Transparency = 0.35
+				bindAuxiliaryUiColor(badgeStroke, "Color", "Stroke")
+				badgeStroke.Parent = badge
+				badge.Parent = parent
+				return badge
+			end
+
+			local function buildRow(data, order)
+				local view = { data = data, on = data.on == true }
+				local row = Instance.new("Frame")
+				row.LayoutOrder = order
+				row.Size = UDim2.new(1, 0, 0, rowHeight)
+				row.BorderSizePixel = 0
+				bindAuxiliaryUiColor(row, "BackgroundColor3", "Card")
+				local rowCorner = Instance.new("UICorner")
+				rowCorner.CornerRadius = UDim.new(0, 8)
+				rowCorner.Parent = row
+				local rowStroke = Instance.new("UIStroke")
+				rowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				rowStroke.Transparency = 0.5
+				bindAuxiliaryUiColor(rowStroke, "Color", "Stroke")
+				rowStroke.Parent = row
+				-- From the right: the key, then the switch or what the key does.
+				local keyBadge = makeBadge(row, keyLabel(data.key), 11, "Text")
+				keyBadge.Position = UDim2.new(1, -5, 0.5, 0)
+				local used = 5 + keyBadge.Size.X.Offset + 6
+				if data.kind == "toggle" then
+					local track = Instance.new("Frame")
+					track.AnchorPoint = Vector2.new(1, 0.5)
+					track.Position = UDim2.new(1, -used, 0.5, 0)
+					track.Size = UDim2.fromOffset(28, 16)
+					track.BorderSizePixel = 0
+					track.Parent = row
+					local trackCorner = Instance.new("UICorner")
+					trackCorner.CornerRadius = UDim.new(1, 0)
+					trackCorner.Parent = track
+					local trackStroke = Instance.new("UIStroke")
+					trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+					trackStroke.Parent = track
+					local knob = Instance.new("Frame")
+					knob.AnchorPoint = Vector2.new(0, 0.5)
+					knob.Size = UDim2.fromOffset(12, 12)
+					knob.BorderSizePixel = 0
+					knob.Parent = track
+					local knobCorner = Instance.new("UICorner")
+					knobCorner.CornerRadius = UDim.new(1, 0)
+					knobCorner.Parent = knob
+					view.track, view.trackStroke, view.knob = track, trackStroke, knob
+					used += 28
+				else
+					local tag = makeBadge(row, data.kind == "hold" and "HOLD" or "RUN", 10, "SubText")
+					tag.Position = UDim2.new(1, -used, 0.5, 0)
+					used += tag.Size.X.Offset
+				end
+				local nameLabel = Instance.new("TextLabel")
+				nameLabel.Position = UDim2.fromOffset(10, 0)
+				nameLabel.Size = UDim2.new(1, -(10 + used + 8), 1, 0)
+				nameLabel.BackgroundTransparency = 1
+				nameLabel.Font = Enum.Font.GothamMedium
+				nameLabel.Text = data.name
+				nameLabel.TextSize = 12
+				nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+				nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(nameLabel, "TextColor3", "Text")
+				nameLabel.Parent = row
+				row.Parent = list
+				view.row, view.rowStroke, view.keyBadge = row, rowStroke, keyBadge
+				view.width = 10 + textWidth(data.name, Enum.Font.GothamMedium, 12) + 8 + used
+				return view
+			end
+
+			-- Switch colours depend on state, so they're set here rather than bound to a theme role.
+			local function showState(view, animate)
+				if not view.track then return end
+				local theme = auxiliaryUiTheme
+				local on = view.on
+				local goals = {
+					{ view.track, { BackgroundColor3 = on and theme.Accent or theme.Inset } },
+					{ view.trackStroke, { Color = on and theme.Accent or theme.Stroke } },
+					{ view.knob, {
+						BackgroundColor3 = on and Color3.new(1, 1, 1) or theme.SubText,
+						Position = on and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+					} },
+				}
+				for _, goal in ipairs(goals) do
+					if animate then
+						TweenService:Create(goal[1], TweenInfo.new(0.15, Enum.EasingStyle.Quad), goal[2]):Play()
+					else
+						for property, value in pairs(goal[2]) do
+							goal[1][property] = value
+						end
+					end
+				end
+			end
+
+			-- A pressed key lights up its row for a moment.
+			local flashInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			local function flash(view)
+				local theme = auxiliaryUiTheme
+				view.keyBadge.BackgroundColor3 = theme.Accent
+				view.keyBadge.TextColor3 = Color3.new(1, 1, 1)
+				view.rowStroke.Color = theme.Accent
+				TweenService:Create(view.keyBadge, flashInfo, { BackgroundColor3 = theme.Inset, TextColor3 = theme.Text }):Play()
+				TweenService:Create(view.rowStroke, flashInfo, { Color = theme.Stroke }):Play()
+			end
+
+			local rowViews = {}
+			local signature = nil
+			local shown, ready, wantShown = false, false, false
+			local dragInput, dragFrom, panelFrom = nil, nil, nil
+			local hovering = false
+			local panelSize = Vector2.new(200, headerHeight + rowHeight + padding)
+			local sizeTween = nil
+
+			local function screenSize()
+				local camera = workspace.CurrentCamera
+				return camera and camera.ViewportSize or gui.AbsoluteSize
+			end
+			local function clampToScreen(x, y)
+				local screen = screenSize()
+				x = math.clamp(x, 0, math.max(0, screen.X - panelSize.X))
+				y = math.clamp(y, 0, math.max(0, screen.Y - panelSize.Y))
+				return UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+			end
+			-- Where it was dragged to is kept as a share of the screen, so it stays put at any size.
+			local function placePanel()
+				local screen = screenSize()
+				if featureSettings.keybindListX >= 0 and featureSettings.keybindListY >= 0 then
+					panel.Position = clampToScreen(featureSettings.keybindListX * screen.X, featureSettings.keybindListY * screen.Y)
+				else
+					panel.Position = clampToScreen(16, screen.Y * 0.36)
+				end
+			end
+
+			local function refresh()
+				local rows = collectRows()
+				local lines = {}
+				for _, data in ipairs(rows) do
+					table.insert(lines, data.kind .. "|" .. data.key .. "|" .. data.name)
+				end
+				local newSignature = table.concat(lines, "\n")
+				if newSignature == signature then
+					-- Same keys as before, so only switches can have changed.
+					for index, view in ipairs(rowViews) do
+						local on = rows[index].on == true
+						if on ~= view.on then
+							view.on = on
+							showState(view, true)
+						end
+					end
+					return
+				end
+				local animate = signature ~= nil and shown
+				signature = newSignature
+				for _, view in ipairs(rowViews) do
+					view.row:Destroy()
+				end
+				rowViews = {}
+				local widest = 0
+				for index, data in ipairs(rows) do
+					local view = buildRow(data, index)
+					showState(view, false)
+					widest = math.max(widest, view.width)
+					rowViews[index] = view
+				end
+				emptyLabel.Visible = #rows == 0
+				countPill.Text = tostring(#rows)
+				local pillWidth = math.max(24, textWidth(countPill.Text, Enum.Font.GothamBold, 11) + 14)
+				countPill.Size = UDim2.fromOffset(pillWidth, 18)
+				-- As wide as the longest row needs, within limits; longer names are cut short.
+				local headerWidth = titleX + textWidth(title.Text, Enum.Font.GothamBold, 13) + 12 + pillWidth + 10
+				local width = math.ceil(math.max(math.clamp(widest, 168, 248) + padding * 2, headerWidth))
+				local count = math.max(#rows, 1)
+				local height = headerHeight + count * rowHeight + (count - 1) * rowGap + padding
+				panelSize = Vector2.new(width, height)
+				if sizeTween then sizeTween:Cancel() end
+				if animate then
+					sizeTween = TweenService:Create(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+						Size = UDim2.fromOffset(width, height),
+					})
+					sizeTween:Play()
+				else
+					panel.Size = UDim2.fromOffset(width, height)
+				end
+				if not dragInput then placePanel() end
+			end
+
+			-- Fading: each part goes fully see-through and back to the transparency it was made with,
+			-- recorded the first time it's seen (always at rest, since rows are only made while shown).
+			local resting = setmetatable({}, { __mode = "k" })
+			local fadeProperties = {
+				{ "GuiObject", "BackgroundTransparency" },
+				{ "TextLabel", "TextTransparency" },
+				{ "ImageLabel", "ImageTransparency" },
+				{ "UIStroke", "Transparency" },
+			}
+			local function fadeParts()
+				local parts = {}
+				local function visit(object)
+					local record = resting[object]
+					if not record then
+						record = {}
+						for _, entry in ipairs(fadeProperties) do
+							if object:IsA(entry[1]) then
+								record[entry[2]] = object[entry[2]]
+							end
+						end
+						resting[object] = record
+					end
+					for property, value in pairs(record) do
+						if value < 1 then
+							table.insert(parts, { object, property, value })
+						end
+					end
+				end
+				visit(panel)
+				for _, descendant in ipairs(panel:GetDescendants()) do
+					visit(descendant)
+				end
+				return parts
+			end
+			local fadeSerial = 0
+			local function applyShown()
+				local visible = wantShown and ready
+				if visible == shown then return end
+				fadeSerial += 1
+				local serial = fadeSerial
+				if visible then
+					-- Brought up to date first, while still hidden, so it appears at its full size.
+					pcall(refresh)
+					shown = true
+					local parts = fadeParts()
+					for _, part in ipairs(parts) do
+						part[1][part[2]] = 1
+					end
+					gui.Enabled = true
+					local info = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+					for _, part in ipairs(parts) do
+						TweenService:Create(part[1], info, { [part[2]] = part[3] }):Play()
+					end
+				else
+					shown = false
+					dragInput = nil
+					local info = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+					for _, part in ipairs(fadeParts()) do
+						TweenService:Create(part[1], info, { [part[2]] = 1 }):Play()
+					end
+					-- Switched off once faded, so the hidden panel can't be clicked.
+					task.delay(0.2, function()
+						if fadeSerial == serial then
+							gui.Enabled = false
+						end
+					end)
+				end
+			end
+
+			-- Dragging. Drags are measured from where they started, so screen insets cancel out.
+			local function showBorder()
+				panelStroke.Color = (hovering or dragInput) and auxiliaryUiTheme.Accent or auxiliaryUiTheme.Stroke
+			end
+			panel.MouseEnter:Connect(function()
+				hovering = true
+				showBorder()
+			end)
+			panel.MouseLeave:Connect(function()
+				hovering = false
+				showBorder()
+			end)
+			panel.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					dragInput = input
+					dragFrom = Vector2.new(input.Position.X, input.Position.Y)
+					panelFrom = Vector2.new(panel.Position.X.Offset, panel.Position.Y.Offset)
+					showBorder()
+				end
+			end)
+			table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+				if dragInput and (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then
+					panel.Position = clampToScreen(panelFrom.X + input.Position.X - dragFrom.X, panelFrom.Y + input.Position.Y - dragFrom.Y)
+				end
+			end))
+			table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+				if dragInput and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+					dragInput = nil
+					showBorder()
+					local screen = screenSize()
+					featureSettings.keybindListX = panel.Position.X.Offset / math.max(screen.X, 1)
+					featureSettings.keybindListY = panel.Position.Y.Offset / math.max(screen.Y, 1)
+					saveFeatureSettings()
+				end
+			end))
+
+			-- Keys pressed while playing light up their rows. The keybinds themselves are handled
+			-- by their own listeners and skip typing the same way.
+			table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if not shown or gameProcessed or UserInputService:GetFocusedTextBox() then return end
+				local key = nil
+				if input.UserInputType == Enum.UserInputType.Keyboard then
+					key = input.KeyCode.Name
+				elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+					key = "LeftClick"
+				elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+					key = "RightClick"
+				end
+				local pressed = false
+				for _, view in ipairs(rowViews) do
+					if view.data.key == key then
+						flash(view)
+						pressed = true
+					end
+				end
+				-- The keybind switches its feature in its own listener; show the result straight after.
+				if pressed then
+					task.defer(function()
+						if shown then pcall(refresh) end
+					end)
+				end
+			end))
+
+			table.insert(auxiliaryUiThemeListeners, function()
+				for _, view in ipairs(rowViews) do
+					showState(view, false)
+				end
+				showBorder()
+			end)
+
+			-- Switch states and the list itself follow the features ten times a second.
+			local lastScreen = nil
+			task.spawn(function()
+				while gui.Parent do
+					if shown then
+						local ok, problem = pcall(refresh)
+						if not ok then
+							warn("[SpreadCheeksGUI] The keybind list stopped updating: " .. tostring(problem))
+							break
+						end
+						local screen = screenSize()
+						if screen ~= lastScreen and not dragInput then
+							lastScreen = screen
+							placePanel()
+						end
+					end
+					task.wait(0.1)
+				end
+			end)
+
+			-- Appears as the menu finishes opening, along with everything in it.
+			task.spawn(function()
+				local waited = 0
+				while not windowOpenedAt and waited < 15 do
+					waited += task.wait(0.1)
+				end
+				task.wait(math.max(0, (windowOpenedAt or os.clock()) + 1.45 - os.clock()))
+				ready = true
+				applyShown()
+			end)
+
+			return {
+				setShown = function(on)
+					wantShown = on == true
+					applyShown()
+				end,
+			}
+		end
+
+		-- Kept separate so a problem in the list can't stop the rest of the menu loading.
+		local keybindListOk, keybindList = pcall(buildKeybindList)
+		if not keybindListOk then
+			warn("[SpreadCheeksGUI] The keybind list couldn't be added: " .. tostring(keybindList))
+			keybindList = nil
+		end
+		withIcon(controlsTab, "CreateToggle", {
+			name = "Keybind List",
+			description = "Shows your keybinds on screen. Drag it to move it",
+			value = featureSettings.keybindList,
+			callback = function(enabled)
+				enabled = enabled == true
+				if featureSettings.keybindList ~= enabled then
+					featureSettings.keybindList = enabled
+					saveFeatureSettings()
+				end
+				if keybindList then keybindList.setShown(enabled) end
+			end,
+		}, "layout-list", "list")
+		if keybindList then keybindList.setShown(featureSettings.keybindList) end
 
 		-- Settings cards open under a switch the way Rayfield's dropdowns do. Right-click a switch's
 		-- row to open or close its card (ESP also has an arrow, in place of its key box).
