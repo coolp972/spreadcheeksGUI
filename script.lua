@@ -13724,6 +13724,134 @@ local function updateAuxiliaryUiTheme(theme)
 	end
 end
 
+-- Lucide icons for the menu. Rayfield gen2 only shows image ids, so these come from the sprite
+-- sheets the original Rayfield uses: each icon is one 48px cell of a sheet image.
+local menuIcons = { byName = {} }
+function menuIcons.load()
+	local iconFile = "SpreadCheeksGUI_Icons.lua"
+	-- The map is read as data rather than run.
+	local function parse(source)
+		local sheet = type(source) == "string" and source:match('%["48px"%]%s*=%s*(%b{})')
+		if not sheet then return false end
+		for name, id, width, height, x, y in sheet:gmatch('%[?"?([%w_%-]+)"?%]?%s*=%s*{%s*(%d+)%s*,%s*{%s*(%d+)%s*,%s*(%d+)%s*}%s*,%s*{%s*(%d+)%s*,%s*(%d+)%s*}%s*}') do
+			menuIcons.byName[name] = {
+				image = "rbxassetid://" .. id,
+				size = Vector2.new(tonumber(width), tonumber(height)),
+				offset = Vector2.new(tonumber(x), tonumber(y)),
+			}
+		end
+		return next(menuIcons.byName) ~= nil
+	end
+	if readfile then
+		local readOk, saved = readfile(iconFile, true)
+		if readOk and parse(saved) then return end
+	end
+	local fetched, source = pcall(function()
+		return game:HttpGet("https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/refs/heads/main/icons.lua")
+	end)
+	if fetched and parse(source) then
+		if writefile then writefile(iconFile, source, true) end
+	else
+		warn("[SpreadCheeksGUI] Menu icons couldn't be loaded, so the menu shows without them.")
+	end
+end
+-- The first of the given names that exists, so an icon can fall back to another.
+function menuIcons.get(...)
+	for index = 1, select("#", ...) do
+		local icon = menuIcons.byName[select(index, ...)]
+		if icon then return icon end
+	end
+	return nil
+end
+function menuIcons.apply(label, icon)
+	label.Image = icon.image
+	label.ImageRectSize = icon.size
+	label.ImageRectOffset = icon.offset
+end
+-- Points labels under root that show this icon's sheet, but no cell of it yet, at the icon.
+function menuIcons.fitUnfitted(root, icon)
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if (descendant:IsA("ImageLabel") or descendant:IsA("ImageButton"))
+			and descendant.Image == icon.image and descendant.ImageRectSize == Vector2.zero then
+			descendant.ImageRectSize = icon.size
+			descendant.ImageRectOffset = icon.offset
+		end
+	end
+end
+-- Command icons, matched on the command's name: the first rule whose text appears in the name
+-- wins, and "=" means the whole name. Order matters: "respawn" and "remotespy" contain "esp",
+-- "chat" contains "hat", "blockhead" contains "lock" and "mousesensitivity" contains "sit".
+menuIcons.commandRules = {
+	{ "spy", "radio" }, { "respawn", "rotate-ccw" }, { "remove", "trash-2" }, { "sensitivity", "mouse" },
+	{ "blockhead", "box" }, { "brightness", "sun" }, { "jpower", "arrow-big-up" },
+	{ "userid", "fingerprint" }, { "jobid", "fingerprint" }, { "creatorid", "fingerprint" }, { "appearanceid", "fingerprint" },
+	{ "discord", "message-circle" }, { "hideiy", "eye-off" }, { "showiy", "eye" }, { "keepiy", "pin" },
+	{ "spawnpoint", "flag" }, { "flashback", "history" }, { "lastcommand", "history" }, { "guiscale", "scaling" },
+	{ "guis", "app-window" }, { "inviteprompt", "user-plus" }, { "promptr", "person-standing" },
+	{ "proximity", "hand" }, { "prompts", "bell-off" }, { "shiftlock", "lock" },
+	{ "render", "monitor" }, { "materials", "layers" }, { "arms", "bone" }, { "legs", "bone" }, { "limbs", "bone" },
+	{ "naked", "shirt" }, { "noface", "smile" }, { "nilchar", "user-x" }, { "root", "user-x" }, { "stun", "zap-off" },
+	{ "=trip", "footprints" }, { "scare", "ghost" }, { "fakeout", "skull" }, { "destroyheight", "skull" },
+	{ "pulsetp", "navigation" }, { "=thru", "navigation" }, { "offset", "move" }, { "gametp", "rocket" },
+	{ "datalimit", "network" }, { "replicationlag", "network" }, { "enable", "toggle-right" }, { "disable", "toggle-right" },
+	{ "alignmentkeys", "keyboard" }, { "gameplaypaused", "pause" }, { "grippos", "hand" }, { "handlekill", "sword" },
+	{ "hovername", "tag" }, { "maxslopeangle", "mountain" }, { "nobgui", "tag" }, { "partpath", "box" },
+	{ "=rec", "video" }, { "togglefs", "maximize" }, { "split", "scissors" },
+	{ "esp", "scan-eye" }, { "chams", "person-standing" }, { "locate", "locate" }, { "xray", "scan" },
+	{ "antifling", "shield" }, { "antikick", "shield" }, { "antiteleport", "shield" }, { "antivoid", "shield" },
+	{ "antiafk", "coffee" }, { "antilag", "zap" }, { "god", "shield" },
+	{ "fling", "tornado" }, { "vehiclefly", "car" }, { "vfly", "car" }, { "flyjump", "chevrons-up" }, { "fly", "plane" },
+	{ "noclip", "ghost" }, { "clip", "ghost" }, { "jump", "arrow-big-up" }, { "gravity", "orbit" },
+	{ "swim", "waves" }, { "float", "cloud" }, { "freecam", "video" },
+	{ "spectate", "eye" }, { "view", "eye" }, { "lookat", "eye" }, { "stare", "eye" },
+	{ "waypoint", "map-pin" }, { "goto", "navigation" }, { "tppos", "navigation" }, { "teleport", "navigation" },
+	{ "position", "map-pinned" }, { "bring", "magnet" }, { "tpunanchored", "magnet" },
+	{ "freeze", "snowflake" }, { "thaw", "snowflake" }, { "spin", "refresh-cw" }, { "orbit", "orbit" },
+	{ "follow", "footprints" }, { "walkto", "footprints" },
+	{ "rejoin", "refresh-cw" }, { "serverhop", "server" }, { "reset", "rotate-ccw" },
+	{ "refresh", "rotate-ccw" }, { "delete", "trash-2" }, { "clear", "eraser" },
+	{ "invis", "eye-off" }, { "visible", "eye" }, { "sit", "armchair" }, { "=lay", "bed" },
+	{ "dance", "music" }, { "anim", "person-standing" }, { "emote", "smile" },
+	{ "chat", "message-square" }, { "spam", "message-square" }, { "whisper", "message-square" }, { "=say", "message-square" },
+	{ "btools", "hammer" }, { "f3x", "hammer" }, { "tool", "hammer" }, { "reach", "sword" },
+	{ "hitbox", "box" }, { "headsize", "box" }, { "hat", "hard-hat" },
+	{ "fullbright", "sun" }, { "=day", "sun" }, { "night", "moon" }, { "fog", "cloud-fog" }, { "light", "lightbulb" },
+	{ "shadows", "sun" }, { "ambient", "sun" }, { "logs", "scroll-text" },
+	{ "fov", "focus" }, { "zoom", "zoom-in" }, { "cam", "camera" }, { "firstp", "eye" }, { "thirdp", "eye" },
+	{ "unlock", "lock-open" }, { "lock", "lock" }, { "unfriend", "user-minus" }, { "friend", "user-plus" },
+	{ "=age", "calendar" }, { "joindate", "calendar" }, { "copy", "copy" },
+	{ "unmute", "volume-2" }, { "mute", "volume-x" }, { "volume", "volume-2" }, { "listento", "ear" },
+	{ "dex", "folder-tree" }, { "explorer", "folder-tree" }, { "audiologger", "music" },
+	{ "console", "square-terminal" }, { "console", "terminal-square" }, { "plugin", "puzzle" }, { "alias", "tag" },
+	{ "keypress", "keyboard" }, { "click", "mouse-pointer-click" }, { "proximity", "hand" }, { "touch", "hand" },
+	{ "anchor", "anchor" }, { "notify", "bell" }, { "ping", "wifi" }, { "exit", "log-out" }, { "screenshot", "camera" },
+	{ "record", "video" }, { "fullscreen", "maximize" }, { "info", "info" }, { "speed", "gauge" }, { "fps", "gauge" },
+	{ "loop", "repeat" }, { "break", "circle-stop" }, { "weaken", "dumbbell" }, { "strengthen", "dumbbell" },
+	{ "wall", "brick-wall" }, { "hipheight", "ruler" }, { "rotate", "rotate-3d" }, { "=team", "users" },
+	{ "inspect", "search" }, { "watch", "eye" }, { "phonebook", "phone" }, { "save", "save" }, { "debug", "bug" },
+}
+-- A command's icon, or the first of the fallback names that exists when no rule fits.
+function menuIcons.forCommand(commandName, ...)
+	local name = tostring(commandName):lower()
+	for _, rule in ipairs(menuIcons.commandRules) do
+		local text = rule[1]
+		local fits
+		if text:sub(1, 1) == "=" then
+			fits = name == text:sub(2)
+		else
+			fits = name:find(text, 1, true) ~= nil
+		end
+		if fits then
+			local icon = menuIcons.get(rule[2])
+			if icon then return icon end
+		end
+	end
+	return menuIcons.get(...)
+end
+
+-- Lets the menu open the ; bar too (the Home page has a button for it).
+local quickCommandBar = {}
+
 -- The ; command bar is built before the Rayfield menu loads, so it works straight away and
 -- can't be held up or stopped by anything in the menu setup.
 (function()
@@ -13804,11 +13932,12 @@ end
 	hint.Position = UDim2.fromOffset(50, 36)
 	hint.Size = UDim2.new(1, -90, 0, 14)
 	hint.BackgroundTransparency = 1
-	hint.Text = "ENTER  RUN     ESC  CLOSE"
+	hint.Text = "ENTER  RUN     TAB  COMPLETE     UP / DOWN  PICK OR HISTORY     ESC  CLOSE"
 	hint.Font = Enum.Font.GothamMedium
 	hint.TextSize = 9
 	hint.TextColor3 = Color3.fromRGB(104, 113, 130)
 	hint.TextXAlignment = Enum.TextXAlignment.Left
+	hint.TextTruncate = Enum.TextTruncate.AtEnd
 	hint.Parent = shell
 	bindAuxiliaryUiColor(hint, "TextColor3", "Muted")
 
@@ -13830,16 +13959,360 @@ end
 	closeCorner.CornerRadius = UDim.new(0, 7)
 	closeCorner.Parent = closeButton
 
+	-- Matching commands, listed under the bar while you type.
+	local suggestionPanel = Instance.new("Frame")
+	suggestionPanel.Name = "Suggestions"
+	suggestionPanel.Position = UDim2.new(0, 0, 1, 8)
+	suggestionPanel.Size = UDim2.new(1, 0, 0, 0)
+	suggestionPanel.BorderSizePixel = 0
+	suggestionPanel.Visible = false
+	suggestionPanel.Parent = shell
+	bindAuxiliaryUiColor(suggestionPanel, "BackgroundColor3", "Background")
+	local suggestionCorner = Instance.new("UICorner")
+	suggestionCorner.CornerRadius = UDim.new(0, 11)
+	suggestionCorner.Parent = suggestionPanel
+	local suggestionStroke = Instance.new("UIStroke")
+	suggestionStroke.Transparency = 0.2
+	suggestionStroke.Parent = suggestionPanel
+	bindAuxiliaryUiColor(suggestionStroke, "Color", "Stroke")
+	local suggestionList = Instance.new("ScrollingFrame")
+	suggestionList.Position = UDim2.fromOffset(4, 4)
+	suggestionList.Size = UDim2.new(1, -8, 1, -8)
+	suggestionList.BackgroundTransparency = 1
+	suggestionList.BorderSizePixel = 0
+	suggestionList.ScrollBarThickness = 3
+	suggestionList.ScrollingDirection = Enum.ScrollingDirection.Y
+	suggestionList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	suggestionList.CanvasSize = UDim2.new()
+	suggestionList.Parent = suggestionPanel
+	bindAuxiliaryUiColor(suggestionList, "ScrollBarImageColor3", "Muted")
+	local suggestionLayout = Instance.new("UIListLayout")
+	suggestionLayout.Padding = UDim.new(0, 2)
+	suggestionLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	suggestionLayout.Parent = suggestionList
+
+	local rowHeight, maxVisibleRows, maxSuggestions = 38, 6, 60
+	local rows = {}
+	local currentMatches = {}
+	local highlighted = 0
+	-- Set once a suggestion is picked with the arrow keys, so Enter runs that one.
+	local navigated = false
+	-- While arguments are being typed the list just shows how the command is used.
+	local hintMode = false
+	-- Text the bar set itself, so the change doesn't count as typing.
+	local programmaticText = nil
+	local historyIndex, historyDraft = 0, ""
+	local acceptSuggestion
+
+	-- Every command once, with its usage and description: IY's command list first, then
+	-- anything registered but not listed there (plugin commands, for one).
+	local commandIndex = {}
+	local indexedCommandCount = -1
+	local function buildCommandIndex()
+		commandIndex = {}
+		local listed = {}
+		for _, info in ipairs(type(CMDs) == "table" and CMDs or {}) do
+			local display = tostring(info.NAME or "")
+			local cut = display:find("[%[%(]")
+			local head = cut and display:sub(1, cut - 1) or display
+			local names = {}
+			for name in head:gmatch("[^/]+") do
+				name = name:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+				if name ~= "" then
+					table.insert(names, name)
+					listed[name] = true
+				end
+			end
+			if #names > 0 then
+				table.insert(commandIndex, {
+					names = names,
+					usage = cut and display:sub(cut) or "",
+					description = tostring(info.DESC or ""),
+				})
+			end
+		end
+		for _, command in ipairs(type(cmds) == "table" and cmds or {}) do
+			local name = type(command) == "table" and type(command.NAME) == "string" and command.NAME:lower()
+			if name and not listed[name] then
+				local names = { name }
+				for _, alias in ipairs(type(command.ALIAS) == "table" and command.ALIAS or {}) do
+					table.insert(names, tostring(alias):lower())
+				end
+				for _, each in ipairs(names) do listed[each] = true end
+				table.insert(commandIndex, {
+					names = names,
+					usage = "",
+					description = command.PLUGIN and ("From " .. tostring(command.PLUGIN)) or "",
+				})
+			end
+		end
+		indexedCommandCount = type(cmds) == "table" and #cmds or 0
+	end
+
+	-- Exact names first, then names that start with what's typed, then names that contain it.
+	local function findMatches(word)
+		local found = {}
+		for _, entry in ipairs(commandIndex) do
+			local bestRank, bestName
+			for _, name in ipairs(entry.names) do
+				local rank = (name == word and 1) or (name:sub(1, #word) == word and 2) or (name:find(word, 1, true) and 3) or nil
+				if rank and (not bestRank or rank < bestRank) then
+					bestRank, bestName = rank, name
+				end
+			end
+			if bestRank then
+				table.insert(found, { entry = entry, name = bestName, rank = bestRank })
+			end
+		end
+		table.sort(found, function(left, right)
+			if left.rank ~= right.rank then return left.rank < right.rank end
+			if #left.name ~= #right.name then return #left.name < #right.name end
+			return left.name < right.name
+		end)
+		for index = #found, maxSuggestions + 1, -1 do
+			found[index] = nil
+		end
+		return found
+	end
+
+	-- Splits the bar's text around the command being typed. IY runs \-separated commands one
+	-- after another, and a leading ! repeats a command with its last arguments.
+	local function splitCommandText(text)
+		local commandPrefix = tostring(prefix or ";")
+		if commandPrefix ~= "" and text:sub(1, #commandPrefix) == commandPrefix then
+			text = text:sub(#commandPrefix + 1)
+		end
+		local before, chunk = text:match("^(.*\\)(.-)$")
+		if not before then
+			before, chunk = "", text
+		end
+		local spaces, lead, word, rest = chunk:match("^(%s*)(!?)(%S*)(.*)$")
+		return before .. spaces, lead, word, rest
+	end
+
+	local function getRow(index)
+		if rows[index] then return rows[index] end
+		local row = { index = index }
+		row.button = Instance.new("TextButton")
+		row.button.Name = "Suggestion"
+		row.button.LayoutOrder = index
+		row.button.Size = UDim2.new(1, -6, 0, rowHeight)
+		row.button.AutoButtonColor = false
+		row.button.BackgroundTransparency = 1
+		row.button.BorderSizePixel = 0
+		row.button.Text = ""
+		row.button.Parent = suggestionList
+		bindAuxiliaryUiColor(row.button, "BackgroundColor3", "SelectedCard")
+		local rowCorner = Instance.new("UICorner")
+		rowCorner.CornerRadius = UDim.new(0, 8)
+		rowCorner.Parent = row.button
+		row.icon = Instance.new("ImageLabel")
+		row.icon.AnchorPoint = Vector2.new(0, 0.5)
+		row.icon.Position = UDim2.new(0, 10, 0.5, 0)
+		row.icon.Size = UDim2.fromOffset(16, 16)
+		row.icon.BackgroundTransparency = 1
+		row.icon.Parent = row.button
+		bindAuxiliaryUiColor(row.icon, "ImageColor3", "Text")
+		local titleLine = Instance.new("Frame")
+		titleLine.Position = UDim2.fromOffset(36, 4)
+		titleLine.Size = UDim2.new(1, -46, 0, 16)
+		titleLine.BackgroundTransparency = 1
+		titleLine.ClipsDescendants = true
+		titleLine.Parent = row.button
+		local titleLayout = Instance.new("UIListLayout")
+		titleLayout.FillDirection = Enum.FillDirection.Horizontal
+		titleLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+		titleLayout.Padding = UDim.new(0, 6)
+		titleLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		titleLayout.Parent = titleLine
+		row.name = Instance.new("TextLabel")
+		row.name.LayoutOrder = 1
+		row.name.AutomaticSize = Enum.AutomaticSize.X
+		row.name.Size = UDim2.new(0, 0, 1, 0)
+		row.name.BackgroundTransparency = 1
+		row.name.Font = Enum.Font.GothamMedium
+		row.name.TextSize = 13
+		row.name.Parent = titleLine
+		bindAuxiliaryUiColor(row.name, "TextColor3", "Text")
+		row.usage = Instance.new("TextLabel")
+		row.usage.LayoutOrder = 2
+		row.usage.AutomaticSize = Enum.AutomaticSize.X
+		row.usage.Size = UDim2.new(0, 0, 1, 0)
+		row.usage.BackgroundTransparency = 1
+		row.usage.Font = Enum.Font.Gotham
+		row.usage.TextSize = 12
+		row.usage.Parent = titleLine
+		bindAuxiliaryUiColor(row.usage, "TextColor3", "Muted")
+		row.description = Instance.new("TextLabel")
+		row.description.Position = UDim2.fromOffset(36, 21)
+		row.description.Size = UDim2.new(1, -46, 0, 13)
+		row.description.BackgroundTransparency = 1
+		row.description.Font = Enum.Font.Gotham
+		row.description.TextSize = 11
+		row.description.TextXAlignment = Enum.TextXAlignment.Left
+		row.description.TextTruncate = Enum.TextTruncate.AtEnd
+		row.description.Parent = row.button
+		bindAuxiliaryUiColor(row.description, "TextColor3", "SubText")
+		row.button.MouseEnter:Connect(function()
+			if row.index ~= highlighted then row.button.BackgroundTransparency = 0.6 end
+		end)
+		row.button.MouseLeave:Connect(function()
+			row.button.BackgroundTransparency = row.index == highlighted and 0 or 1
+		end)
+		row.button.Activated:Connect(function()
+			acceptSuggestion(row.index)
+		end)
+		rows[index] = row
+		return row
+	end
+
+	local function renderSuggestions()
+		for index = 1, math.max(#currentMatches, #rows) do
+			local match = currentMatches[index]
+			if match then
+				local row = getRow(index)
+				local icon = menuIcons.forCommand(match.entry.names[1], "square-terminal", "terminal-square", "chevron-right")
+				row.icon.Visible = icon ~= nil
+				if icon then menuIcons.apply(row.icon, icon) end
+				row.name.Text = table.concat(match.entry.names, " / ")
+				row.usage.Text = match.entry.usage
+				row.description.Text = match.entry.description
+				row.button.BackgroundTransparency = index == highlighted and 0 or 1
+				row.button.Visible = true
+			elseif rows[index] then
+				rows[index].button.Visible = false
+			end
+		end
+		local shown = math.min(#currentMatches, maxVisibleRows)
+		suggestionPanel.Visible = shown > 0
+		suggestionPanel.Size = UDim2.new(1, 0, 0, shown * (rowHeight + 2) + 6)
+	end
+
+	local function scrollToHighlighted()
+		local top = (highlighted - 1) * (rowHeight + 2)
+		local scroll = suggestionList.CanvasPosition.Y
+		local viewHeight = suggestionList.AbsoluteSize.Y
+		if top < scroll then
+			suggestionList.CanvasPosition = Vector2.new(0, top)
+		elseif top + rowHeight > scroll + viewHeight then
+			suggestionList.CanvasPosition = Vector2.new(0, top + rowHeight - viewHeight)
+		end
+	end
+
+	local function hideSuggestions()
+		currentMatches, highlighted, navigated, hintMode = {}, 0, false, false
+		renderSuggestions()
+	end
+
+	local function setInputText(text)
+		programmaticText = text
+		commandInput.Text = text
+		commandInput.CursorPosition = #text + 1
+	end
+
+	local function refreshSuggestions()
+		local _, _, word, rest = splitCommandText(commandInput.Text)
+		word = word:lower()
+		currentMatches, highlighted, navigated, hintMode = {}, 0, false, false
+		if word ~= "" then
+			if rest ~= "" then
+				-- The arguments are being typed now: show how the command is used.
+				for _, entry in ipairs(commandIndex) do
+					if table.find(entry.names, word) then
+						currentMatches = { { entry = entry, name = word } }
+						hintMode = true
+						break
+					end
+				end
+			else
+				currentMatches = findMatches(word)
+				highlighted = #currentMatches > 0 and 1 or 0
+			end
+		end
+		suggestionList.CanvasPosition = Vector2.zero
+		renderSuggestions()
+	end
+
+	-- Fills in the picked command, ready for its arguments.
+	acceptSuggestion = function(index)
+		local match = currentMatches[index or highlighted]
+		if not match or hintMode then return false end
+		local before, lead = splitCommandText(commandInput.Text)
+		setInputText(before .. lead .. match.name .. " ")
+		refreshSuggestions()
+		return true
+	end
+
+	-- Up steps back through commands run before (newest first), Down steps forward again,
+	-- ending on whatever had been typed before stepping back.
+	local function browseHistory(direction)
+		local history = type(cmdHistory) == "table" and cmdHistory or {}
+		if #history == 0 then return end
+		if historyIndex == 0 then historyDraft = commandInput.Text end
+		historyIndex = math.clamp(historyIndex + direction, 0, #history)
+		hideSuggestions()
+		setInputText(historyIndex == 0 and historyDraft or tostring(history[historyIndex]))
+	end
+
+	commandInput:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = commandInput.Text
+		if text == programmaticText then return end
+		programmaticText = nil
+		if text:find("\t", 1, true) then
+			-- Roblox types Tab into the box; it means "use the highlighted suggestion".
+			if not acceptSuggestion() then
+				setInputText((text:gsub("\t", "")))
+			end
+			return
+		end
+		historyIndex = 0
+		refreshSuggestions()
+	end)
+
+	local function isOverBar(point)
+		for _, frame in ipairs({ shell, suggestionPanel }) do
+			if frame.Visible then
+				local position, size = frame.AbsolutePosition, frame.AbsoluteSize
+				if point.X >= position.X and point.X <= position.X + size.X
+					and point.Y >= position.Y and point.Y <= position.Y + size.Y then
+					return true
+				end
+			end
+		end
+		return false
+	end
+
 	local function closeCommandBar()
 		commandGui.Enabled = false
+		hideSuggestions()
 		if UserInputService:GetFocusedTextBox() == commandInput then
 			commandInput:ReleaseFocus()
 		end
 	end
 
-	commandInput.FocusLost:Connect(function(enterPressed)
+	local function openCommandBar()
+		commandGui.Enabled = true
+		task.defer(function()
+			if not commandGui.Enabled then return end
+			if indexedCommandCount ~= #cmds then buildCommandIndex() end
+			historyIndex = 0
+			hideSuggestions()
+			setInputText("")
+			commandInput:CaptureFocus()
+		end)
+	end
+	quickCommandBar.open = openCommandBar
+
+	commandInput.FocusLost:Connect(function(enterPressed, cause)
 		if enterPressed then
-			local commandText = commandInput.Text:gsub("^%s+", ""):gsub("%s+$", "")
+			local commandText = commandInput.Text
+			-- A suggestion picked with the arrow keys runs as though it had been typed in full.
+			local picked = navigated and not hintMode and currentMatches[highlighted]
+			if picked then
+				local before, lead = splitCommandText(commandText)
+				commandText = before .. lead .. picked.name
+			end
+			commandText = commandText:gsub("^%s+", ""):gsub("%s+$", "")
 			local commandPrefix = tostring(prefix or ";")
 			if commandPrefix ~= "" and commandText:sub(1, #commandPrefix) == commandPrefix then
 				commandText = commandText:sub(#commandPrefix + 1):gsub("^%s+", "")
@@ -13847,8 +14320,19 @@ end
 			if commandText ~= "" then
 				execCmd(commandText, Players.LocalPlayer, true)
 			end
+		elseif cause and (cause.UserInputType == Enum.UserInputType.MouseButton1 or cause.UserInputType == Enum.UserInputType.Touch)
+			and isOverBar(UserInputService:GetMouseLocation()) then
+			-- A click on the bar or its list (picking a suggestion, say) keeps it open.
+			task.defer(function()
+				if commandGui.Enabled and not UserInputService:GetFocusedTextBox() then
+					commandInput:CaptureFocus()
+					commandInput.CursorPosition = #commandInput.Text + 1
+				end
+			end)
+			return
 		end
 		commandGui.Enabled = false
+		hideSuggestions()
 	end)
 
 	closeButton.Activated:Connect(closeCommandBar)
@@ -13878,20 +14362,37 @@ end
 		pcall(function() sharedEnv.SpreadCheeksCommandBarConnection:Disconnect() end)
 	end
 	sharedEnv.SpreadCheeksCommandBarConnection = UserInputService.InputBegan:Connect(function(input)
-		if input.KeyCode ~= Enum.KeyCode.Semicolon then return end
-		-- Don't steal `;` while the player is typing in the bar, chat or another input.
-		-- Checking the bar's focus rather than whether it's showing means `;` still works
-		-- if the bar is ever left open without the cursor in it.
-		if commandInput:IsFocused() or isTypingElsewhere() then return end
-		commandGui.Enabled = true
-		task.defer(function()
-			if commandGui.Enabled then
-				commandInput.Text = ""
-				commandInput:CaptureFocus()
+		if commandInput:IsFocused() then
+			-- Up and Down move through the suggestions when there are some, otherwise
+			-- through commands run before.
+			if input.KeyCode == Enum.KeyCode.Up or input.KeyCode == Enum.KeyCode.Down then
+				local step = input.KeyCode == Enum.KeyCode.Down and 1 or -1
+				if #currentMatches > 0 and not hintMode then
+					highlighted = (highlighted - 1 + step) % #currentMatches + 1
+					navigated = true
+					renderSuggestions()
+					scrollToHighlighted()
+				else
+					browseHistory(-step)
+				end
+				-- Roblox can move the cursor on Up and Down; keep it at the end of the text.
+				task.defer(function()
+					commandInput.CursorPosition = #commandInput.Text + 1
+				end)
 			end
-		end)
+			return
+		end
+		if input.KeyCode ~= Enum.KeyCode.Semicolon then return end
+		-- Don't steal `;` while the player is typing in chat or another input. Checking the
+		-- bar's focus rather than whether it's showing means `;` still works if the bar is
+		-- ever left open without the cursor in it.
+		if isTypingElsewhere() then return end
+		openCommandBar()
 	end)
 end)()
+
+-- Loaded once the ; bar exists, since downloading the icons the first time can take a moment.
+menuIcons.load()
 
 local rayfieldLoaded, Rayfield = pcall(function()
 	return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
@@ -13958,6 +14459,22 @@ if rayfieldLoaded and Rayfield then
 			showName = "SpreadCheeksGUI",
 			showIcon = spreadLogo,
 		})
+		-- When the window first appears. Rayfield grows it open and fades its own parts in from
+		-- that moment; the Home page times its fade-in from it.
+		local windowOpenedAt = nil
+		if typeof(window.main) ~= "Instance" then
+			windowOpenedAt = 0
+		elseif window.main.Visible then
+			windowOpenedAt = os.clock()
+		else
+			local openedConnection
+			openedConnection = window.main:GetPropertyChangedSignal("Visible"):Connect(function()
+				if window.main.Visible then
+					openedConnection:Disconnect()
+					windowOpenedAt = os.clock()
+				end
+			end)
+		end
 		local function restoreLogoPresentation()
 			if window.topbarIcon then
 				local logoTheme = window.themeProperties and window.themeProperties[window.topbarIcon]
@@ -13985,6 +14502,30 @@ if rayfieldLoaded and Rayfield then
 		end
 		restoreLogoPresentation()
 		updateAuxiliaryUiTheme(window.theme)
+
+		-- Creates a Rayfield element (or tab) with a Lucide icon: pass an icon, or icon names to
+		-- try in order. Rayfield draws the icon's whole sprite sheet, so the element's icon label
+		-- is pointed at the icon's cell afterwards.
+		local windowRoot = typeof(window.main) == "Instance" and (window.main:FindFirstAncestorWhichIsA("LayerCollector") or window.main) or nil
+		local function withIcon(container, method, options, iconOrName, ...)
+			local icon = type(iconOrName) == "table" and iconOrName or menuIcons.get(iconOrName, ...)
+			options.icon = icon and icon.image or nil
+			local element = container[method](container, options)
+			if icon and type(element) == "table" then
+				local label = element.iconLabel or element.topbarItemIcon
+				if typeof(label) == "Instance" then
+					label.ImageRectSize = icon.size
+					label.ImageRectOffset = icon.offset
+				end
+				-- Anything else Rayfield drew from the same icon, such as a tab's page header.
+				local root = method == "CreateTab" and windowRoot or element.main
+				if typeof(root) == "Instance" then
+					menuIcons.fitUnfitted(root, icon)
+				end
+			end
+			return element
+		end
+
 		task.spawn(function()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 			local previousToastGui = playerGui:FindFirstChild("SpreadCheeksNotifications")
@@ -14235,11 +14776,16 @@ if rayfieldLoaded and Rayfield then
 			table.insert(commandsByCategory[categoryName], command)
 		end
 
+		-- Home is created first so it's the page the menu opens on; its cards are filled in at the
+		-- end, once everything they report on exists.
+		window:CreateSection({ name = "OVERVIEW" })
+		local homeTab = withIcon(window, "CreateTab", { name = "Home" }, "house", "home", "layout-grid")
+
 		window:CreateSection({ name = "QUICK CONTROLS" })
-		local controlsTab = window:CreateTab({ name = "Controls", icon = "sliders-horizontal" })
+		local controlsTab = withIcon(window, "CreateTab", { name = "Controls" }, "sliders-horizontal")
 		-- Rayfield's gear button opens this built-in tab; keep appearance options there.
-		window.rfSettings:CreateSection({ name = "Appearance" })
-		window.rfSettings:CreateDropdown({
+		withIcon(window.rfSettings, "CreateSection", { name = "Appearance" }, "palette")
+		withIcon(window.rfSettings, "CreateDropdown", {
 			name = "Theme",
 			description = "Choose the colour theme for this menu.",
 			options = { "SpreadCheeks", "Default", "Cobalt", "Ember", "Amethyst", "Frost", "Rose" },
@@ -14253,13 +14799,13 @@ if rayfieldLoaded and Rayfield then
 				restoreLogoPresentation()
 				updateAuxiliaryUiTheme(window.theme)
 			end,
-		})
-		controlsTab:CreateSection({ name = "Common toggles" })
+		}, "palette")
+		withIcon(controlsTab, "CreateSection", { name = "Common toggles" }, "toggle-right")
 		controlsTab:CreateText({
-			text = "These switches run the matching start and stop commands. One-time actions remain in their category tabs.",
+			text = "These switches run the matching start and stop commands. Right-click Fly, Vehicle Fly, Freecam, ESP or Chams to change their settings. One-time actions remain in their category tabs.",
 		})
 
-		controlsTab:CreateSection({ name = "Logo animation" })
+		withIcon(controlsTab, "CreateSection", { name = "Logo animation" }, "sparkles")
 		local logoBounceGui, logoBounceConnection
 		local logoBounceToggle
 		local function stopLogoBounce()
@@ -14272,7 +14818,7 @@ if rayfieldLoaded and Rayfield then
 				logoBounceGui = nil
 			end
 		end
-		logoBounceToggle = controlsTab:CreateToggle({
+		logoBounceToggle = withIcon(controlsTab, "CreateToggle", {
 			name = "DVD Logo Bounce",
 			description = "Bounce the SpreadCheeksGUI logo around the screen",
 			value = false,
@@ -14327,15 +14873,47 @@ if rayfieldLoaded and Rayfield then
 					logoImage.Position = UDim2.fromOffset(x, y)
 				end)
 			end,
-		})
+		}, "disc")
+
+		-- Feature settings (fly speeds and so on) are kept between sessions in this file and
+		-- changed from the settings cards further down.
+		local featureSettingsFile = "SpreadCheeksGUI_Features.json"
+		local featureSettings = { flySpeed = 1, vehicleFlySpeed = 1, freecamSpeed = 1, flyUpDownKeys = true }
+		local featureLimits = { flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 } }
+		if readfile then
+			local readOk, contents = readfile(featureSettingsFile, true)
+			if readOk and type(contents) == "string" and contents ~= "" then
+				local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+				if decodeOk and type(data) == "table" then
+					for key, default in pairs(featureSettings) do
+						if type(data[key]) == type(default) then
+							featureSettings[key] = data[key]
+						end
+					end
+				end
+			end
+		end
+		for key, limits in pairs(featureLimits) do
+			featureSettings[key] = math.clamp(featureSettings[key], limits[1], limits[2])
+		end
+		iyflyspeed = featureSettings.flySpeed
+		vehicleflyspeed = featureSettings.vehicleFlySpeed
+		NAV_KEYBOARD_SPEED = Vector3.new(featureSettings.freecamSpeed, featureSettings.freecamSpeed, featureSettings.freecamSpeed)
+		QEfly = featureSettings.flyUpDownKeys
+		local function saveFeatureSettings()
+			if writefile then
+				writefile(featureSettingsFile, HttpService:JSONEncode(featureSettings), true)
+			end
+		end
 
 		-- Quick toggles register here so a keybind can flip them and keep the
 		-- switch in the menu showing the right state.
 		local quickToggles = {}
 		local quickToggleByName = {}
 
-		local function addQuickToggle(name, description, apply)
-			local entry = { name = name, state = false, key = nil }
+		local function addQuickToggle(name, description, apply, ...)
+			-- icons is kept for the Home page, which shows what's switched on.
+			local entry = { name = name, state = false, key = nil, icons = { ... } }
 			-- The switch callback and keybinds both land here, and Rayfield may or
 			-- may not re-fire the callback on :Set, so repeat calls are no-ops.
 			function entry.apply(enabled)
@@ -14347,20 +14925,26 @@ if rayfieldLoaded and Rayfield then
 					pcall(function() entry.object:Set(false, true) end)
 				end
 			end
-			entry.object = controlsTab:CreateToggle({
+			entry.object = withIcon(controlsTab, "CreateToggle", {
 				name = name,
 				description = description,
 				value = false,
 				callback = entry.apply,
-			})
+			}, ...)
 			table.insert(quickToggles, entry)
 			quickToggleByName[name] = entry
 		end
 
-		local function addCommandToggle(name, enabledCommand, disabledCommand, description)
+		local function addCommandToggle(name, enabledCommand, disabledCommand, description, ...)
 			addQuickToggle(name, description, function(enabled)
 				execCmd(enabled and enabledCommand or disabledCommand, Players.LocalPlayer, true)
-			end)
+			end, ...)
+		end
+
+		-- Turns a quick toggle on or off from code, moving its switch to match.
+		local function setQuickToggle(entry, enabled)
+			entry.apply(enabled)
+			pcall(function() entry.object:Set(entry.state, true) end)
 		end
 
 		local noFallState = {
@@ -14413,18 +14997,63 @@ if rayfieldLoaded and Rayfield then
 			end
 		end
 
-		addCommandToggle("Fly", "fly", "unfly")
-		addCommandToggle("Fling", "fling", "unfling")
-		addCommandToggle("Walk Fling", "walkfling", "unwalkfling")
-		addCommandToggle("Noclip", "noclip", "clip")
-		addCommandToggle("Infinite Jump", "infjump", "uninfjump")
-		addCommandToggle("Freecam", "freecam", "unfreecam")
-		addCommandToggle("First Person", "firstp", "thirdp")
-		addCommandToggle("ESP", "esp", "noesp")
+		-- Fly and Vehicle Fly share one flight system, so starting one replaces the other; the
+		-- other's switch just goes off without running its stop command.
+		local function markOff(name)
+			local other = quickToggleByName[name]
+			if other and other.state then
+				other.state = false
+				pcall(function() other.object:Set(false, true) end)
+			end
+		end
+		addQuickToggle("Fly", "Right-click for fly speed and controls", function(enabled)
+			if enabled then markOff("Vehicle Fly") end
+			execCmd(enabled and "fly" or "unfly", Players.LocalPlayer, true)
+		end, "plane")
+		addQuickToggle("Vehicle Fly", "Fly the vehicle you're sitting in. Right-click for its speed", function(enabled)
+			if enabled then markOff("Fly") end
+			execCmd(enabled and "vfly" or "unvfly", Players.LocalPlayer, true)
+		end, "car")
+		addCommandToggle("Fling", "fling", "unfling", nil, "tornado")
+		-- Walk Fling and No Fall Damage both rewrite the character's velocity every frame and
+		-- undo each other, so No Fall Damage pauses while Walk Fling is on and comes back
+		-- afterwards if it was on before.
+		local restoreNoFall = false
+		addQuickToggle("Walk Fling", "Pauses No Fall Damage while it runs", function(enabled)
+			local noFall = quickToggleByName["No Fall Damage"]
+			if enabled then
+				if noFall and noFall.state then
+					restoreNoFall = true
+					setQuickToggle(noFall, false)
+					notify("No Fall Damage", "Paused while Walk Fling is on", 2.5)
+				end
+				execCmd("walkfling", Players.LocalPlayer, true)
+			else
+				execCmd("unwalkfling", Players.LocalPlayer, true)
+				if restoreNoFall and noFall then
+					-- Give the fling loop a moment to finish its last frame first. If Walk Fling
+					-- is back on by then, No Fall Damage waits for it to go off again.
+					task.delay(0.25, function()
+						if restoreNoFall and not quickToggleByName["Walk Fling"].state then
+							restoreNoFall = false
+							if not noFall.state then
+								setQuickToggle(noFall, true)
+								notify("No Fall Damage", "Back on", 2)
+							end
+						end
+					end)
+				end
+			end
+		end, "footprints")
+		addCommandToggle("Noclip", "noclip", "clip", nil, "ghost")
+		addCommandToggle("Infinite Jump", "infjump", "uninfjump", nil, "chevrons-up")
+		addCommandToggle("Freecam", "freecam", "unfreecam", "Right-click for freecam speed", "video")
+		addCommandToggle("First Person", "firstp", "thirdp", nil, "glasses", "eye")
+		addCommandToggle("ESP", "esp", "noesp", "Right-click or use the arrow for ESP settings", "scan-eye")
 		-- ESP's row has the settings arrow where the key box would go, so it gets no keybind.
 		quickToggleByName["ESP"].noKeybind = true
-		addCommandToggle("Chams", "chams", "nochams")
-		addCommandToggle("Invisible", "invisible", "visible")
+		addCommandToggle("Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
+		addCommandToggle("Invisible", "invisible", "visible", nil, "eye-off")
 
 		local function setAntiFling(enabled)
 			local command = findCmd(enabled and "antifling" or "unantifling")
@@ -14432,10 +15061,10 @@ if rayfieldLoaded and Rayfield then
 				command.FUNC({}, Players.LocalPlayer)
 			end
 		end
-		addQuickToggle("Anti-Fling", "Toggle Infinite Yield's Anti-Fling module", setAntiFling)
-		addQuickToggle("No Fall Damage", "Prevents fall damage in Natural Disaster Survival", setNoFall)
+		addQuickToggle("Anti-Fling", "Toggle Infinite Yield's Anti-Fling module", setAntiFling, "shield")
+		addQuickToggle("No Fall Damage", "Prevents fall damage in Natural Disaster Survival", setNoFall, "feather")
 
-		controlsTab:CreateSection({ name = "Keybinds" })
+		withIcon(controlsTab, "CreateSection", { name = "Keybinds" }, "keyboard")
 		controlsTab:CreateText({
 			text = "Click the key box next to a switch, then press a key to bind it. Press Esc instead to clear it, or click the box again to cancel. Keybinds are ignored while you're typing in chat or a text box.",
 		})
@@ -14608,36 +15237,37 @@ if rayfieldLoaded and Rayfield then
 			end
 		end)
 
-		-- ESP settings: the arrow on the ESP switch opens a settings card right under it,
-		-- the same way Rayfield's own dropdowns open.
-		local function buildEspSettingsDropdown(espEntry)
-			local espRow = espEntry and espEntry.object and espEntry.object.main
-			if typeof(espRow) ~= "Instance" or not espRow.Parent then
-				warn("[SpreadCheeksGUI] Couldn't add ESP settings; Rayfield's toggle layout may have changed.")
-				return
+		-- Settings cards open under a switch the way Rayfield's dropdowns do. Right-click a switch's
+		-- row to open or close its card (ESP also has an arrow, in place of its key box).
+		local function createSettingsCard(entry)
+			local row = entry and entry.object and entry.object.main
+			if typeof(row) ~= "Instance" or not row.Parent then
+				warn("[SpreadCheeksGUI] Couldn't add settings to " .. tostring(entry and entry.name) .. "; Rayfield's toggle layout may have changed.")
+				return nil
 			end
+			local settingsCard = { expanded = false, refreshers = {}, onExpandedChanged = {} }
 
 			local card = Instance.new("Frame")
-			card.Name = "EspSettings"
+			card.Name = entry.name .. "Settings"
 			card.Size = UDim2.new(1, -20, 0, 0)
 			card.BorderSizePixel = 0
 			card.ClipsDescendants = true
 			card.Visible = false
-			-- Rayfield spaces rows 10 apart in LayoutOrder, so +5 slots the card straight under ESP.
-			card.LayoutOrder = espRow.LayoutOrder + 5
-			espRow:GetPropertyChangedSignal("LayoutOrder"):Connect(function()
-				card.LayoutOrder = espRow.LayoutOrder + 5
+			-- Rayfield spaces rows 10 apart in LayoutOrder, so +5 slots the card straight under its row.
+			card.LayoutOrder = row.LayoutOrder + 5
+			row:GetPropertyChangedSignal("LayoutOrder"):Connect(function()
+				card.LayoutOrder = row.LayoutOrder + 5
 			end)
 			-- Style the card like Rayfield's own rows; without that helper, use the menu theme colours.
 			local styleOk, cardStroke = pcall(function() return window:StyleElementBody(card) end)
 			if styleOk then
 				local function matchRowBackground()
-					card.BackgroundColor3 = espRow.BackgroundColor3
-					card.BackgroundTransparency = espRow.BackgroundTransparency
+					card.BackgroundColor3 = row.BackgroundColor3
+					card.BackgroundTransparency = row.BackgroundTransparency
 				end
 				matchRowBackground()
-				espRow:GetPropertyChangedSignal("BackgroundColor3"):Connect(matchRowBackground)
-				espRow:GetPropertyChangedSignal("BackgroundTransparency"):Connect(matchRowBackground)
+				row:GetPropertyChangedSignal("BackgroundColor3"):Connect(matchRowBackground)
+				row:GetPropertyChangedSignal("BackgroundTransparency"):Connect(matchRowBackground)
 				-- The helper's border starts hidden; show it at the theme's strength.
 				if typeof(cardStroke) == "Instance" and cardStroke.Transparency >= 1 then
 					cardStroke.Transparency = (window.theme and tonumber(window.theme.ElementStrokeTransparency)) or 0.3
@@ -14653,7 +15283,8 @@ if rayfieldLoaded and Rayfield then
 				bindAuxiliaryUiColor(fallbackStroke, "Color", "Stroke")
 				fallbackStroke.Parent = card
 			end
-			card.Parent = espRow.Parent
+			card.Parent = row.Parent
+			settingsCard.card = card
 
 			local content = Instance.new("Frame")
 			content.Name = "Content"
@@ -14671,19 +15302,46 @@ if rayfieldLoaded and Rayfield then
 			contentLayout.Padding = UDim.new(0, 6)
 			contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
 			contentLayout.Parent = content
+			settingsCard.content = content
 
-			local refreshSettings
-			local hexInput
 			local layoutOrder = 0
-			local function nextOrder()
+			function settingsCard.nextOrder()
 				layoutOrder += 1
 				return layoutOrder
 			end
 
-			local function addSectionLabel(text)
+			-- On/off and selected colours depend on state, so they're re-read from the theme on
+			-- every refresh, including after a theme change.
+			function settingsCard.refresh()
+				for _, refresher in ipairs(settingsCard.refreshers) do
+					refresher()
+				end
+			end
+			table.insert(auxiliaryUiThemeListeners, settingsCard.refresh)
+
+			-- A small heading, with an icon when one of the given names exists.
+			function settingsCard.addSectionLabel(text, ...)
+				local holder = Instance.new("Frame")
+				holder.LayoutOrder = settingsCard.nextOrder()
+				holder.Size = UDim2.new(1, 0, 0, 22)
+				holder.BackgroundTransparency = 1
+				holder.Parent = content
+				local labelX = 0
+				local icon = menuIcons.get(...)
+				if icon then
+					local iconLabel = Instance.new("ImageLabel")
+					iconLabel.AnchorPoint = Vector2.new(0, 1)
+					iconLabel.Position = UDim2.new(0, 0, 1, -1)
+					iconLabel.Size = UDim2.fromOffset(12, 12)
+					iconLabel.BackgroundTransparency = 1
+					menuIcons.apply(iconLabel, icon)
+					bindAuxiliaryUiColor(iconLabel, "ImageColor3", "Muted")
+					iconLabel.Parent = holder
+					labelX = 18
+				end
 				local label = Instance.new("TextLabel")
-				label.LayoutOrder = nextOrder()
-				label.Size = UDim2.new(1, 0, 0, 22)
+				label.Position = UDim2.fromOffset(labelX, 0)
+				label.Size = UDim2.new(1, -labelX, 1, 0)
 				label.BackgroundTransparency = 1
 				label.Font = Enum.Font.GothamBold
 				label.Text = text
@@ -14691,39 +15349,40 @@ if rayfieldLoaded and Rayfield then
 				label.TextXAlignment = Enum.TextXAlignment.Left
 				label.TextYAlignment = Enum.TextYAlignment.Bottom
 				bindAuxiliaryUiColor(label, "TextColor3", "Muted")
-				label.Parent = content
+				label.Parent = holder
 			end
 
 			-- On/off cells: the whole cell is clickable, with a small switch on the right.
-			local optionRows = {}
-			local function addOptionRow(parent, order, text, key)
-				local row = Instance.new("TextButton")
-				row.LayoutOrder = order
-				row.AutoButtonColor = false
-				row.BackgroundTransparency = 1
-				row.BorderSizePixel = 0
-				row.Text = ""
-				bindAuxiliaryUiColor(row, "BackgroundColor3", "Inset")
-				row.Parent = parent
-				local rowCorner = Instance.new("UICorner")
-				rowCorner.CornerRadius = UDim.new(0, 8)
-				rowCorner.Parent = row
+			-- Each option is { text = ..., get = function() -> on, set = function(on) }.
+			local function addSwitch(parent, order, option)
+				local cell = Instance.new("TextButton")
+				cell.LayoutOrder = order
+				cell.AutoButtonColor = false
+				cell.BackgroundTransparency = 1
+				cell.BorderSizePixel = 0
+				cell.Text = ""
+				bindAuxiliaryUiColor(cell, "BackgroundColor3", "Inset")
+				cell.Parent = parent
+				local cellCorner = Instance.new("UICorner")
+				cellCorner.CornerRadius = UDim.new(0, 8)
+				cellCorner.Parent = cell
 				local label = Instance.new("TextLabel")
 				label.Position = UDim2.fromOffset(8, 0)
 				label.Size = UDim2.new(1, -60, 1, 0)
 				label.BackgroundTransparency = 1
 				label.Font = Enum.Font.Gotham
-				label.Text = text
+				label.Text = option.text
 				label.TextSize = 13
 				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
 				bindAuxiliaryUiColor(label, "TextColor3", "Text")
-				label.Parent = row
+				label.Parent = cell
 				local track = Instance.new("Frame")
 				track.AnchorPoint = Vector2.new(1, 0.5)
 				track.Position = UDim2.new(1, -8, 0.5, 0)
 				track.Size = UDim2.fromOffset(34, 18)
 				track.BorderSizePixel = 0
-				track.Parent = row
+				track.Parent = cell
 				local trackCorner = Instance.new("UICorner")
 				trackCorner.CornerRadius = UDim.new(1, 0)
 				trackCorner.Parent = track
@@ -14739,39 +15398,298 @@ if rayfieldLoaded and Rayfield then
 				local knobCorner = Instance.new("UICorner")
 				knobCorner.CornerRadius = UDim.new(1, 0)
 				knobCorner.Parent = knob
-				row.MouseEnter:Connect(function() row.BackgroundTransparency = 0.5 end)
-				row.MouseLeave:Connect(function() row.BackgroundTransparency = 1 end)
-				row.Activated:Connect(function()
-					espSettings[key] = not espSettings[key]
-					saveEspSettings()
-					refreshSettings()
+				cell.MouseEnter:Connect(function() cell.BackgroundTransparency = 0.5 end)
+				cell.MouseLeave:Connect(function() cell.BackgroundTransparency = 1 end)
+				cell.Activated:Connect(function()
+					option.set(not option.get())
+					settingsCard.refresh()
 				end)
-				table.insert(optionRows, { key = key, track = track, trackStroke = trackStroke, knob = knob })
+				table.insert(settingsCard.refreshers, function()
+					local theme = auxiliaryUiTheme
+					local on = option.get() == true
+					track.BackgroundColor3 = on and theme.Accent or theme.Inset
+					trackStroke.Color = on and theme.Accent or theme.Stroke
+					knob.BackgroundColor3 = on and Color3.new(1, 1, 1) or theme.SubText
+					TweenService:Create(knob, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+						Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+					}):Play()
+				end)
 			end
 
-			-- Two switches per line keeps the card short.
-			local function addSwitchGrid(options)
+			-- Two switches per line keeps a card short; pass 1 for full-width switches.
+			function settingsCard.addSwitchGrid(options, columns)
+				columns = columns or 2
 				local grid = Instance.new("Frame")
-				grid.LayoutOrder = nextOrder()
+				grid.LayoutOrder = settingsCard.nextOrder()
 				grid.Size = UDim2.fromScale(1, 0)
 				grid.AutomaticSize = Enum.AutomaticSize.Y
 				grid.BackgroundTransparency = 1
 				grid.Parent = content
 				local gridLayout = Instance.new("UIGridLayout")
-				gridLayout.CellSize = UDim2.new(0.5, -4, 0, 30)
+				gridLayout.CellSize = UDim2.new(1 / columns, columns > 1 and -4 or 0, 0, 30)
 				gridLayout.CellPadding = UDim2.fromOffset(8, 2)
 				gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 				gridLayout.Parent = grid
 				for index, option in ipairs(options) do
-					addOptionRow(grid, index, option[1], option[2])
+					addSwitch(grid, index, option)
 				end
 			end
 
-			addSectionLabel("DRAW")
-			addSwitchGrid({ { "Outline", "outline" }, { "Fill", "fill" }, { "Box", "box" }, { "Tracers", "tracers" } })
-			addSectionLabel("LABEL")
-			addSwitchGrid({ { "Name", "name" }, { "Distance", "distance" }, { "Health bar", "health" } })
-			addSectionLabel("COLOUR")
+			-- A slider: its name and value on top, the track underneath. options: text, icon (a
+			-- list of icon names), min, max, step, get, set (also called while dragging),
+			-- commit (called once the value settles, to save it) and format (value -> text).
+			function settingsCard.addSlider(options)
+				local step = options.step or 1
+				local function snap(value)
+					value = math.clamp(tonumber(value) or options.min, options.min, options.max)
+					value = options.min + math.floor((value - options.min) / step + 0.5) * step
+					return math.clamp(tonumber(string.format("%.4f", value)), options.min, options.max)
+				end
+				local function formatValue(value)
+					if options.format then return options.format(value) end
+					return step < 1 and string.format("%.1f", value) or tostring(math.floor(value + 0.5))
+				end
+
+				local holder = Instance.new("Frame")
+				holder.LayoutOrder = settingsCard.nextOrder()
+				holder.Size = UDim2.new(1, 0, 0, 48)
+				holder.BackgroundTransparency = 1
+				holder.Parent = content
+
+				local labelX = 0
+				local icon = options.icon and menuIcons.get(table.unpack(options.icon))
+				if icon then
+					local iconLabel = Instance.new("ImageLabel")
+					iconLabel.AnchorPoint = Vector2.new(0, 0.5)
+					iconLabel.Position = UDim2.fromOffset(0, 12)
+					iconLabel.Size = UDim2.fromOffset(15, 15)
+					iconLabel.BackgroundTransparency = 1
+					menuIcons.apply(iconLabel, icon)
+					bindAuxiliaryUiColor(iconLabel, "ImageColor3", "SubText")
+					iconLabel.Parent = holder
+					labelX = 23
+				end
+				local label = Instance.new("TextLabel")
+				label.Position = UDim2.fromOffset(labelX, 0)
+				label.Size = UDim2.new(1, -(labelX + 76), 0, 24)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.Gotham
+				label.Text = options.text
+				label.TextSize = 13
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(label, "TextColor3", "Text")
+				label.Parent = holder
+
+				-- Type an exact value here, or drag the track.
+				local valueBox = Instance.new("TextBox")
+				valueBox.AnchorPoint = Vector2.new(1, 0)
+				valueBox.Position = UDim2.new(1, 0, 0, 0)
+				valueBox.Size = UDim2.fromOffset(68, 24)
+				valueBox.BorderSizePixel = 0
+				valueBox.ClearTextOnFocus = false
+				valueBox.Font = Enum.Font.GothamMedium
+				valueBox.TextSize = 12
+				bindAuxiliaryUiColor(valueBox, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(valueBox, "TextColor3", "Text")
+				valueBox.Parent = holder
+				local valueCorner = Instance.new("UICorner")
+				valueCorner.CornerRadius = UDim.new(0, 7)
+				valueCorner.Parent = valueBox
+				local valueStroke = Instance.new("UIStroke")
+				valueStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				valueStroke.Transparency = 0.35
+				bindAuxiliaryUiColor(valueStroke, "Color", "Stroke")
+				valueStroke.Parent = valueBox
+
+				local track = Instance.new("Frame")
+				track.Position = UDim2.fromOffset(0, 35)
+				track.Size = UDim2.new(1, 0, 0, 6)
+				track.BorderSizePixel = 0
+				bindAuxiliaryUiColor(track, "BackgroundColor3", "Inset")
+				track.Parent = holder
+				local trackCorner = Instance.new("UICorner")
+				trackCorner.CornerRadius = UDim.new(1, 0)
+				trackCorner.Parent = track
+				local trackStroke = Instance.new("UIStroke")
+				trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				trackStroke.Transparency = 0.35
+				bindAuxiliaryUiColor(trackStroke, "Color", "Stroke")
+				trackStroke.Parent = track
+				local fill = Instance.new("Frame")
+				fill.Size = UDim2.fromScale(0, 1)
+				fill.BorderSizePixel = 0
+				bindAuxiliaryUiColor(fill, "BackgroundColor3", "Accent")
+				fill.Parent = track
+				local fillCorner = Instance.new("UICorner")
+				fillCorner.CornerRadius = UDim.new(1, 0)
+				fillCorner.Parent = fill
+				local knob = Instance.new("Frame")
+				knob.AnchorPoint = Vector2.new(0.5, 0.5)
+				knob.Position = UDim2.fromScale(0, 0.5)
+				knob.Size = UDim2.fromOffset(14, 14)
+				knob.BackgroundColor3 = Color3.new(1, 1, 1)
+				knob.BorderSizePixel = 0
+				knob.ZIndex = 2
+				knob.Parent = track
+				local knobCorner = Instance.new("UICorner")
+				knobCorner.CornerRadius = UDim.new(1, 0)
+				knobCorner.Parent = knob
+				local knobStroke = Instance.new("UIStroke")
+				knobStroke.Thickness = 2
+				bindAuxiliaryUiColor(knobStroke, "Color", "Accent")
+				knobStroke.Parent = knob
+				-- A taller invisible strip over the track, so it's easy to grab.
+				local grab = Instance.new("TextButton")
+				grab.Position = UDim2.fromOffset(-7, 26)
+				grab.Size = UDim2.new(1, 14, 0, 22)
+				grab.BackgroundTransparency = 1
+				grab.AutoButtonColor = false
+				grab.Text = ""
+				grab.ZIndex = 3
+				grab.Parent = holder
+
+				local function show(value)
+					local fraction = (value - options.min) / (options.max - options.min)
+					fill.Size = UDim2.fromScale(fraction, 1)
+					knob.Position = UDim2.fromScale(fraction, 0.5)
+					if not valueBox:IsFocused() then
+						valueBox.Text = formatValue(value)
+					end
+				end
+				table.insert(settingsCard.refreshers, function()
+					show(snap(options.get()))
+				end)
+
+				-- Screen X lines up with the track's AbsolutePosition whatever the GUI inset is.
+				local function setFromScreenX(x)
+					local fraction = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
+					local value = snap(options.min + fraction * (options.max - options.min))
+					options.set(value)
+					show(value)
+				end
+				local dragInput = nil
+				grab.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+						dragInput = input
+						setFromScreenX(input.Position.X)
+					end
+				end)
+				UserInputService.InputChanged:Connect(function(input)
+					if dragInput and (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then
+						setFromScreenX(input.Position.X)
+					end
+				end)
+				UserInputService.InputEnded:Connect(function(input)
+					if dragInput and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+						dragInput = nil
+						if options.commit then options.commit() end
+					end
+				end)
+				valueBox.FocusLost:Connect(function()
+					local typed = tonumber((valueBox.Text:gsub("[^%d%.%-]", "")))
+					if typed then
+						options.set(snap(typed))
+						if options.commit then options.commit() end
+					end
+					-- Anything that isn't a number just snaps back to the current value.
+					show(snap(options.get()))
+				end)
+				show(snap(options.get()))
+			end
+
+			-- If Rayfield scales its UI, AbsoluteSize includes that scale but Size doesn't.
+			local function uiScaleFactor()
+				local factor = 1
+				local ancestor = card.Parent
+				while ancestor do
+					-- Some containers above the menu can refuse lookups; skip those.
+					local found, uiScale = pcall(ancestor.FindFirstChildOfClass, ancestor, "UIScale")
+					if found and uiScale then factor *= uiScale.Scale end
+					ancestor = ancestor.Parent
+				end
+				return factor > 0 and factor or 1
+			end
+
+			local heightTween
+			local function tweenCardHeight(info)
+				if heightTween then heightTween:Cancel() end
+				local height = settingsCard.expanded and content.AbsoluteSize.Y / uiScaleFactor() or 0
+				heightTween = TweenService:Create(card, info, { Size = UDim2.new(1, -20, 0, height) })
+				heightTween:Play()
+				return heightTween
+			end
+			-- Same feel as Rayfield's dropdowns: 0.5s to open, 0.35s to follow a change in size.
+			local openInfo = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+			local resizeInfo = TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+			-- Keep the open card fitted to its content, e.g. once layout has run on the first open.
+			content:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+				if settingsCard.expanded then tweenCardHeight(resizeInfo) end
+			end)
+
+			function settingsCard.setExpanded(expanded)
+				if expanded == settingsCard.expanded then return end
+				settingsCard.expanded = expanded
+				if expanded then
+					-- Values can change from commands too, so show them fresh.
+					settingsCard.refresh()
+					card.Visible = true
+				end
+				local tween = tweenCardHeight(openInfo)
+				if not expanded then
+					tween.Completed:Connect(function(playbackState)
+						-- Hidden once closed, so the tab's list doesn't keep a gap for it.
+						if playbackState == Enum.PlaybackState.Completed and not settingsCard.expanded then
+							card.Visible = false
+						end
+					end)
+				end
+				for _, callback in ipairs(settingsCard.onExpandedChanged) do
+					callback(expanded)
+				end
+			end
+			function settingsCard.toggle()
+				settingsCard.setExpanded(not settingsCard.expanded)
+			end
+
+			-- Right-click anywhere on the switch's row opens or closes the card.
+			local interact = entry.object.interact
+			if typeof(interact) == "Instance" and interact:IsA("GuiButton") then
+				interact.MouseButton2Click:Connect(settingsCard.toggle)
+			else
+				row.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton2 then
+						settingsCard.toggle()
+					end
+				end)
+			end
+			return settingsCard
+		end
+
+		-- ESP settings: right-click the ESP switch, or use the arrow next to it.
+		local function buildEspSettings(espEntry)
+			local espCard = createSettingsCard(espEntry)
+			if not espCard then return end
+			local content = espCard.content
+			local nextOrder = espCard.nextOrder
+			local refreshSettings = espCard.refresh
+			local hexInput
+			local function espOption(text, key)
+				return {
+					text = text,
+					get = function() return espSettings[key] == true end,
+					set = function(on)
+						espSettings[key] = on
+						saveEspSettings()
+					end,
+				}
+			end
+
+			espCard.addSectionLabel("DRAW", "pen-line", "pencil")
+			espCard.addSwitchGrid({ espOption("Outline", "outline"), espOption("Fill", "fill"), espOption("Box", "box"), espOption("Tracers", "tracers") })
+			espCard.addSectionLabel("LABEL", "tag")
+			espCard.addSwitchGrid({ espOption("Name", "name"), espOption("Distance", "distance"), espOption("Health bar", "health") })
+			espCard.addSectionLabel("COLOUR", "palette")
 
 			local modeRow = Instance.new("Frame")
 			modeRow.LayoutOrder = nextOrder()
@@ -14933,19 +15851,9 @@ if rayfieldLoaded and Rayfield then
 				refreshSettings()
 			end)
 
-			-- On/off and selected colours depend on state, so they're re-read from the theme on
-			-- every refresh, including after a theme change.
-			refreshSettings = function()
+			-- The colour choices depend on state too, so they refresh along with the switches.
+			table.insert(espCard.refreshers, function()
 				local theme = auxiliaryUiTheme
-				for _, option in ipairs(optionRows) do
-					local on = espSettings[option.key] == true
-					option.track.BackgroundColor3 = on and theme.Accent or theme.Inset
-					option.trackStroke.Color = on and theme.Accent or theme.Stroke
-					option.knob.BackgroundColor3 = on and Color3.new(1, 1, 1) or theme.SubText
-					TweenService:Create(option.knob, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-						Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-					}):Play()
-				end
 				for mode, button in pairs(modeButtons) do
 					local selected = espSettings.colorMode == mode
 					button.BackgroundColor3 = selected and theme.Accent or theme.Inset
@@ -14960,22 +15868,8 @@ if rayfieldLoaded and Rayfield then
 				if not hexInput:IsFocused() then
 					hexInput.Text = "#" .. customHex
 				end
-			end
+			end)
 			refreshSettings()
-			table.insert(auxiliaryUiThemeListeners, refreshSettings)
-
-			-- If Rayfield scales its UI, AbsoluteSize includes that scale but Size doesn't.
-			local function uiScaleFactor()
-				local factor = 1
-				local ancestor = card.Parent
-				while ancestor do
-					-- Some containers above the menu can refuse lookups; skip those.
-					local found, uiScale = pcall(ancestor.FindFirstChildOfClass, ancestor, "UIScale")
-					if found and uiScale then factor *= uiScale.Scale end
-					ancestor = ancestor.Parent
-				end
-				return factor > 0 and factor or 1
-			end
 
 			-- The arrow sits next to the switch, where other rows have their key box (ESP has no keybind).
 			local chevronButton = Instance.new("TextButton")
@@ -14988,7 +15882,7 @@ if rayfieldLoaded and Rayfield then
 			chevronButton.Text = ""
 			-- Above the toggle's full-row click target (ZIndex 10) so the arrow doesn't flip ESP.
 			chevronButton.ZIndex = 11
-			chevronButton.Parent = espRow
+			chevronButton.Parent = espEntry.object.main
 			local chevronIcon = Instance.new("ImageLabel")
 			chevronIcon.AnchorPoint = Vector2.new(0.5, 0.5)
 			chevronIcon.Position = UDim2.fromScale(0.5, 0.5)
@@ -15003,51 +15897,125 @@ if rayfieldLoaded and Rayfield then
 			chevronIcon.Parent = chevronButton
 			chevronButton.MouseEnter:Connect(function() chevronIcon.ImageTransparency = 0 end)
 			chevronButton.MouseLeave:Connect(function() chevronIcon.ImageTransparency = 0.2 end)
-
-			local expanded = false
-			local heightTween
-			local function tweenCardHeight(info)
-				if heightTween then heightTween:Cancel() end
-				local height = expanded and content.AbsoluteSize.Y / uiScaleFactor() or 0
-				heightTween = TweenService:Create(card, info, { Size = UDim2.new(1, -20, 0, height) })
-				heightTween:Play()
-				return heightTween
-			end
-			-- Same feel as Rayfield's dropdowns: 0.5s to open, 0.7s for the arrow to turn.
-			local openInfo = TweenInfo.new(0.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
-			local resizeInfo = TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+			chevronButton.Activated:Connect(espCard.toggle)
+			-- Turns like Rayfield's dropdown arrows, however the card was opened.
 			local arrowInfo = TweenInfo.new(0.7, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
-			-- Keep the open card fitted to its content, e.g. once layout has run on the first open.
-			content:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-				if expanded then tweenCardHeight(resizeInfo) end
-			end)
-			chevronButton.Activated:Connect(function()
-				expanded = not expanded
+			table.insert(espCard.onExpandedChanged, function(expanded)
 				TweenService:Create(chevronIcon, arrowInfo, { Rotation = expanded and 0 or 180 }):Play()
-				if expanded then
-					card.Visible = true
-				end
-				local tween = tweenCardHeight(openInfo)
-				if not expanded then
-					tween.Completed:Connect(function(playbackState)
-						-- Hidden once closed, so the tab's list doesn't keep a gap for it.
-						if playbackState == Enum.PlaybackState.Completed and not expanded then
-							card.Visible = false
-						end
-					end)
-				end
 			end)
 		end
 
-		-- Kept separate so a problem in the ESP settings can't stop the rest of the menu loading.
-		local espSettingsOk, espSettingsError = pcall(buildEspSettingsDropdown, quickToggleByName["ESP"])
+		-- Settings for the other switches that have them, opened by right-clicking the switch.
+		local function buildFeatureSettings()
+			local function speedText(value)
+				return string.format("%.1f×", value)
+			end
+
+			local flyCard = createSettingsCard(quickToggleByName["Fly"])
+			if flyCard then
+				flyCard.addSectionLabel("SPEED", "gauge")
+				flyCard.addSlider({
+					text = "Fly speed",
+					icon = { "wind" },
+					min = 0.1, max = 10, step = 0.1,
+					get = function() return tonumber(iyflyspeed) or 1 end,
+					set = function(value)
+						iyflyspeed = value
+						featureSettings.flySpeed = value
+					end,
+					commit = saveFeatureSettings,
+					format = speedText,
+				})
+				flyCard.addSectionLabel("CONTROLS", "keyboard")
+				flyCard.addSwitchGrid({
+					{
+						text = "Q and E fly down and up",
+						get = function() return QEfly ~= false end,
+						set = function(on)
+							QEfly = on
+							featureSettings.flyUpDownKeys = on
+							saveFeatureSettings()
+						end,
+					},
+				}, 1)
+			end
+
+			local vehicleFlyCard = createSettingsCard(quickToggleByName["Vehicle Fly"])
+			if vehicleFlyCard then
+				vehicleFlyCard.addSectionLabel("SPEED", "gauge")
+				vehicleFlyCard.addSlider({
+					text = "Vehicle fly speed",
+					icon = { "car" },
+					min = 0.1, max = 10, step = 0.1,
+					get = function() return tonumber(vehicleflyspeed) or 1 end,
+					set = function(value)
+						vehicleflyspeed = value
+						featureSettings.vehicleFlySpeed = value
+					end,
+					commit = saveFeatureSettings,
+					format = speedText,
+				})
+			end
+
+			local freecamCard = createSettingsCard(quickToggleByName["Freecam"])
+			if freecamCard then
+				freecamCard.addSectionLabel("SPEED", "gauge")
+				freecamCard.addSlider({
+					text = "Freecam speed",
+					icon = { "video" },
+					min = 0.5, max = 10, step = 0.5,
+					get = function() return typeof(NAV_KEYBOARD_SPEED) == "Vector3" and NAV_KEYBOARD_SPEED.X or 1 end,
+					set = function(value)
+						NAV_KEYBOARD_SPEED = Vector3.new(value, value, value)
+						featureSettings.freecamSpeed = value
+					end,
+					commit = saveFeatureSettings,
+					format = speedText,
+				})
+			end
+
+			local chamsCard = createSettingsCard(quickToggleByName["Chams"])
+			if chamsCard then
+				chamsCard.addSectionLabel("LOOK", "palette")
+				chamsCard.addSlider({
+					text = "Fill strength",
+					icon = { "paint-bucket", "droplet", "palette" },
+					min = 10, max = 75, step = 1,
+					-- Chams fill at esptransparency + 0.25, so this is how solid that fill looks.
+					get = function() return (0.75 - (tonumber(espTransparency) or 0.3)) * 100 end,
+					set = function(value)
+						espTransparency = 0.75 - value / 100
+						for _, holder in pairs(COREGUI:GetChildren()) do
+							if string.sub(holder.Name, -5) == "_CHMS" then
+								local highlight = holder:FindFirstChild("PlayerHighlight")
+								if highlight then
+									highlight.FillTransparency = math.clamp(espTransparency + 0.25, 0.25, 0.9)
+								end
+							end
+						end
+						-- ESP's fill reads the same setting.
+						espStyleVersion += 1
+					end,
+					-- Infinite Yield saves esptransparency with its own settings.
+					commit = function() updatesaves() end,
+					format = function(value) return tostring(math.floor(value + 0.5)) .. "%" end,
+				})
+			end
+		end
+
+		-- Kept separate so a problem in a settings card can't stop the rest of the menu loading.
+		local espSettingsOk, espSettingsError = pcall(buildEspSettings, quickToggleByName["ESP"])
 		if not espSettingsOk then
 			warn("[SpreadCheeksGUI] ESP settings couldn't be added: " .. tostring(espSettingsError))
 		end
+		local featureSettingsOk, featureSettingsError = pcall(buildFeatureSettings)
+		if not featureSettingsOk then
+			warn("[SpreadCheeksGUI] Feature settings couldn't be added: " .. tostring(featureSettingsError))
+		end
 
-		controlsTab:CreateSection({ name = "Movement & camera values" })
-		local function addCommandSlider(name, minValue, maxValue, initialValue, command, increment, suffix)
-			controlsTab:CreateSlider({
+		withIcon(controlsTab, "CreateSection", { name = "Movement & camera values" }, "gauge")
+		local function addCommandSlider(name, minValue, maxValue, initialValue, command, increment, suffix, ...)
+			withIcon(controlsTab, "CreateSlider", {
 				name = name,
 				range = { minValue, maxValue },
 				value = initialValue,
@@ -15056,28 +16024,39 @@ if rayfieldLoaded and Rayfield then
 				callback = function(value)
 					execCmd(command .. " " .. tostring(value), Players.LocalPlayer, true)
 				end,
-			})
+			}, ...)
 		end
 
-		addCommandSlider("Walk Speed", 0, 150, 16, "speed", 1)
-		addCommandSlider("Jump Power", 0, 300, 50, "jpower", 1)
-		addCommandSlider("Gravity", 0, 300, 196, "gravity", 1)
-		addCommandSlider("Field of View", 40, 120, 70, "fov", 1, "°")
-		addCommandSlider("Fly Speed", 1, 10, 1, "flyspeed", 0.1)
-		addCommandSlider("Freecam Speed", 1, 50, 1, "freecamspeed", 1)
+		-- Fly and freecam speed are in those switches' settings cards (right-click them).
+		addCommandSlider("Walk Speed", 0, 150, 16, "speed", 1, nil, "gauge")
+		addCommandSlider("Jump Power", 0, 300, 50, "jpower", 1, nil, "arrow-big-up")
+		addCommandSlider("Gravity", 0, 300, 196, "gravity", 1, nil, "orbit")
+		addCommandSlider("Field of View", 40, 120, 70, "fov", 1, "°", "focus")
 
 		window:CreateSection({ name = "PLAYER TOOLS" })
-		local playerTab = window:CreateTab({ name = "Players", icon = "users-round" })
-		playerTab:CreateSection({ name = "Select a player" })
+		local playerTab = withIcon(window, "CreateTab", { name = "Players" }, "users-round", "users")
+		withIcon(playerTab, "CreateSection", { name = "Select a player" }, "contact")
 		playerTab:CreateText({
 			text = "Choose a username from the current server list or type a name below. Actions use the selected username.",
 		})
 
 		local selectedPlayerName = Players.LocalPlayer.Name
-		local selectedPlayerDisplay = playerTab:CreateText({
+		-- The player Locate is showing, while its switch is on.
+		local locatedPlayerName = nil
+		local selectedPlayerDisplay = withIcon(playerTab, "CreateText", {
 			name = "Selected player",
 			text = Players.LocalPlayer.DisplayName .. "  (@" .. Players.LocalPlayer.Name .. ")",
-		})
+		}, "user-round")
+		-- Picking someone else while Locate is on moves Locate to them.
+		local function selectPlayer(name, label)
+			selectedPlayerName = name
+			selectedPlayerDisplay:Set(label)
+			if locatedPlayerName and locatedPlayerName ~= name then
+				execCmd("nolocate " .. locatedPlayerName, Players.LocalPlayer, true)
+				execCmd("locate " .. name, Players.LocalPlayer, true)
+				locatedPlayerName = name
+			end
+		end
 		local function buildFacePicker()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 			local pickerParent = playerGui
@@ -15161,6 +16140,18 @@ if rayfieldLoaded and Rayfield then
 			selectedLabel.TextTruncate = Enum.TextTruncate.AtEnd
 			selectedLabel.Parent = panel
 			bindAuxiliaryUiColor(selectedLabel, "TextColor3", "SubText")
+			local titleIcon = menuIcons.get("users-round", "users")
+			if titleIcon then
+				local titleIconLabel = Instance.new("ImageLabel")
+				titleIconLabel.Position = UDim2.fromOffset(18, 16)
+				titleIconLabel.Size = UDim2.fromOffset(18, 18)
+				titleIconLabel.BackgroundTransparency = 1
+				menuIcons.apply(titleIconLabel, titleIcon)
+				titleIconLabel.Parent = panel
+				bindAuxiliaryUiColor(titleIconLabel, "ImageColor3", "AccentText")
+				pickerTitle.Position = UDim2.fromOffset(44, 13)
+				selectedLabel.Position = UDim2.fromOffset(44, 37)
+			end
 			dragHandle.Parent = nil
 			dragHandle.Parent = panel
 
@@ -15250,6 +16241,20 @@ if rayfieldLoaded and Rayfield then
 			local searchPadding = Instance.new("UIPadding")
 			searchPadding.PaddingLeft = UDim.new(0, 10)
 			searchPadding.Parent = searchInput
+			local searchIcon = menuIcons.get("search")
+			if searchIcon then
+				-- Drawn over the box's left edge; it doesn't take clicks, so the box still gets them.
+				local searchIconLabel = Instance.new("ImageLabel")
+				searchIconLabel.AnchorPoint = Vector2.new(0, 0.5)
+				searchIconLabel.Position = UDim2.fromOffset(27, 80)
+				searchIconLabel.Size = UDim2.fromOffset(14, 14)
+				searchIconLabel.BackgroundTransparency = 1
+				searchIconLabel.ZIndex = 2
+				menuIcons.apply(searchIconLabel, searchIcon)
+				searchIconLabel.Parent = panel
+				bindAuxiliaryUiColor(searchIconLabel, "ImageColor3", "Muted")
+				searchPadding.PaddingLeft = UDim.new(0, 34)
+			end
 
 			local faceList = Instance.new("ScrollingFrame")
 			faceList.Position = UDim2.fromOffset(14, 108)
@@ -15262,11 +16267,21 @@ if rayfieldLoaded and Rayfield then
 			faceList.CanvasSize = UDim2.new()
 			faceList.Parent = panel
 			bindAuxiliaryUiColor(faceList, "ScrollBarImageColor3", "Muted")
+			local tileGap, minTileWidth, tileHeight = 8, 104, 112
 			local faceGrid = Instance.new("UIGridLayout")
-			faceGrid.CellSize = UDim2.fromOffset(104, 112)
-			faceGrid.CellPadding = UDim2.fromOffset(8, 8)
+			faceGrid.CellSize = UDim2.fromOffset(minTileWidth, tileHeight)
+			faceGrid.CellPadding = UDim2.fromOffset(tileGap, tileGap)
 			faceGrid.SortOrder = Enum.SortOrder.LayoutOrder
 			faceGrid.Parent = faceList
+			-- Tiles stretch to fill each row, so the grid doesn't leave an empty strip on the right.
+			local function fitTiles()
+				local width = faceList.AbsoluteSize.X - faceList.ScrollBarThickness - 4
+				if width <= 0 then return end
+				local columns = math.max(1, math.floor((width + tileGap) / (minTileWidth + tileGap)))
+				local tileWidth = math.floor((width - tileGap * (columns - 1)) / columns)
+				faceGrid.CellSize = UDim2.fromOffset(tileWidth, tileHeight)
+			end
+			faceList:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitTiles)
 
 			local function refreshFaceCards()
 				for _, child in ipairs(faceList:GetChildren()) do
@@ -15296,7 +16311,8 @@ if rayfieldLoaded and Rayfield then
 					bindAuxiliaryUiColor(tileStroke, "Color", targetPlayer.Name == selectedPlayerName and "Accent" or "Stroke")
 
 					local face = Instance.new("ImageLabel")
-					face.Position = UDim2.fromOffset(17, 7)
+					face.AnchorPoint = Vector2.new(0.5, 0)
+					face.Position = UDim2.new(0.5, 0, 0, 7)
 					face.Size = UDim2.fromOffset(70, 70)
 					face.BackgroundColor3 = Color3.fromRGB(41, 47, 60)
 					face.Image = ""
@@ -15329,9 +16345,8 @@ if rayfieldLoaded and Rayfield then
 					bindAuxiliaryUiColor(userLabel, "TextColor3", "SubText")
 
 					tile.Activated:Connect(function()
-						selectedPlayerName = targetPlayer.Name
+						selectPlayer(targetPlayer.Name, targetPlayer.DisplayName .. "  (@" .. targetPlayer.Name .. ")")
 						selectedLabel.Text = "Selected: " .. targetPlayer.DisplayName .. "  (@" .. targetPlayer.Name .. ")"
-						selectedPlayerDisplay:Set(targetPlayer.DisplayName .. "  (@" .. targetPlayer.Name .. ")")
 						pickerGui.Enabled = false
 					end)
 					task.spawn(function()
@@ -15367,29 +16382,29 @@ if rayfieldLoaded and Rayfield then
 			Players.PlayerAdded:Connect(refreshFaceCards)
 			Players.PlayerRemoving:Connect(refreshFaceCards)
 			refreshFaceCards()
-			playerTab:CreateButton({
+			withIcon(playerTab, "CreateButton", {
 				name = "Player picker",
 				description = "Choose a player from their face and username",
 				callback = function()
 					refreshFaceCards()
 					searchInput.Text = ""
 					pickerGui.Enabled = true
+					fitTiles()
 				end,
-			})
+			}, "layout-grid")
 		end
 		buildFacePicker()
-		playerTab:CreateInput({
+		withIcon(playerTab, "CreateInput", {
 			name = "Player name",
 			description = "Enter a username if the player is not in the list",
 			placeholder = selectedPlayerName,
 			callback = function(value)
 				local name = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
-			if name ~= "" then
-				selectedPlayerName = name
-				selectedPlayerDisplay:Set("@" .. name)
-			end
+				if name ~= "" then
+					selectPlayer(name, "@" .. name)
+				end
 			end,
-		})
+		}, "at-sign")
 
 		local function runForSelectedPlayer(command)
 			local name = tostring(selectedPlayerName or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -15398,8 +16413,8 @@ if rayfieldLoaded and Rayfield then
 			end
 		end
 
-		playerTab:CreateSection({ name = "Player actions" })
-		playerTab:CreateToggle({
+		withIcon(playerTab, "CreateSection", { name = "Player actions" }, "crosshair")
+		withIcon(playerTab, "CreateToggle", {
 			name = "View selected player",
 			value = false,
 			callback = function(enabled)
@@ -15409,8 +16424,8 @@ if rayfieldLoaded and Rayfield then
 					execCmd("unview", Players.LocalPlayer, true)
 				end
 			end,
-		})
-		playerTab:CreateToggle({
+		}, "eye")
+		withIcon(playerTab, "CreateToggle", {
 			name = "Loop goto selected player",
 			description = "Keep teleporting to the selected player",
 			value = false,
@@ -15421,28 +16436,41 @@ if rayfieldLoaded and Rayfield then
 					execCmd("unloopgoto", Players.LocalPlayer, true)
 				end
 			end,
-		})
-		playerTab:CreateButton({
+		}, "repeat")
+		withIcon(playerTab, "CreateToggle", {
+			name = "Locate selected player",
+			description = "Shows where they are, through walls, until you turn this off",
+			value = false,
+			callback = function(enabled)
+				if enabled then
+					local name = tostring(selectedPlayerName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+					if name ~= "" then
+						locatedPlayerName = name
+						execCmd("locate " .. name, Players.LocalPlayer, true)
+					end
+				elseif locatedPlayerName then
+					execCmd("nolocate " .. locatedPlayerName, Players.LocalPlayer, true)
+					locatedPlayerName = nil
+				end
+			end,
+		}, "locate", "crosshair")
+		withIcon(playerTab, "CreateButton", {
 			name = "Go to selected player",
 			callback = function() runForSelectedPlayer("goto") end,
-		})
-		playerTab:CreateButton({
-			name = "Locate selected player",
-			callback = function() runForSelectedPlayer("locate") end,
-		})
-		playerTab:CreateButton({
+		}, "navigation")
+		withIcon(playerTab, "CreateButton", {
 			name = "TP unanchored parts to selected player",
 			description = "Move loose, unanchored parts to the selected player's character",
 			callback = function() runForSelectedPlayer("tpunanchored") end,
-		})
+		}, "magnet")
 
 		window:CreateSection({ name = "TOOLS" })
-		local runTab = window:CreateTab({ name = "Command Bar", icon = "terminal" })
-		runTab:CreateSection({ name = "Run a command" })
+		local runTab = withIcon(window, "CreateTab", { name = "Command Bar" }, "square-terminal", "terminal-square")
+		withIcon(runTab, "CreateSection", { name = "Run a command" }, "square-terminal", "terminal-square")
 		runTab:CreateText({
-			text = "Type a command and its arguments, then press Enter. Your command prefix is optional.",
+			text = "Type a command and its arguments, then press Enter. Your command prefix is optional. You can also press ; anywhere: it suggests commands as you type (Tab fills one in), and Up and Down step through commands you've run.",
 		})
-		runTab:CreateInput({
+		withIcon(runTab, "CreateInput", {
 			name = "Command input",
 			description = "Examples: fly   •   speed 32   •   goto playername",
 			placeholder = "Enter command and arguments",
@@ -15455,27 +16483,629 @@ if rayfieldLoaded and Rayfield then
 					execCmd(commandText, Players.LocalPlayer, true)
 				end
 			end,
-		})
+		}, "chevron-right")
 
 		window:CreateSection({ name = "MODULES" })
 		for _, category in ipairs(categories) do
 			local categoryCommands = commandsByCategory[category.name]
 			if #categoryCommands > 0 then
-				local tab = window:CreateTab({ name = category.name, icon = category.icon })
-				tab:CreateSection({ name = category.section })
+				local tab = withIcon(window, "CreateTab", { name = category.name }, category.icon)
+				withIcon(tab, "CreateSection", { name = category.section }, category.icon)
 				tab:CreateText({
 					text = "Tap a command to run it. Use Command Bar when you need to add arguments.",
 				})
 				for _, command in ipairs(categoryCommands) do
 					local commandName = command.NAME
-					tab:CreateButton({
+					withIcon(tab, "CreateButton", {
 						name = commandName,
 						callback = function()
 							execCmd(commandName, Players.LocalPlayer, true)
 						end,
-					})
+					}, menuIcons.forCommand(commandName, category.icon))
 				end
 			end
+		end
+
+		-- Home: a dashboard of this session, drawn with our own cards inside the tab's page and
+		-- refreshed twice a second for as long as the menu exists.
+		local function buildHomePage()
+			local page = homeTab and homeTab.tabPage
+			if typeof(page) ~= "Instance" then
+				warn("[SpreadCheeksGUI] Couldn't build the Home page; Rayfield's tab layout may have changed.")
+				return
+			end
+			local localPlayer = Players.LocalPlayer
+			local gap = 8
+
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius or UDim.new(0, 12)
+				corner.Parent = object
+			end
+			-- A card in the menu's row colours; pass "TextButton" for a card that can be clicked.
+			local function makeCard(parent, className)
+				local card = Instance.new(className or "Frame")
+				card.BorderSizePixel = 0
+				bindAuxiliaryUiColor(card, "BackgroundColor3", "Card")
+				addCorner(card)
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.3
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = card
+				card.Parent = parent
+				return card, stroke
+			end
+			local function makeLabel(parent, options)
+				local label = Instance.new("TextLabel")
+				label.BackgroundTransparency = 1
+				label.Font = options.font or Enum.Font.Gotham
+				label.TextSize = options.size or 12
+				label.Text = options.text or ""
+				label.TextXAlignment = options.alignX or Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.Position = options.position or UDim2.new()
+				label.Size = options.frameSize or UDim2.new(1, 0, 0, (options.size or 12) + 4)
+				bindAuxiliaryUiColor(label, "TextColor3", options.role or "Text")
+				label.Parent = parent
+				return label
+			end
+			local function makeIcon(parent, size, role, ...)
+				local icon = menuIcons.get(...)
+				local image = Instance.new("ImageLabel")
+				image.BackgroundTransparency = 1
+				image.Size = UDim2.fromOffset(size, size)
+				image.Visible = icon ~= nil
+				if icon then menuIcons.apply(image, icon) end
+				bindAuxiliaryUiColor(image, "ImageColor3", role)
+				image.Parent = parent
+				return image
+			end
+			-- Lays its items out left to right, wrapping onto another line when the card is narrow.
+			local function makeFlowRow(parent, position, widthOffset)
+				local row = Instance.new("Frame")
+				row.BackgroundTransparency = 1
+				row.Position = position
+				row.Size = UDim2.new(1, widthOffset, 0, 0)
+				row.AutomaticSize = Enum.AutomaticSize.Y
+				row.Parent = parent
+				local layout = Instance.new("UIListLayout")
+				layout.FillDirection = Enum.FillDirection.Horizontal
+				layout.Padding = UDim.new(0, 6)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				pcall(function() layout.Wraps = true end)
+				layout.Parent = row
+				return row
+			end
+			-- A small pill with an icon and a value, such as the player count or ping.
+			local function makeChip(parent, order, iconRole, ...)
+				local chip = Instance.new("Frame")
+				chip.LayoutOrder = order
+				chip.AutomaticSize = Enum.AutomaticSize.X
+				chip.Size = UDim2.fromOffset(0, 24)
+				chip.BorderSizePixel = 0
+				bindAuxiliaryUiColor(chip, "BackgroundColor3", "Inset")
+				addCorner(chip, UDim.new(1, 0))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 9)
+				padding.PaddingRight = UDim.new(0, 10)
+				padding.Parent = chip
+				local layout = Instance.new("UIListLayout")
+				layout.FillDirection = Enum.FillDirection.Horizontal
+				layout.VerticalAlignment = Enum.VerticalAlignment.Center
+				layout.Padding = UDim.new(0, 6)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				layout.Parent = chip
+				local icon = makeIcon(chip, 12, iconRole, ...)
+				icon.LayoutOrder = 1
+				local label = Instance.new("TextLabel")
+				label.LayoutOrder = 2
+				label.AutomaticSize = Enum.AutomaticSize.X
+				label.Size = UDim2.fromOffset(0, 24)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.GothamMedium
+				label.TextSize = 12
+				label.Text = "--"
+				bindAuxiliaryUiColor(label, "TextColor3", "Text")
+				label.Parent = chip
+				chip.Parent = parent
+				return label, icon
+			end
+
+			local root = Instance.new("Frame")
+			root.Name = "HomeDashboard"
+			root.LayoutOrder = 1
+			root.Size = UDim2.new(1, -20, 0, 0)
+			root.AutomaticSize = Enum.AutomaticSize.Y
+			root.BackgroundTransparency = 1
+			root.Parent = page
+			local rootLayout = Instance.new("UIListLayout")
+			rootLayout.Padding = UDim.new(0, gap)
+			rootLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			rootLayout.Parent = root
+
+			-- Top: the welcome and server cards on the left, performance down the right.
+			local topHeight, welcomeHeight, leftShare = 238, 100, 0.62
+			local topRow = Instance.new("Frame")
+			topRow.LayoutOrder = 1
+			topRow.Size = UDim2.new(1, 0, 0, topHeight)
+			topRow.BackgroundTransparency = 1
+			topRow.Parent = root
+
+			local welcome = makeCard(topRow)
+			welcome.Size = UDim2.new(leftShare, -gap / 2, 0, welcomeHeight)
+			local avatar = Instance.new("ImageLabel")
+			avatar.AnchorPoint = Vector2.new(0, 0.5)
+			avatar.Position = UDim2.new(0, 16, 0.5, 0)
+			avatar.Size = UDim2.fromOffset(58, 58)
+			avatar.BorderSizePixel = 0
+			avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. localPlayer.UserId .. "&w=150&h=150"
+			bindAuxiliaryUiColor(avatar, "BackgroundColor3", "Inset")
+			addCorner(avatar, UDim.new(1, 0))
+			local avatarRing = Instance.new("UIStroke")
+			avatarRing.Thickness = 2
+			avatarRing.Transparency = 0.25
+			bindAuxiliaryUiColor(avatarRing, "Color", "Accent")
+			avatarRing.Parent = avatar
+			avatar.Parent = welcome
+			local textX = 88
+			makeLabel(welcome, {
+				text = "WELCOME BACK", font = Enum.Font.GothamBold, size = 10, role = "Muted",
+				position = UDim2.fromOffset(textX, 24), frameSize = UDim2.new(1, -textX - 14, 0, 14),
+			})
+			makeLabel(welcome, {
+				text = localPlayer.DisplayName, font = Enum.Font.GothamBold, size = 17,
+				position = UDim2.fromOffset(textX, 39), frameSize = UDim2.new(1, -textX - 14, 0, 22),
+			})
+			local welcomeDetail = makeLabel(welcome, {
+				text = "@" .. localPlayer.Name, size = 11, role = "SubText",
+				position = UDim2.fromOffset(textX, 62), frameSize = UDim2.new(1, -textX - 14, 0, 15),
+			})
+
+			local server = makeCard(topRow)
+			server.Position = UDim2.fromOffset(0, welcomeHeight + gap)
+			server.Size = UDim2.new(leftShare, -gap / 2, 0, topHeight - welcomeHeight - gap)
+			local gameIcon = Instance.new("ImageLabel")
+			gameIcon.Position = UDim2.fromOffset(14, 14)
+			gameIcon.Size = UDim2.fromOffset(44, 44)
+			gameIcon.BorderSizePixel = 0
+			gameIcon.Image = game.GameId ~= 0 and ("rbxthumb://type=GameIcon&id=" .. game.GameId .. "&w=150&h=150") or ""
+			bindAuxiliaryUiColor(gameIcon, "BackgroundColor3", "Inset")
+			addCorner(gameIcon, UDim.new(0, 10))
+			gameIcon.Parent = server
+			local gameName = makeLabel(server, {
+				text = "Loading game...", font = Enum.Font.GothamBold, size = 14,
+				position = UDim2.fromOffset(70, 16), frameSize = UDim2.new(1, -84, 0, 18),
+			})
+			local serverDetail = makeLabel(server, {
+				size = 11, role = "SubText",
+				position = UDim2.fromOffset(70, 37), frameSize = UDim2.new(1, -84, 0, 15),
+			})
+			local serverChips = makeFlowRow(server, UDim2.fromOffset(14, 70), -28)
+			local playersText = makeChip(serverChips, 1, "SubText", "users")
+			local pingText, pingIcon = makeChip(serverChips, 2, "SubText", "wifi")
+			local sessionText = makeChip(serverChips, 3, "SubText", "timer", "clock")
+			local jobText = makeChip(serverChips, 4, "SubText", "fingerprint")
+			-- The game's name takes a web request, so it fills in when that comes back.
+			task.spawn(function()
+				local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
+				if gameName.Parent then
+					gameName.Text = ok and type(info) == "table" and tostring(info.Name or "") ~= "" and info.Name or ("Place " .. game.PlaceId)
+				end
+			end)
+
+			local performance = makeCard(topRow)
+			performance.Position = UDim2.new(leftShare, gap / 2, 0, 0)
+			performance.Size = UDim2.new(1 - leftShare, -gap / 2, 1, 0)
+			makeLabel(performance, {
+				text = "PERFORMANCE", font = Enum.Font.GothamBold, size = 10, role = "Muted",
+				alignX = Enum.TextXAlignment.Center, position = UDim2.fromOffset(0, 14), frameSize = UDim2.new(1, 0, 0, 14),
+			})
+			-- The FPS ring is two half rings. Each shows only part of itself through a hard-edged
+			-- gradient that turns with the value: the right half covers 0 to 180 degrees
+			-- (clockwise from the top) and the left half 180 to 360.
+			local ringSize, ringThickness = 112, 8
+			local ring = Instance.new("Frame")
+			ring.AnchorPoint = Vector2.new(0.5, 0)
+			ring.Position = UDim2.new(0.5, 0, 0, 36)
+			ring.Size = UDim2.fromOffset(ringSize, ringSize)
+			ring.BackgroundTransparency = 1
+			ring.Parent = performance
+			-- Strokes are drawn outside their frame, so each circle is inset by the stroke's width.
+			local function makeRingStroke(parent, offsetX, role)
+				local circle = Instance.new("Frame")
+				circle.Position = UDim2.fromOffset(offsetX + ringThickness, ringThickness)
+				circle.Size = UDim2.fromOffset(ringSize - ringThickness * 2, ringSize - ringThickness * 2)
+				circle.BackgroundTransparency = 1
+				addCorner(circle, UDim.new(1, 0))
+				local stroke = Instance.new("UIStroke")
+				stroke.Thickness = ringThickness
+				bindAuxiliaryUiColor(stroke, "Color", role)
+				stroke.Parent = circle
+				circle.Parent = parent
+				return stroke
+			end
+			makeRingStroke(ring, 0, "Inset")
+			local function makeRingHalf(xScale)
+				local half = Instance.new("Frame")
+				half.Position = UDim2.fromScale(xScale, 0)
+				half.Size = UDim2.fromScale(0.5, 1)
+				half.BackgroundTransparency = 1
+				half.ClipsDescendants = true
+				half.Parent = ring
+				local stroke = makeRingStroke(half, -xScale * ringSize, "Accent")
+				local gradient = Instance.new("UIGradient")
+				gradient.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0),
+					NumberSequenceKeypoint.new(0.5, 0),
+					NumberSequenceKeypoint.new(0.501, 1),
+					NumberSequenceKeypoint.new(1, 1),
+				})
+				gradient.Parent = stroke
+				return gradient
+			end
+			local rightGradient = makeRingHalf(0.5)
+			local leftGradient = makeRingHalf(0)
+			local ringAngle = Instance.new("NumberValue")
+			local function showRingAngle(angle)
+				rightGradient.Rotation = math.clamp(angle, 0, 180)
+				leftGradient.Rotation = math.clamp(angle, 180, 360)
+			end
+			ringAngle.Changed:Connect(showRingAngle)
+			showRingAngle(0)
+			local fpsText = makeLabel(ring, {
+				text = "--", font = Enum.Font.GothamBold, size = 24, alignX = Enum.TextXAlignment.Center,
+				position = UDim2.new(0, 0, 0.5, -17), frameSize = UDim2.new(1, 0, 0, 26),
+			})
+			makeLabel(ring, {
+				text = "frames per second", size = 9, role = "SubText", alignX = Enum.TextXAlignment.Center,
+				position = UDim2.new(0, 0, 0.5, 9), frameSize = UDim2.new(1, 0, 0, 12),
+			})
+			local function makeStatLine(y, ...)
+				local line = Instance.new("Frame")
+				line.AnchorPoint = Vector2.new(0.5, 0)
+				line.Position = UDim2.new(0.5, 0, 0, y)
+				line.AutomaticSize = Enum.AutomaticSize.X
+				line.Size = UDim2.fromOffset(0, 18)
+				line.BackgroundTransparency = 1
+				line.Parent = performance
+				local layout = Instance.new("UIListLayout")
+				layout.FillDirection = Enum.FillDirection.Horizontal
+				layout.VerticalAlignment = Enum.VerticalAlignment.Center
+				layout.Padding = UDim.new(0, 6)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				layout.Parent = line
+				local icon = makeIcon(line, 13, "SubText", ...)
+				icon.LayoutOrder = 1
+				local label = Instance.new("TextLabel")
+				label.LayoutOrder = 2
+				label.AutomaticSize = Enum.AutomaticSize.X
+				label.Size = UDim2.fromOffset(0, 18)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.GothamMedium
+				label.TextSize = 12
+				label.Text = "--"
+				bindAuxiliaryUiColor(label, "TextColor3", "Text")
+				label.Parent = line
+				return label, icon
+			end
+			local perfPingText, perfPingIcon = makeStatLine(164, "wifi")
+			local memoryText = makeStatLine(188, "memory-stick", "cpu", "hard-drive")
+
+			-- What's switched on right now, from the Controls tab (and Locate on the Players tab).
+			local active = makeCard(root)
+			active.LayoutOrder = 2
+			active.Size = UDim2.fromScale(1, 0)
+			active.AutomaticSize = Enum.AutomaticSize.Y
+			local activePadding = Instance.new("UIPadding")
+			activePadding.PaddingTop = UDim.new(0, 12)
+			activePadding.PaddingBottom = UDim.new(0, 12)
+			activePadding.PaddingLeft = UDim.new(0, 14)
+			activePadding.PaddingRight = UDim.new(0, 14)
+			activePadding.Parent = active
+			local activeIcon = makeIcon(active, 13, "AccentText", "zap")
+			activeIcon.Position = UDim2.fromOffset(0, 1)
+			makeLabel(active, {
+				text = "ACTIVE NOW", font = Enum.Font.GothamBold, size = 10, role = "Muted",
+				position = UDim2.fromOffset(19, 0), frameSize = UDim2.new(0.5, -19, 0, 15),
+			})
+			local activeSummary = makeLabel(active, {
+				size = 11, role = "SubText", alignX = Enum.TextXAlignment.Right,
+				position = UDim2.fromScale(0.5, 0), frameSize = UDim2.new(0.5, 0, 0, 15),
+			})
+			local activeChips = makeFlowRow(active, UDim2.fromOffset(0, 25), 0)
+			local emptyText = makeLabel(active, {
+				text = "Nothing's switched on. Turn features on in the Controls tab.", size = 12, role = "SubText",
+				position = UDim2.fromOffset(0, 25), frameSize = UDim2.new(1, 0, 0, 24),
+			})
+
+			-- Quick actions.
+			local tiles = Instance.new("Frame")
+			tiles.LayoutOrder = 3
+			tiles.Size = UDim2.fromScale(1, 0)
+			tiles.AutomaticSize = Enum.AutomaticSize.Y
+			tiles.BackgroundTransparency = 1
+			tiles.Parent = root
+			local tileLayout = Instance.new("UIGridLayout")
+			tileLayout.CellSize = UDim2.new(1 / 3, -gap * 2 / 3, 0, 72)
+			tileLayout.CellPadding = UDim2.fromOffset(gap, gap)
+			tileLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			tileLayout.Parent = tiles
+			local tileCards = {}
+			local function addTile(order, title, subtitle, action, ...)
+				local tile, stroke = makeCard(tiles, "TextButton")
+				tile.LayoutOrder = order
+				tile.AutoButtonColor = false
+				tile.Text = ""
+				local icon = makeIcon(tile, 18, "AccentText", ...)
+				icon.Position = UDim2.fromOffset(14, 13)
+				makeLabel(tile, {
+					text = title, font = Enum.Font.GothamSemibold, size = 13,
+					position = UDim2.fromOffset(14, 37), frameSize = UDim2.new(1, -20, 0, 16),
+				})
+				makeLabel(tile, {
+					text = subtitle, size = 11, role = "SubText",
+					position = UDim2.fromOffset(14, 53), frameSize = UDim2.new(1, -20, 0, 14),
+				})
+				tile.MouseEnter:Connect(function() stroke.Color = auxiliaryUiTheme.Accent end)
+				tile.MouseLeave:Connect(function() stroke.Color = auxiliaryUiTheme.Stroke end)
+				tile.Activated:Connect(action)
+				table.insert(tileCards, tile)
+			end
+			addTile(1, "Rejoin", "same server", function() execCmd("rejoin", localPlayer, true) end, "refresh-cw")
+			addTile(2, "Server Hop", "find a fresh one", function() execCmd("serverhop", localPlayer, true) end, "arrow-left-right", "shuffle", "server")
+			addTile(3, "Copy Join Link", "share this server", function() execCmd("jobid", localPlayer, true) end, "link", "copy")
+			addTile(4, "Respawn", "fresh character", function() execCmd("respawn", localPlayer, true) end, "heart-pulse", "heart", "user-round")
+			addTile(5, "Refresh", "respawn where you stand", function() execCmd("refresh", localPlayer, true) end, "rotate-ccw")
+			addTile(6, "Command Bar", "or press ;", function()
+				if quickCommandBar.open then quickCommandBar.open() end
+			end, "square-terminal", "terminal-square")
+
+			-- Fading. Rayfield fades its own rows in and out with the window, but these cards are
+			-- ours, so they follow the window themselves. Each part's resting transparency is
+			-- recorded the first time it's seen, so a fade always returns it to the right value.
+			local resting = setmetatable({}, { __mode = "k" })
+			local fadeProperties = {
+				{ "GuiObject", "BackgroundTransparency" },
+				{ "TextLabel", "TextTransparency" },
+				{ "TextButton", "TextTransparency" },
+				{ "ImageLabel", "ImageTransparency" },
+				{ "UIStroke", "Transparency" },
+			}
+			local function partsOf(card)
+				local parts = {}
+				local function visit(object)
+					local record = resting[object]
+					if not record then
+						record = {}
+						for _, entry in ipairs(fadeProperties) do
+							if object:IsA(entry[1]) then
+								record[entry[2]] = object[entry[2]]
+							end
+						end
+						resting[object] = record
+					end
+					for property, value in pairs(record) do
+						if value < 1 then
+							table.insert(parts, { object, property, value })
+						end
+					end
+				end
+				visit(card)
+				for _, descendant in ipairs(card:GetDescendants()) do
+					visit(descendant)
+				end
+				return parts
+			end
+			-- Top to bottom, then the tiles one by one, the way Rayfield reveals a page.
+			local revealOrder = { welcome, performance, server, active }
+			for _, tile in ipairs(tileCards) do
+				table.insert(revealOrder, tile)
+			end
+			local dashboardShown = false
+			local fadeSerial = 0
+			local function hideNow(card)
+				for _, part in ipairs(partsOf(card)) do
+					part[1][part[2]] = 1
+				end
+			end
+			local function fadeDashboard(shown, firstTime)
+				fadeSerial += 1
+				local serial = fadeSerial
+				dashboardShown = shown
+				if not shown then
+					local info = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+					for _, card in ipairs(revealOrder) do
+						for _, part in ipairs(partsOf(card)) do
+							TweenService:Create(part[1], info, { [part[2]] = 1 }):Play()
+						end
+					end
+					return
+				end
+				local info = TweenInfo.new(firstTime and 0.5 or 0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+				for _, card in ipairs(revealOrder) do
+					-- A newer fade (the window closing again) takes over.
+					if serial ~= fadeSerial then return end
+					for _, part in ipairs(partsOf(card)) do
+						TweenService:Create(part[1], info, { [part[2]] = part[3] }):Play()
+					end
+					task.wait(0.04)
+				end
+			end
+
+			-- Live numbers.
+			local executorName = nil
+			pcall(function()
+				if type(identifyexecutor) == "function" then
+					executorName = tostring((identifyexecutor()))
+				end
+			end)
+			local function formatDuration(seconds)
+				seconds = math.max(0, math.floor(seconds))
+				if seconds < 60 then return seconds .. "s" end
+				local minutes = math.floor(seconds / 60)
+				if minutes < 60 then return minutes .. "m" end
+				return math.floor(minutes / 60) .. "h " .. minutes % 60 .. "m"
+			end
+			-- Round trip to the server in milliseconds, from the player, or else from Stats.
+			local function readPing()
+				local ok, ping = pcall(function() return localPlayer:GetNetworkPing() * 1000 end)
+				if ok and type(ping) == "number" and ping > 0 then return ping end
+				local statOk, statPing = pcall(function() return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+				return statOk and tonumber(statPing) or 0
+			end
+			local function pingColor(ping)
+				if ping < 100 then return Color3.fromRGB(74, 222, 128) end
+				if ping < 200 then return Color3.fromRGB(255, 212, 59) end
+				return Color3.fromRGB(255, 90, 90)
+			end
+			local jobId = tostring(game.JobId)
+			jobText.Text = #jobId > 10 and (jobId:sub(1, 4) .. "..." .. jobId:sub(-4)) or (jobId ~= "" and jobId or "No job id")
+
+			local activeSignature = nil
+			local function refreshActive()
+				local items = {}
+				for _, entry in ipairs(quickToggles) do
+					if entry.state then
+						table.insert(items, { text = entry.name, icons = entry.icons })
+					end
+				end
+				if locatedPlayerName then
+					table.insert(items, { text = "Locating " .. locatedPlayerName, icons = { "locate" } })
+				end
+				local names = {}
+				for _, item in ipairs(items) do
+					table.insert(names, item.text)
+				end
+				-- Only rebuilt when something actually changed.
+				local signature = table.concat(names, "\n")
+				if signature == activeSignature then return end
+				activeSignature = signature
+				for _, child in ipairs(activeChips:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				for index, item in ipairs(items) do
+					local label = makeChip(activeChips, index, "AccentText", table.unpack(item.icons or {}))
+					label.Text = item.text
+				end
+				emptyText.Visible = #items == 0
+				-- New chips made while the dashboard is hidden wait to fade in with their card.
+				if not dashboardShown then
+					hideNow(activeChips)
+				end
+			end
+
+			local frames, lastSample = 0, os.clock()
+			local frameCounter = RunService.RenderStepped:Connect(function()
+				frames += 1
+			end)
+			local ringTween = nil
+			local ringTarget = 0
+			local revealedOnce = false
+			local function moveRing(info)
+				if ringTween then ringTween:Cancel() end
+				ringTween = TweenService:Create(ringAngle, info, { Value = ringTarget })
+				ringTween:Play()
+			end
+			local function update()
+				local now = os.clock()
+				local fps = frames / math.max(now - lastSample, 0.001)
+				frames, lastSample = 0, now
+				fpsText.Text = tostring(math.floor(fps + 0.5))
+				-- A 60 FPS cap fills the ring; unlocked frame rates are measured against 240.
+				local ringMax = fps <= 62 and 60 or 240
+				ringTarget = math.clamp(fps / ringMax, 0, 1) * 360
+				-- The ring stays empty until the dashboard is first revealed, then sweeps up.
+				if revealedOnce then
+					moveRing(TweenInfo.new(0.4, Enum.EasingStyle.Quad))
+				end
+
+				local ping = math.floor(readPing() + 0.5)
+				pingText.Text = ping .. " ms"
+				perfPingText.Text = ping .. " ms"
+				pingIcon.ImageColor3 = pingColor(ping)
+				perfPingIcon.ImageColor3 = pingColor(ping)
+				local memoryOk, memory = pcall(function() return StatsService:GetTotalMemoryUsageMb() end)
+				if memoryOk and type(memory) == "number" then
+					memoryText.Text = memory >= 1024 and string.format("%.1f GB", memory / 1024) or (math.floor(memory + 0.5) .. " MB")
+				end
+
+				local session = formatDuration(time())
+				playersText.Text = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
+				sessionText.Text = session
+				local details = { "@" .. localPlayer.Name }
+				if executorName then table.insert(details, executorName) end
+				table.insert(details, session .. " on this server")
+				welcomeDetail.Text = table.concat(details, "  ·  ")
+				serverDetail.Text = "Server up " .. formatDuration(workspace.DistributedGameTime) .. "  ·  " .. #cmds .. " commands"
+
+				local keybinds = 0
+				for _, entry in ipairs(quickToggles) do
+					if entry.key then keybinds += 1 end
+				end
+				activeSummary.Text = keybinds == 1 and "1 keybind set" or (keybinds .. " keybinds set")
+				refreshActive()
+			end
+			refreshActive()
+			-- Everything starts hidden until the window opens.
+			for _, card in ipairs(revealOrder) do
+				hideNow(card)
+			end
+			local function reveal()
+				local firstTime = not revealedOnce
+				revealedOnce = true
+				pcall(update)
+				if firstTime then
+					moveRing(TweenInfo.new(1.1, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out))
+				end
+				fadeDashboard(true, firstTime)
+			end
+			-- Follow the window: hidden while it's closed or minimised, faded in when it opens.
+			-- The first time, Rayfield spends about 1.5s growing the window and fading its own
+			-- parts in before it reveals the page, so the dashboard waits for that too.
+			local pendingReveal = nil
+			local watcher
+			watcher = RunService.Heartbeat:Connect(function()
+				if not root.Parent then
+					watcher:Disconnect()
+					return
+				end
+				local main = window.main
+				local open = (typeof(main) ~= "Instance" or main.Visible) and not window.hidden and not window.minimised
+				if open and not dashboardShown and not pendingReveal then
+					local revealIn = revealedOnce and 0.25 or math.max(0.25, (windowOpenedAt or os.clock()) + 1.45 - os.clock())
+					pendingReveal = task.delay(revealIn, function()
+						pendingReveal = nil
+						reveal()
+					end)
+				elseif not open then
+					if pendingReveal then
+						task.cancel(pendingReveal)
+						pendingReveal = nil
+					end
+					if dashboardShown then
+						fadeDashboard(false)
+					end
+				end
+			end)
+			task.spawn(function()
+				while root.Parent do
+					task.wait(0.5)
+					if not root.Parent then break end
+					local ok, problem = pcall(update)
+					if not ok then
+						warn("[SpreadCheeksGUI] The Home page stopped updating: " .. tostring(problem))
+						break
+					end
+				end
+				frameCounter:Disconnect()
+			end)
+		end
+
+		-- Kept separate so a problem on the Home page can't stop the rest of the menu loading.
+		local homeOk, homeError = pcall(buildHomePage)
+		if not homeOk then
+			warn("[SpreadCheeksGUI] The Home page couldn't be built: " .. tostring(homeError))
 		end
 	end)
 
