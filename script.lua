@@ -14653,6 +14653,11 @@ if rayfieldLoaded and Rayfield then
 			-- style ("Worm", "Belly Slide" or "Log Roll") and Helicopter's hover height (studs).
 			trollDeadPose = "On your back", trollSitSpot = "Head", trollOrbitHeight = 0, trollCopyFollow = "Off",
 			trollCrawlStyle = "Worm", trollHeliHeight = 8,
+			-- Bow Down: where you bow from ("In front", "Behind" or "Around them"), how fast, how low
+			-- (degrees), how far away (studs) and whether you kneel. Marble Ball: how fast it rolls,
+			-- how high it jumps and how big the ball is (studs).
+			trollBowSpot = "In front", trollBowSpeed = 4, trollBowDepth = 70, trollBowDistance = 4.5, trollBowKneel = false,
+			trollMarbleSpeed = 100, trollMarbleJump = 100, trollMarbleSize = 5,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14661,6 +14666,8 @@ if rayfieldLoaded and Rayfield then
 			radarRange = { 50, 500 }, fpsCap = { 0, 360 },
 			trollSpinSpeed = { 1, 100 }, trollOrbitSpeed = { 1, 10 }, trollOrbitDistance = { 3, 25 }, trollHeadSize = { 2, 5 },
 			trollOrbitHeight = { -5, 15 }, trollHeliHeight = { 3, 30 },
+			trollBowSpeed = { 1, 10 }, trollBowDepth = { 20, 90 }, trollBowDistance = { 2, 15 },
+			trollMarbleSpeed = { 20, 300 }, trollMarbleJump = { 0, 250 }, trollMarbleSize = { 3, 10 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15596,12 +15603,19 @@ if rayfieldLoaded and Rayfield then
 					local entry = quickToggleByName[name]
 					if entry and entry.state then setQuickToggle(entry, false) end
 				end
+				-- Runs step every frame straight after Roblox's control script has read your keys (it runs
+				-- at the Input render priority and sets your walking direction and jumping from them), so
+				-- what step sets is what your humanoid goes by. Pass no step to stop it.
+				local function afterControls(name, step)
+					pcall(function() RunService:UnbindFromRenderStep(name) end)
+					if step then RunService:BindToRenderStep(name, Enum.RenderPriority.Input.Value + 1, step) end
+				end
 
 				-- Switches that move your character in ways that fight each other. Takeovers place your
 				-- character themselves every frame and steering switches change how you walk, so each
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Headsit", "Orbit", "Bow Down" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball" }
 				local clashes = {}
 				local function clash(first, second)
@@ -15965,46 +15979,123 @@ if rayfieldLoaded and Rayfield then
 					callback = function(value) trolling.setAnimationSpeed(value, true) end,
 				}, "gauge", "fast-forward")
 
-				-- What the Emote switch loops: Roblox's own emotes (the /e ones), the dances Infinite Yield's
-				-- dance command uses, and silly ones made from Roblox's movement animations. Ones with no r6
-				-- id need an R15 avatar. group is the heading each sits under in the settings card.
+				-- What the Emote switch loops: Roblox's classic emotes (the /e ones) and Infinite Yield's
+				-- party dances, every emote Roblox has made (the animation ids read from Roblox's own emote
+				-- files), and silly ones made from Roblox's movement animations. Ones with no r6 id need an
+				-- R15 avatar. group is the category each is under in the settings card.
 				local emotes = {
-					{ name = "Wave", group = "EMOTES", r15 = 507770239, r6 = 128777973 },
-					{ name = "Point", group = "EMOTES", r15 = 507770453, r6 = 128853357 },
-					{ name = "Cheer", group = "EMOTES", r15 = 507770677, r6 = 129423030 },
-					{ name = "Laugh", group = "EMOTES", r15 = 507770818, r6 = 129423131 },
-					{ name = "Dance 1", group = "DANCES", r15 = 507771019, r6 = 182435998 },
-					{ name = "Dance 2", group = "DANCES", r15 = 507776043, r6 = 182436842 },
-					{ name = "Dance 3", group = "DANCES", r15 = 507777268, r6 = 182436935 },
-					{ name = "Party 1", group = "DANCES", r15 = 3333432454, r6 = 27789359 },
-					{ name = "Party 2", group = "DANCES", r15 = 4555808220, r6 = 30196114 },
-					{ name = "Party 3", group = "DANCES", r15 = 4049037604, r6 = 248263260 },
-					{ name = "Party 4", group = "DANCES", r15 = 4555782893, r6 = 45834924 },
-					{ name = "Party 5", group = "DANCES", r15 = 10214311282, r6 = 33796059 },
-					{ name = "Party 6", group = "DANCES", r15 = 10714010337, r6 = 28488254 },
-					{ name = "Party 7", group = "DANCES", r15 = 10713981723, r6 = 52155728 },
-					{ name = "Party 8", group = "DANCES", r15 = 10714372526 },
-					{ name = "Party 9", group = "DANCES", r15 = 10714076981 },
-					{ name = "Party 10", group = "DANCES", r15 = 10714392151 },
-					{ name = "Party 11", group = "DANCES", r15 = 11444443576 },
-					{ name = "Swim on Land", group = "SILLY", r15 = 507784897 },
-					{ name = "Climb the Air", group = "SILLY", r15 = 507765644, r6 = 180436334 },
-					{ name = "Flail", group = "SILLY", r15 = 507767968, r6 = 180436148 },
-					{ name = "Sit Slide", group = "SILLY", r15 = 2506281703, r6 = 178130996 },
-					{ name = "Run in Place", group = "SILLY", r15 = 507767714, r6 = 180426354 },
-					{ name = "Jump Loop", group = "SILLY", r15 = 507765000, r6 = 125750702 },
-					{ name = "Zombie Arms", group = "SILLY", r15 = 616158929 },
-					{ name = "Levitate", group = "SILLY", r15 = 616006778 },
-					{ name = "Grandpa", group = "SILLY", r15 = 845397899 },
-					{ name = "Robot", group = "SILLY", r15 = 616088211 },
-					{ name = "Zombie Shuffle", group = "RUNNING ON THE SPOT", r15 = 616168032 },
-					{ name = "Cartoon Run", group = "RUNNING ON THE SPOT", r15 = 742638842 },
-					{ name = "Robot Walk", group = "RUNNING ON THE SPOT", r15 = 616095330 },
-					{ name = "Ninja Run", group = "RUNNING ON THE SPOT", r15 = 656118852 },
-					{ name = "Toy Walk", group = "RUNNING ON THE SPOT", r15 = 782843345 },
-					{ name = "Mage Float", group = "RUNNING ON THE SPOT", r15 = 707897309 },
-					{ name = "Werewolf Run", group = "RUNNING ON THE SPOT", r15 = 1083216690 },
-					{ name = "Superhero Fall", group = "RUNNING ON THE SPOT", r15 = 616108001 },
+					{ name = "Wave", group = "Classic", r15 = 507770239, r6 = 128777973 },
+					{ name = "Point", group = "Classic", r15 = 507770453, r6 = 128853357 },
+					{ name = "Cheer", group = "Classic", r15 = 507770677, r6 = 129423030 },
+					{ name = "Laugh", group = "Classic", r15 = 507770818, r6 = 129423131 },
+					{ name = "Dance 1", group = "Classic", r15 = 507771019, r6 = 182435998 },
+					{ name = "Dance 2", group = "Classic", r15 = 507776043, r6 = 182436842 },
+					{ name = "Dance 3", group = "Classic", r15 = 507777268, r6 = 182436935 },
+					{ name = "Party 1", group = "Classic", r15 = 3333432454, r6 = 27789359 },
+					{ name = "Party 2", group = "Classic", r15 = 4555808220, r6 = 30196114 },
+					{ name = "Party 3", group = "Classic", r15 = 4049037604, r6 = 248263260 },
+					{ name = "Party 4", group = "Classic", r15 = 4555782893, r6 = 45834924 },
+					{ name = "Party 5", group = "Classic", r15 = 10214311282, r6 = 33796059 },
+					{ name = "Party 6", group = "Classic", r15 = 10714010337, r6 = 28488254 },
+					{ name = "Party 7", group = "Classic", r15 = 11444443576, r6 = 52155728 },
+					{ name = "Hello", group = "Gestures", r15 = 10714359093 },
+					{ name = "High Wave", group = "Gestures", r15 = 10714362852 },
+					{ name = "Jumping Wave", group = "Gestures", r15 = 10714378156 },
+					{ name = "Over There", group = "Gestures", r15 = 10714395441 },
+					{ name = "Salute", group = "Gestures", r15 = 10714389988 },
+					{ name = "Beckon", group = "Gestures", r15 = 10713984554 },
+					{ name = "Curtsy", group = "Gestures", r15 = 10714061912 },
+					{ name = "Shrug", group = "Gestures", r15 = 10714374484 },
+					{ name = "Tilt", group = "Gestures", r15 = 10714338461 },
+					{ name = "Agree", group = "Gestures", r15 = 10713954623 },
+					{ name = "Disagree", group = "Gestures", r15 = 10714065135 },
+					{ name = "Applaud", group = "Gestures", r15 = 10713966026 },
+					{ name = "Louder", group = "Gestures", r15 = 10714385204 },
+					{ name = "Get Out", group = "Gestures", r15 = 10714345862 },
+					{ name = "Shy", group = "Gestures", r15 = 10714369325 },
+					{ name = "Happy", group = "Gestures", r15 = 10714352626 },
+					{ name = "Sad", group = "Gestures", r15 = 10714392876 },
+					{ name = "Haha", group = "Gestures", r15 = 10714350889 },
+					{ name = "Confused", group = "Gestures", r15 = 4940561610 },
+					{ name = "Cower", group = "Gestures", r15 = 4940563117 },
+					{ name = "Bored", group = "Gestures", r15 = 10713992055 },
+					{ name = "Sleep", group = "Gestures", r15 = 10714360343 },
+					{ name = "Greatest", group = "Gestures", r15 = 10714349037 },
+					{ name = "Godlike", group = "Gestures", r15 = 10714347256 },
+					{ name = "Idol", group = "Gestures", r15 = 10714372526 },
+					{ name = "Y", group = "Gestures", r15 = 10714164866 },
+					{ name = "T", group = "Gestures", r15 = 10714347453 },
+					{ name = "Tree", group = "Gestures", r15 = 10714330764 },
+					{ name = "Celebrate", group = "Gestures", r15 = 10714016223 },
+					{ name = "Jumping Cheer", group = "Gestures", r15 = 5895324424 },
+					{ name = "Stadium", group = "Gestures", r15 = 10714356920 },
+					{ name = "Swish", group = "Gestures", r15 = 10714349738 },
+					{ name = "Power Blast", group = "Gestures", r15 = 10714389396 },
+					{ name = "Hero Landing", group = "Gestures", r15 = 10714360164 },
+					{ name = "Bodybuilder", group = "Gestures", r15 = 10713990381 },
+					{ name = "Fishing", group = "Gestures", r15 = 10714101749 },
+					{ name = "Floss Dance", group = "Dances", r15 = 10714340543 },
+					{ name = "Line Dance", group = "Dances", r15 = 10714383856 },
+					{ name = "Dorky Dance", group = "Dances", r15 = 10714069471 },
+					{ name = "Baby Dance", group = "Dances", r15 = 10713983178 },
+					{ name = "Dolphin Dance", group = "Dances", r15 = 10714068222 },
+					{ name = "Break Dance", group = "Dances", r15 = 10714003221 },
+					{ name = "Side to Side", group = "Dances", r15 = 10714366910 },
+					{ name = "Shuffle", group = "Dances", r15 = 10714371274 },
+					{ name = "Top Rock", group = "Dances", r15 = 10714336041 },
+					{ name = "Fancy Feet", group = "Dances", r15 = 10714076981 },
+					{ name = "Samba", group = "Dances", r15 = 10714386947 },
+					{ name = "Cha Cha", group = "Dances", r15 = 6862001787 },
+					{ name = "Block Partier", group = "Dances", r15 = 10713988674 },
+					{ name = "Around Town", group = "Dances", r15 = 10713981723 },
+					{ name = "Fashionable", group = "Dances", r15 = 10714091938 },
+					{ name = "Swan Dance", group = "Dances", r15 = 10714352930 },
+					{ name = "Air Dance", group = "Dances", r15 = 10713957138 },
+					{ name = "Keeping Time", group = "Dances", r15 = 10714380563 },
+					{ name = "Twirl", group = "Dances", r15 = 10714293450 },
+					{ name = "Quiet Waves", group = "Dances", r15 = 10714390497 },
+					{ name = "Flowing Breeze", group = "Dances", r15 = 10714342957 },
+					{ name = "Robot Dance", group = "Dances", r15 = 10714392151 },
+					{ name = "Zombie", group = "Dances", r15 = 10714089137 },
+					{ name = "Monkey", group = "Dances", r15 = 10714388352 },
+					{ name = "Tantrum", group = "Dances", r15 = 10714340558 },
+					{ name = "Dizzy", group = "Dances", r15 = 10714066964 },
+					{ name = "Fast Hands", group = "Dances", r15 = 10714100539 },
+					{ name = "Sneaky", group = "Dances", r15 = 10714358528 },
+					{ name = "Rock On", group = "Dances", r15 = 10714403700 },
+					{ name = "Jacks", group = "Dances", r15 = 10714375667 },
+					{ name = "Hot To Go!", group = "Music", r15 = 85267023718407 },
+					{ name = "Show Dem Wrists", group = "Music", r15 = 10714377090 },
+					{ name = "Wake Up Call", group = "Music", r15 = 10714168145 },
+					{ name = "Boxing Punch", group = "Music", r15 = 10717116749 },
+					{ name = "Dancin' Shoes", group = "Music", r15 = 10714063823 },
+					{ name = "On The Outside", group = "Music", r15 = 10714392953 },
+					{ name = "Saturday Dance", group = "Music", r15 = 10714382522 },
+					{ name = "Up and Down", group = "Music", r15 = 10714174918 },
+					{ name = "Drummer Moves", group = "Music", r15 = 10714072822 },
+					{ name = "Drum Master", group = "Music", r15 = 10714070681 },
+					{ name = "Rock Star", group = "Music", r15 = 10714400171 },
+					{ name = "Rock Guitar", group = "Music", r15 = 10714393929 },
+					{ name = "Drum Solo", group = "Music", r15 = 10714074218 },
+					{ name = "Shrek Roar", group = "Music", r15 = 18524313628 },
+					{ name = "Swim on Land", group = "Silly", r15 = 507784897 },
+					{ name = "Climb the Air", group = "Silly", r15 = 507765644, r6 = 180436334 },
+					{ name = "Flail", group = "Silly", r15 = 507767968, r6 = 180436148 },
+					{ name = "Sit Slide", group = "Silly", r15 = 2506281703, r6 = 178130996 },
+					{ name = "Run in Place", group = "Silly", r15 = 507767714, r6 = 180426354 },
+					{ name = "Jump Loop", group = "Silly", r15 = 507765000, r6 = 125750702 },
+					{ name = "Zombie Arms", group = "Silly", r15 = 616158929 },
+					{ name = "Levitate", group = "Silly", r15 = 616006778 },
+					{ name = "Grandpa", group = "Silly", r15 = 845397899 },
+					{ name = "Robot", group = "Silly", r15 = 616088211 },
+					{ name = "Zombie Shuffle", group = "On the spot", r15 = 616168032 },
+					{ name = "Cartoon Run", group = "On the spot", r15 = 742638842 },
+					{ name = "Robot Walk", group = "On the spot", r15 = 616095330 },
+					{ name = "Ninja Run", group = "On the spot", r15 = 656118852 },
+					{ name = "Toy Walk", group = "On the spot", r15 = 782843345 },
+					{ name = "Mage Float", group = "On the spot", r15 = 707897309 },
+					{ name = "Werewolf Run", group = "On the spot", r15 = 1083216690 },
+					{ name = "Superhero Fall", group = "On the spot", r15 = 616108001 },
 				}
 				local emoteNames, emoteByName, emoteGroups = {}, {}, {}
 				for _, emote in ipairs(emotes) do
@@ -16040,12 +16131,16 @@ if rayfieldLoaded and Rayfield then
 					emoteState.track = track
 					return true
 				end
-				function trolling.chooseEmote(name)
-					local wanted = tostring(name or ""):lower():gsub("%s", "")
+				-- Makes name the Emote switch's emote (playing it if Emote is on). Spaces and punctuation
+				-- don't matter, so "floss dance" finds "Floss Dance". fromDropdown: the dropdown already
+				-- shows it.
+				function trolling.chooseEmote(name, fromDropdown)
+					local wanted = tostring(name or ""):lower():gsub("[%s%p]", "")
 					for _, emote in ipairs(emotes) do
-						if emote.name:lower():gsub("%s", "") == wanted then
+						if emote.name:lower():gsub("[%s%p]", "") == wanted then
 							featureSettings.trollEmote = emote.name
 							saveFeatureSettings()
+							if not fromDropdown then pcall(function() trolling.emoteDropdown:Set(emote.name, true) end) end
 							local entry = quickToggleByName["Emote"]
 							if entry and entry.state then
 								local played, why = playChosenEmote()
@@ -16056,7 +16151,7 @@ if rayfieldLoaded and Rayfield then
 					end
 					return false
 				end
-				addQuickToggle(trollTab, "Emote", "Loops an emote, a dance or something silly. Right-click to choose", function(enabled)
+				addQuickToggle(trollTab, "Emote", "Loops the emote picked below (or right-click to pick by category). Everyone sees it", function(enabled)
 					if not enabled then return stopEmoteTrack() end
 					local played, why = playChosenEmote()
 					if not played then
@@ -16068,6 +16163,25 @@ if rayfieldLoaded and Rayfield then
 					local entry = quickToggleByName["Emote"]
 					if entry and entry.state then playChosenEmote() end
 				end)
+				-- Every preset in one list: picking one plays it straight away, through the Emote switch.
+				trolling.emoteDropdown = withIcon(trollTab, "CreateDropdown", {
+					name = "Pick an Emote",
+					description = tostring(#emotes) .. " emotes and dances. Picking one plays it on a loop; switch Emote off to stop",
+					options = emoteNames,
+					value = featureSettings.trollEmote,
+					callback = function(value)
+						-- Rayfield may call this as the dropdown is made; only a real pick counts.
+						if not trolling.emoteDropdownReady then return end
+						if type(value) == "table" then value = value[1] end
+						value = tostring(value)
+						if not emoteByName[value] then return end
+						local entry = quickToggleByName["Emote"]
+						if value == featureSettings.trollEmote and entry and entry.state then return end
+						trolling.chooseEmote(value, true)
+						if entry and not entry.state then setQuickToggle(entry, true) end
+					end,
+				}, "smile", "music")
+				task.defer(function() trolling.emoteDropdownReady = true end)
 
 				addQuickToggle(trollTab, "Reverse Animations", "Everything you do plays backwards", function(enabled)
 					trolling.reverse = enabled
@@ -16140,6 +16254,7 @@ if rayfieldLoaded and Rayfield then
 						end
 					end)
 				end
+
 				function trolling.stopAnimations()
 					stopCustomTrack()
 					switchOff("Emote")
@@ -16204,18 +16319,13 @@ if rayfieldLoaded and Rayfield then
 				addQuickToggle(trollTab, "Moonwalk", "You face backwards as you walk, so you glide the wrong way", walkFacingSwitch("Moonwalk", math.pi), "footprints")
 				addQuickToggle(trollTab, "Crab Walk", "You walk sideways, like a crab", walkFacingSwitch("Crab Walk", math.pi / 2), "shell", "bug")
 
-				-- Drunk Walk: your steering wobbles from side to side, and every so often you trip over. It
-				-- runs just before the physics step, after the game has read your keys.
-				local drunkWalkState = { loop = nil, nextTrip = 0 }
+				-- Drunk Walk: your steering wobbles from side to side, and every so often you trip over.
+				local drunkWalkState = { nextTrip = 0 }
 				addQuickToggle(trollTab, "Drunk Walk", "You stagger about and trip over now and then", function(enabled)
-					if drunkWalkState.loop then
-						drunkWalkState.loop:Disconnect()
-						drunkWalkState.loop = nil
-					end
-					if not enabled then return end
+					if not enabled then return afterControls("SpreadCheeksDrunkWalk", nil) end
 					claimMovement("Drunk Walk")
 					drunkWalkState.nextTrip = os.clock() + 5
-					drunkWalkState.loop = RunService.Stepped:Connect(function()
+					afterControls("SpreadCheeksDrunkWalk", function()
 						local _, humanoid = myCharacter()
 						if not humanoid then return end
 						local move = flat(humanoid.MoveDirection)
@@ -16231,15 +16341,11 @@ if rayfieldLoaded and Rayfield then
 				end, "beer", "wine")
 
 				-- Zoomies: you run round and round in circles by yourself, whatever keys you press.
-				local zoomiesState = { loop = nil, angle = 0 }
+				local zoomiesState = { angle = 0 }
 				addQuickToggle(trollTab, "Zoomies", "You run round and round in circles all by yourself", function(enabled)
-					if zoomiesState.loop then
-						zoomiesState.loop:Disconnect()
-						zoomiesState.loop = nil
-					end
-					if not enabled then return end
+					if not enabled then return afterControls("SpreadCheeksZoomies", nil) end
 					claimMovement("Zoomies")
-					zoomiesState.loop = RunService.Stepped:Connect(function(_, deltaTime)
+					afterControls("SpreadCheeksZoomies", function(deltaTime)
 						local _, humanoid = myCharacter()
 						if not humanoid then return end
 						zoomiesState.angle = (zoomiesState.angle + deltaTime * 2.5) % (math.pi * 2)
@@ -16249,16 +16355,12 @@ if rayfieldLoaded and Rayfield then
 
 				-- Ice Skates: your keys push you along instead of walking you, and you keep gliding and slow
 				-- down gradually, like on ice. You glide standing up, facing where you're going.
-				local skateState = { loop = nil, velocity = Vector3.zero }
+				local skateState = { velocity = Vector3.zero }
 				addQuickToggle(trollTab, "Ice Skates", "Glide around like you're on ice", function(enabled)
-					if skateState.loop then
-						skateState.loop:Disconnect()
-						skateState.loop = nil
-					end
-					if not enabled then return end
+					if not enabled then return afterControls("SpreadCheeksIceSkates", nil) end
 					claimMovement("Ice Skates")
 					skateState.velocity = Vector3.zero
-					skateState.loop = RunService.Stepped:Connect(function(_, deltaTime)
+					afterControls("SpreadCheeksIceSkates", function(deltaTime)
 						local _, humanoid, root = myCharacter()
 						if not humanoid then return end
 						local push = flat(humanoid.MoveDirection)
@@ -16275,15 +16377,12 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end, "snowflake", "wind")
 
-				local bunnyHopState = { loop = nil }
+				-- Bunny Hop: holds jump down for you whenever you're on the ground. The control script sets
+				-- jumping from your keys every frame, so this goes straight after it.
 				addQuickToggle(trollTab, "Bunny Hop", "Keeps you hopping nonstop", function(enabled)
-					if bunnyHopState.loop then
-						bunnyHopState.loop:Disconnect()
-						bunnyHopState.loop = nil
-					end
-					if not enabled then return end
+					if not enabled then return afterControls("SpreadCheeksBunnyHop", nil) end
 					claimMovement("Bunny Hop")
-					bunnyHopState.loop = RunService.Heartbeat:Connect(function()
+					afterControls("SpreadCheeksBunnyHop", function()
 						local _, humanoid = myCharacter()
 						if humanoid and not humanoid.Sit and humanoid.FloorMaterial ~= Enum.Material.Air then
 							humanoid.Jump = true
@@ -16672,6 +16771,140 @@ if rayfieldLoaded and Rayfield then
 				end
 				addQuickToggle(trollTab, "Helicopter", "Hover and spin with your arms up like rotor blades. Right-click for the height", takeoverSwitch("Helicopter", helicopterMode), "fan", "tornado")
 
+				-- Marble Ball (from your marble ball script): your root part turns into a big invisible ball
+				-- and you roll about on it, your body tumbling round with it for everyone to see. The
+				-- movement keys roll it the way the camera faces, and jump bounces it when it's on the
+				-- ground. Speed, jump and ball size are in its settings card.
+				local marbleState = { enabled = false, character = nil, root = nil, saved = nil, connections = {}, lastJump = 0 }
+				-- Which way to roll: your movement direction, or the WASD keys against the camera, for
+				-- games that don't pass your movement on while you're rolling.
+				local function marbleDirection(humanoid)
+					local direction = flat(humanoid.MoveDirection)
+					if direction.Magnitude > 0.05 then return direction.Unit end
+					local camera = workspace.CurrentCamera
+					if not camera or UserInputService:GetFocusedTextBox() then return Vector3.zero end
+					local look, right = flat(camera.CFrame.LookVector), flat(camera.CFrame.RightVector)
+					local keys = Vector3.zero
+					if UserInputService:IsKeyDown(Enum.KeyCode.W) then keys += look end
+					if UserInputService:IsKeyDown(Enum.KeyCode.S) then keys -= look end
+					if UserInputService:IsKeyDown(Enum.KeyCode.D) then keys += right end
+					if UserInputService:IsKeyDown(Enum.KeyCode.A) then keys -= right end
+					return keys.Magnitude > 0.05 and keys.Unit or Vector3.zero
+				end
+				-- Puts your character back as it was: the root's shape, size and collisions, standing up,
+				-- and the camera on you again.
+				local function stopMarble()
+					for _, connection in ipairs(marbleState.connections) do
+						connection:Disconnect()
+					end
+					table.clear(marbleState.connections)
+					local saved, root, character = marbleState.saved, marbleState.root, marbleState.character
+					marbleState.saved, marbleState.root, marbleState.character = nil, nil, nil
+					if saved and root and root.Parent then
+						pcall(function()
+							root.Shape = saved.shape
+							root.Size = saved.size
+							root.CanCollide = saved.rootCollides
+							root.AssemblyAngularVelocity = Vector3.zero
+						end)
+						for part, canCollide in pairs(saved.collisions) do
+							if part.Parent then part.CanCollide = canCollide end
+						end
+						local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+						if humanoid and humanoid.Health > 0 then
+							humanoid.PlatformStand = false
+							root.CFrame = CFrame.new(root.Position + Vector3.new(0, 1.5, 0)) * CFrame.Angles(0, saved.yaw, 0)
+							humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+						end
+						local camera = workspace.CurrentCamera
+						if camera and humanoid and camera.CameraSubject == root then camera.CameraSubject = humanoid end
+					end
+					holdAnimate("Marble Ball", false)
+				end
+				local function startMarble()
+					stopMarble()
+					local character, humanoid = myCharacter()
+					local root = character and character:FindFirstChild("HumanoidRootPart")
+					if not humanoid or not root then return false end
+					local look = flat(root.CFrame.LookVector)
+					local saved = {
+						shape = root.Shape, size = root.Size, rootCollides = root.CanCollide, collisions = {},
+						yaw = yawOf(look.Magnitude > 0.1 and look or Vector3.new(0, 0, -1)),
+					}
+					for _, part in ipairs(character:GetDescendants()) do
+						if part:IsA("BasePart") and part ~= root then saved.collisions[part] = part.CanCollide end
+					end
+					marbleState.saved, marbleState.root, marbleState.character = saved, root, character
+					holdAnimate("Marble Ball", true)
+					local size = featureSettings.trollMarbleSize
+					root.Shape = Enum.PartType.Ball
+					root.Size = Vector3.new(size, size, size)
+					root.CanCollide = true
+					-- The bigger ball sits on the ground rather than inside it.
+					local ground = groundBelow(root.Position, { character })
+					if ground then
+						root.CFrame = root.CFrame.Rotation + Vector3.new(root.Position.X, ground + size / 2 + 0.1, root.Position.Z)
+					end
+					local camera = workspace.CurrentCamera
+					if camera then camera.CameraSubject = root end
+					local rayParams = RaycastParams.new()
+					rayParams.FilterType = Enum.RaycastFilterType.Exclude
+					rayParams.FilterDescendantsInstances = { character }
+					-- Only the ball touches anything; your body rides along with it. The humanoid keeps
+					-- turning collisions back on, so they're switched off again every frame.
+					table.insert(marbleState.connections, RunService.Stepped:Connect(function()
+						for part in pairs(saved.collisions) do
+							if part.Parent then part.CanCollide = false end
+						end
+						root.CanCollide = true
+						humanoid.PlatformStand = true
+					end))
+					table.insert(marbleState.connections, RunService.RenderStepped:Connect(function(deltaTime)
+						if not root.Parent then return end
+						local direction = marbleDirection(humanoid)
+						if direction.Magnitude == 0 then return end
+						-- Spinning about the line across your direction rolls the ball along it. The speed
+						-- setting is how fast it speeds up, and half of it is the fastest it spins.
+						local speed = featureSettings.trollMarbleSpeed
+						local spin = root.AssemblyAngularVelocity + Vector3.new(direction.Z, 0, -direction.X) * speed * deltaTime
+						if spin.Magnitude > speed * 0.5 then spin = spin.Unit * speed * 0.5 end
+						root.AssemblyAngularVelocity = spin
+					end))
+					table.insert(marbleState.connections, UserInputService.JumpRequest:Connect(function()
+						if UserInputService:GetFocusedTextBox() or not root.Parent or os.clock() - marbleState.lastJump < 0.25 then return end
+						-- Only off the ground, like in your script.
+						local reach = root.Size.Y / 2 + 0.3
+						if workspace:Raycast(root.Position, Vector3.new(0, -reach, 0), rayParams) then
+							marbleState.lastJump = os.clock()
+							root.AssemblyLinearVelocity += Vector3.new(0, featureSettings.trollMarbleJump, 0)
+						end
+					end))
+					table.insert(marbleState.connections, humanoid.Died:Connect(stopMarble))
+					return true
+				end
+				function trolling.setMarbleSize(size)
+					featureSettings.trollMarbleSize = math.clamp(tonumber(size) or 5, 3, 10)
+					local root = marbleState.root
+					if root and root.Parent then
+						local diameter = featureSettings.trollMarbleSize
+						root.Size = Vector3.new(diameter, diameter, diameter)
+					end
+				end
+				-- While the switch is on, each new character rolls too.
+				table.insert(respawnHandlers, function()
+					if marbleState.enabled then startMarble() end
+				end)
+				addQuickToggle(trollTab, "Marble Ball", "Roll around on a big ball, tumbling along for everyone to see. Right-click for speed, jump and size", function(enabled)
+					marbleState.enabled = enabled
+					if not enabled then return stopMarble() end
+					claimMovement("Marble Ball")
+					if not startMarble() then
+						marbleState.enabled = false
+						notify("Marble Ball", "Your character isn't ready yet.")
+						return false
+					end
+				end, "globe", "circle-dot")
+
 				-- Moves: one-off tricks.
 				withIcon(trollTab, "CreateSection", { name = "Moves" }, "zap", "sparkles")
 				trollTab:CreateText({
@@ -16855,30 +17088,119 @@ if rayfieldLoaded and Rayfield then
 				addQuickToggle(trollTab, "Headsit", "Sit on your target's head and ride along. Jump to get off. Right-click for a piggyback", setHeadsit, "armchair")
 
 				-- Orbit: you circle round the target. Speed, distance and height are in its settings card.
-				local orbitState = { loop = nil, angle = 0 }
-				local function setOrbit(enabled)
+				-- You're moved by your velocity rather than teleported each frame, so the movement Roblox
+				-- sends to the server and everyone else (position and velocity) matches what you see, and
+				-- they see a smooth circle instead of a lagging, jumping one. The circle is centred where
+				-- the target will be by the time they see you, allowing for lag both ways. You go limp
+				-- (PlatformStand, so the humanoid doesn't fight it) and stop colliding, so walls and the
+				-- target can't knock you off course.
+				local orbitState = { loop = nil, noclip = nil, angle = 0, collisions = nil, humanoid = nil, ping = 0, pingAt = 0 }
+				-- keepPose: starting again on a new target, so you stay in the air rather than standing up
+				-- (the humanoid is kept, so you're still stood up if the new start fails).
+				local function stopOrbitMotion(keepPose)
 					if orbitState.loop then
 						orbitState.loop:Disconnect()
 						orbitState.loop = nil
 					end
+					if orbitState.noclip then
+						orbitState.noclip:Disconnect()
+						orbitState.noclip = nil
+					end
+					for part, canCollide in pairs(orbitState.collisions or {}) do
+						if part.Parent then part.CanCollide = canCollide end
+					end
+					orbitState.collisions = nil
+					if keepPose then return end
+					local humanoid = orbitState.humanoid
+					orbitState.humanoid = nil
+					if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
+					local root = getRoot(humanoid.Parent)
+					humanoid.PlatformStand = false
+					if root then
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+					end
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+				-- Your round trip to the server in seconds, checked once a second.
+				local function networkPing()
+					local now = os.clock()
+					if now - orbitState.pingAt > 1 then
+						orbitState.pingAt = now
+						local measured, ping = pcall(function() return localPlayer:GetNetworkPing() end)
+						orbitState.ping = measured and tonumber(ping) or 0.1
+					end
+					return orbitState.ping
+				end
+				local function setOrbit(enabled)
+					stopOrbitMotion(enabled)
 					if not enabled then return end
 					local target = targetFor("Orbit")
 					if not target then return false end
+					local character, humanoid, root = myCharacter()
+					if not humanoid then
+						notify("Orbit", "Your character isn't ready yet.")
+						return false
+					end
 					claimMovement("Orbit")
+					orbitState.humanoid = humanoid
+					orbitState.collisions = {}
+					for _, part in ipairs(character:GetDescendants()) do
+						if part:IsA("BasePart") then orbitState.collisions[part] = part.CanCollide end
+					end
+					-- The circle starts from where you already are round them, so there's no jump.
+					local startRoot = target.Character and getRoot(target.Character)
+					local fromThem = startRoot and flat(root.Position - startRoot.Position)
+					if fromThem and fromThem.Magnitude > 0.1 then orbitState.angle = math.atan2(fromThem.Z, fromThem.X) end
+					-- The humanoid keeps turning collisions back on, so they're switched off every frame.
+					orbitState.noclip = RunService.Stepped:Connect(function()
+						for part in pairs(orbitState.collisions) do
+							if part.Parent then part.CanCollide = false end
+						end
+					end)
 					orbitState.loop = RunService.Heartbeat:Connect(function(deltaTime)
 						if not target.Parent then
 							notify("Orbit", target.DisplayName .. " left the server")
 							return switchOff("Orbit")
 						end
-						local _, _, root = myCharacter()
+						local _, myHumanoid, myRoot = myCharacter()
+						if not myHumanoid then return end
+						-- A new character ends it.
+						if myHumanoid ~= orbitState.humanoid then return switchOff("Orbit") end
+						myHumanoid.PlatformStand = true
+						myRoot.AssemblyAngularVelocity = Vector3.zero
 						local theirRoot = target.Character and getRoot(target.Character)
-						if not root or not theirRoot then return end
+						if not theirRoot then
+							-- Hold still while they respawn.
+							myRoot.AssemblyLinearVelocity = Vector3.zero
+							return
+						end
 						orbitState.angle = (orbitState.angle + deltaTime * featureSettings.trollOrbitSpeed * 1.2) % (math.pi * 2)
-						local center = theirRoot.Position
+						-- What you see of them is a moment old, and they see you a moment late, so the centre
+						-- is moved on by their velocity over about two round trips.
+						local lead = math.clamp(networkPing() * 2 + 0.05, 0, 0.5)
+						local center = theirRoot.Position + flat(theirRoot.AssemblyLinearVelocity) * lead
 						local distance = featureSettings.trollOrbitDistance
-						local position = center + Vector3.new(math.cos(orbitState.angle) * distance, featureSettings.trollOrbitHeight, math.sin(orbitState.angle) * distance)
-						root.CFrame = CFrame.lookAt(position, Vector3.new(center.X, position.Y, center.Z))
-						root.AssemblyLinearVelocity = Vector3.zero
+						local spot = center + Vector3.new(math.cos(orbitState.angle) * distance, featureSettings.trollOrbitHeight, math.sin(orbitState.angle) * distance)
+						local offset = spot - myRoot.Position
+						if offset.Magnitude > 40 then
+							-- Too far to fly in one frame (starting from across the map, say): one jump onto
+							-- the circle, and smooth from there.
+							myRoot.CFrame = CFrame.lookAt(spot, Vector3.new(center.X, spot.Y, center.Z))
+							myRoot.AssemblyLinearVelocity = Vector3.zero
+							return
+						end
+						-- The velocity that carries you to the spot by the next frame. Physics does the moving,
+						-- so your velocity always matches how you're really moving.
+						local velocity = offset / math.max(deltaTime, 1 / 120)
+						if velocity.Magnitude > 350 then velocity = velocity.Unit * 350 end
+						myRoot.AssemblyLinearVelocity = velocity
+						-- Only the facing changes here; the position stays where physics put it.
+						local position = myRoot.Position
+						local facing = Vector3.new(center.X, position.Y, center.Z)
+						if (facing - position).Magnitude > 0.1 then
+							myRoot.CFrame = CFrame.lookAt(position, facing)
+						end
 					end)
 				end
 				targetedSwitches["Orbit"] = setOrbit
@@ -16981,12 +17303,15 @@ if rayfieldLoaded and Rayfield then
 				targetedSwitches["Copycat"] = setCopycat
 				addQuickToggle(trollTab, "Copycat", "Copy your target's animations and emotes as they do them. Right-click to follow them too", setCopycat, "copy", "users-round")
 
-				-- Bow Down: you stand in front of the target and bow to them, over and over.
-				local bowMode = { target = nil, standHeight = 3, last = nil }
+				-- Bow Down: you bow to the target over and over, facing them from in front, from behind or
+				-- while circling round them. Where, how fast, how low, how far away and kneeling are in its
+				-- settings card.
+				local bowMode = { target = nil, standHeight = 3, last = nil, phase = 0, angle = nil }
 				function bowMode.start(humanoid, root)
 					local ground = groundBelow(root.Position, { humanoid.Parent })
 					bowMode.standHeight = ground and math.clamp(root.Position.Y - ground, 1.5, 6) or 3
 					bowMode.last = root.CFrame
+					bowMode.phase, bowMode.angle = 0, nil
 				end
 				function bowMode.step(deltaTime, humanoid, root)
 					local target = bowMode.target
@@ -16998,13 +17323,25 @@ if rayfieldLoaded and Rayfield then
 					local theirRoot = target.Character and getRoot(target.Character)
 					if not theirRoot then return bowMode.last end
 					local front = flat(theirRoot.CFrame.LookVector)
-					if front.Magnitude < 0.1 then front = Vector3.new(0, 0, -1) end
-					local spot = theirRoot.Position + front.Unit * 4.5
+					front = front.Magnitude > 0.1 and front.Unit or Vector3.new(0, 0, -1)
+					local distance = featureSettings.trollBowDistance
+					local offset = front * distance
+					if featureSettings.trollBowSpot == "Behind" then
+						offset = -offset
+					elseif featureSettings.trollBowSpot == "Around them" then
+						-- Starts in front of them and goes round slowly.
+						bowMode.angle = (bowMode.angle or math.atan2(front.Z, front.X)) + deltaTime * 0.8
+						offset = Vector3.new(math.cos(bowMode.angle), 0, math.sin(bowMode.angle)) * distance
+					end
+					local spot = theirRoot.Position + offset
 					local ground = groundBelow(spot, { humanoid.Parent, target.Character })
-					local position = Vector3.new(spot.X, ground and ground + bowMode.standHeight or theirRoot.Position.Y, spot.Z)
+					-- Kneeling sinks you a little, so your legs fold into the floor.
+					local height = bowMode.standHeight - (featureSettings.trollBowKneel and 1.3 or 0)
+					local position = Vector3.new(spot.X, ground and ground + height or theirRoot.Position.Y, spot.Z)
 					local towards = flat(theirRoot.Position - position)
 					if towards.Magnitude > 0.1 then takeoverState.yaw = yawOf(towards) end
-					local bow = (0.5 - 0.5 * math.cos(os.clock() * 4)) * math.rad(70)
+					bowMode.phase = (bowMode.phase + deltaTime * featureSettings.trollBowSpeed) % (math.pi * 2)
+					local bow = (0.5 - 0.5 * math.cos(bowMode.phase)) * math.rad(featureSettings.trollBowDepth)
 					bowMode.last = CFrame.new(position) * CFrame.Angles(0, takeoverState.yaw, 0) * CFrame.Angles(-bow, 0, 0)
 					return bowMode.last
 				end
@@ -17016,7 +17353,7 @@ if rayfieldLoaded and Rayfield then
 					return beginTakeover("Bow Down", bowMode)
 				end
 				targetedSwitches["Bow Down"] = setBowDown
-				addQuickToggle(trollTab, "Bow Down", "Bow down to your target, over and over", setBowDown, "crown", "hand")
+				addQuickToggle(trollTab, "Bow Down", "Bow down to your target, over and over. Right-click to change how", setBowDown, "crown", "hand")
 
 				-- Only you can see: these change your own screen and nobody else's.
 				withIcon(trollTab, "CreateSection", { name = "Only you can see" }, "eye", "monitor")
@@ -17390,6 +17727,7 @@ if rayfieldLoaded and Rayfield then
 							button.TextColor3 = selected and theme.OnAccent or theme.SubText
 						end
 					end)
+					return grid
 				end
 				-- A card choice saved straight into featureSettings[key].
 				local function addSettingChoice(card, key, options)
@@ -17407,11 +17745,26 @@ if rayfieldLoaded and Rayfield then
 					end
 					local emoteCard = cardFor("Emote")
 					if emoteCard then
+						-- One category's emotes at a time, so the card stays a sensible size.
+						local groupNames, groupGrids = {}, {}
 						for _, group in ipairs(emoteGroups) do
-							emoteCard.addSectionLabel(group.name, group.name == "DANCES" and "music" or "smile")
-							addChoiceGrid(emoteCard, group.names, 3, function() return featureSettings.trollEmote end, trolling.chooseEmote)
+							table.insert(groupNames, group.name)
 						end
-						emoteCard.addHint("It loops until you switch Emote off. Silly ones are made from Roblox's own movement animations; most need an R15 avatar.")
+						local shownGroup = (emoteByName[featureSettings.trollEmote] or emotes[1]).group
+						local function showGroup(name)
+							shownGroup = name
+							for groupName, grid in pairs(groupGrids) do
+								grid.Visible = groupName == name
+							end
+						end
+						emoteCard.addSectionLabel("CATEGORY", "layout-grid")
+						addChoiceGrid(emoteCard, groupNames, 3, function() return shownGroup end, showGroup)
+						emoteCard.addSectionLabel("EMOTE", "smile", "music")
+						for _, group in ipairs(emoteGroups) do
+							groupGrids[group.name] = addChoiceGrid(emoteCard, group.names, 3, function() return featureSettings.trollEmote end, trolling.chooseEmote)
+						end
+						showGroup(shownGroup)
+						emoteCard.addHint("It loops until you switch Emote off. Most of these need an R15 avatar; the Classic ones work on R6 too.")
 					end
 					local deadCard = cardFor("Fake Dead")
 					if deadCard then
@@ -17500,12 +17853,85 @@ if rayfieldLoaded and Rayfield then
 							commit = saveFeatureSettings,
 							format = function(value) return tostring(math.floor(value + 0.5)) .. " studs" end,
 						})
+						orbitCard.addHint("You pass through walls while you orbit, and the circle allows for lag, so it lines up on their screen too.")
 					end
 					local copycatCard = cardFor("Copycat")
 					if copycatCard then
 						copycatCard.addSectionLabel("FOLLOW THEM", "footprints")
 						addSettingChoice(copycatCard, "trollCopyFollow", { "Off", "Behind", "Beside" })
 						copycatCard.addHint("Behind or beside, you stick with them as they move, like a shadow.")
+					end
+					local bowCard = cardFor("Bow Down")
+					if bowCard then
+						bowCard.addSectionLabel("WHERE", "map-pin")
+						addSettingChoice(bowCard, "trollBowSpot", { "In front", "Behind", "Around them" })
+						bowCard.addSectionLabel("BOW", "crown")
+						bowCard.addSlider({
+							text = "Speed",
+							icon = { "gauge" },
+							min = 1, max = 10, step = 0.5,
+							get = function() return featureSettings.trollBowSpeed end,
+							set = function(value) featureSettings.trollBowSpeed = value end,
+							commit = saveFeatureSettings,
+						})
+						bowCard.addSlider({
+							text = "How low",
+							icon = { "arrow-down" },
+							min = 20, max = 90, step = 5,
+							get = function() return featureSettings.trollBowDepth end,
+							set = function(value) featureSettings.trollBowDepth = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return tostring(math.floor(value + 0.5)) .. "°" end,
+						})
+						bowCard.addSlider({
+							text = "Distance",
+							icon = { "ruler" },
+							min = 2, max = 15, step = 0.5,
+							get = function() return featureSettings.trollBowDistance end,
+							set = function(value) featureSettings.trollBowDistance = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f studs", value) end,
+						})
+						bowCard.addSwitchGrid({
+							{
+								text = "Kneel down",
+								get = function() return featureSettings.trollBowKneel == true end,
+								set = function(on)
+									featureSettings.trollBowKneel = on
+									saveFeatureSettings()
+								end,
+							},
+						}, 1)
+					end
+					local marbleCard = cardFor("Marble Ball")
+					if marbleCard then
+						marbleCard.addSectionLabel("BALL", "globe", "circle-dot")
+						marbleCard.addSlider({
+							text = "Speed",
+							icon = { "gauge" },
+							min = 20, max = 300, step = 5,
+							get = function() return featureSettings.trollMarbleSpeed end,
+							set = function(value) featureSettings.trollMarbleSpeed = value end,
+							commit = saveFeatureSettings,
+						})
+						marbleCard.addSlider({
+							text = "Jump",
+							icon = { "chevrons-up" },
+							min = 0, max = 250, step = 5,
+							get = function() return featureSettings.trollMarbleJump end,
+							set = function(value) featureSettings.trollMarbleJump = value end,
+							commit = saveFeatureSettings,
+						})
+						marbleCard.addSlider({
+							text = "Ball size",
+							icon = { "maximize-2" },
+							min = 3, max = 10, step = 0.5,
+							get = function() return featureSettings.trollMarbleSize end,
+							set = trolling.setMarbleSize,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f studs", value) end,
+						})
+						marbleCard.addHint("The ball is invisible, as in your script, so everyone sees your body rolling and tumbling about.")
 					end
 					local headsCard = cardFor("Big Heads")
 					if headsCard then
@@ -17532,6 +17958,7 @@ if rayfieldLoaded and Rayfield then
 						trollCrawlStyle = { "Worm", "Belly Slide", "Log Roll" },
 						trollSitSpot = { "Head", "Back" },
 						trollCopyFollow = { "Off", "Behind", "Beside" },
+						trollBowSpot = { "In front", "Behind", "Around them" },
 						trollTrail = { "Rainbow", "Sparkles", "Fire" },
 					}
 					for key, options in pairs(choices) do
@@ -17540,9 +17967,11 @@ if rayfieldLoaded and Rayfield then
 					if not packByName[featureSettings.trollAnimPack] then featureSettings.trollAnimPack = "Default" end
 					if not emoteByName[featureSettings.trollEmote] then featureSettings.trollEmote = "Dance 1" end
 					pcall(function() trolling.packDropdown:Set(featureSettings.trollAnimPack, true) end)
+					pcall(function() trolling.emoteDropdown:Set(featureSettings.trollEmote, true) end)
 					applyAnimationPack(true)
 					trolling.setSpinSpeed(featureSettings.trollSpinSpeed)
 					trolling.setHeadSize(featureSettings.trollHeadSize)
+					trolling.setMarbleSize(featureSettings.trollMarbleSize)
 					attachTrail()
 					local emote = quickToggleByName["Emote"]
 					if emote and emote.state then playChosenEmote() end
@@ -25483,12 +25912,12 @@ if rayfieldLoaded and Rayfield then
 				trolling.setAnimationSpeed(speed)
 				notify("Animation Speed", tostring(trolling.animSpeed) .. "×", 2)
 			end)
-			describe("emoteloop [emote]", "Loops an emote, a dance or something silly: " .. table.concat(trolling.emoteNames or {}, ", "))
+			describe("emoteloop [emote]", "Loops one of the Trolling tab's " .. #(trolling.emoteNames or {}) .. " emotes, like emoteloop floss dance (with no name, the last one picked)")
 			describe("unemoteloop", "Stops the looping emote")
 			addcmd("emoteloop", {}, function(args)
 				local name = getstring(1, args)
 				if name ~= "" and (not trolling.chooseEmote or not trolling.chooseEmote(name)) then
-					return notify("Emote", "Pick one of: " .. table.concat(trolling.emoteNames or {}, ", "), 8)
+					return notify("Emote", "There's no emote called " .. name .. ". They're all in the Trolling tab's Pick an Emote list.", 6)
 				end
 				setSwitch("Emote", true)
 			end)
@@ -25551,6 +25980,8 @@ if rayfieldLoaded and Rayfield then
 				"Fly flat out like a superhero. Space goes up, Ctrl or Q down", "Lands you")
 			addSwitchCommands("Helicopter", { { "helicopter" }, { "unhelicopter" }, "togglehelicopter" },
 				"Hover and spin with your arms up like rotor blades", "Lands you")
+			addSwitchCommands("Marble Ball", { { "marble", "marbleball" }, { "unmarble", "unmarbleball" }, "togglemarble" },
+				"Roll around on a big ball, tumbling along for everyone to see", "Back on your feet", "the marble ball")
 
 			-- Moves.
 			describe("frontflip / flip", "Does a front flip")
@@ -25581,6 +26012,15 @@ if rayfieldLoaded and Rayfield then
 				if chooseTarget(args, speaker, "Bow Down") then setSwitch("Bow Down", true) end
 			end)
 			addcmd("unbowdown", {}, function() setSwitch("Bow Down", false) end)
+			describe("bowspot [front/behind/around]", "Where Bow Down bows from: in front of them, behind them, or circling round them")
+			addcmd("bowspot", {}, function(args)
+				local spots = { front = "In front", behind = "Behind", around = "Around them" }
+				local spot = spots[firstArgument(args)]
+				if not spot then return notify("Bow Down", "Choose front, behind or around, like bowspot around") end
+				featureSettings.trollBowSpot = spot
+				saveFeatureSettings()
+				notify("Bow Down", spot, 2)
+			end)
 
 			-- Only you can see.
 			addSwitchCommands("Disco Mode", { { "disco" }, { "undisco" }, "toggledisco" },
