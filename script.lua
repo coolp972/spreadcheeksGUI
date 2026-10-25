@@ -5746,6 +5746,7 @@ espDefaultSettings = {
 	fill = false,
 	box = false,
 	tracers = false,
+	offscreenArrows = false, -- arrows round the screen's edge for players off it (built with the menu)
 	name = true,
 	distance = true,
 	health = true,
@@ -14619,6 +14620,8 @@ if rayfieldLoaded and Rayfield then
 			-- Aimbot (under ESP). The key is "RightClick", "LeftClick" or a KeyCode name.
 			aimbotKey = "RightClick", aimbotPart = "Head", aimbotMethod = "Camera",
 			aimbotFov = 150, aimbotSmoothness = 3, aimbotShowFov = true, aimbotTeamCheck = true, aimbotWallCheck = true,
+			-- Friend check: the aimbot and trigger bot leave your Roblox friends alone.
+			aimbotFriendCheck = true, triggerFriendCheck = true,
 			-- FOV circle colour: "Theme", "Rainbow" or "Custom" (aimbotFovColor, a hex code).
 			aimbotFovColorMode = "Theme", aimbotFovColor = "B1A4FF",
 			-- How far Free aim moves the mouse, as a multiple of what Roblox's own camera needs.
@@ -14660,12 +14663,21 @@ if rayfieldLoaded and Rayfield then
 			trollMarbleSpeed = 100, trollMarbleJump = 100, trollMarbleSize = 5,
 			-- Glide To: how fast it flies you over (studs a second).
 			trollGlideSpeed = 50,
+			-- Bodyguard: which side of your target you stand ("Right", "Left", "Behind" or
+			-- "In front") and how close someone has to come (studs) before you step in.
+			trollGuardSide = "Right", trollGuardRange = 12,
 			-- The Favourites bar: shown, where it was dragged to (like keybindListX/Y), and what's on it,
 			-- in order: "switch:<name>" for a switch, "move:<name>" for a move from the Trolling tab.
 			favouritesBar = false, favouritesBarX = -1, favouritesBarY = -1, favourites = {},
 			-- Mention Alerts: on or off, whether your username and display name count, the ping, and
 			-- other words that count as you (a nickname, say).
 			mentionAlerts = false, mentionUsername = true, mentionDisplayName = true, mentionSound = true, mentionWords = {},
+			-- The Target HUD: shown, its position, and whether it hides while nobody's targeted.
+			targetHud = false, targetHudX = -1, targetHudY = -1, targetHudAutoHide = false,
+			-- The Emote Wheel: on or off, the key held to open it (a KeyCode name) and its eight
+			-- emotes, from the top going round clockwise.
+			emoteWheel = false, emoteWheelKey = "B",
+			emoteWheelEmotes = { "Wave", "Dance 1", "Floss Dance", "Laugh", "Cheer", "Shrek Roar", "Hot To Go!", "Confused" },
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14676,7 +14688,7 @@ if rayfieldLoaded and Rayfield then
 			trollOrbitHeight = { -5, 15 }, trollHeliHeight = { 3, 30 },
 			trollBowSpeed = { 1, 10 }, trollBowDepth = { 20, 90 }, trollBowDistance = { 2, 15 },
 			trollMarbleSpeed = { 20, 300 }, trollMarbleJump = { 0, 250 }, trollMarbleSize = { 3, 10 },
-			trollGlideSpeed = { 10, 200 },
+			trollGlideSpeed = { 10, 200 }, trollGuardRange = { 4, 40 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15400,6 +15412,15 @@ if rayfieldLoaded and Rayfield then
 			-- Lets go of the mouse if it was holding it down for you.
 			if not enabled and triggerBotState.stop then triggerBotState.stop() end
 		end, "mouse-pointer-click", "target")
+		-- Target HUD: who you're aiming at, on screen. Built further down (menuModules.targetHud);
+		-- this remembers on or off.
+		addQuickToggle(combatTab, "Target HUD", "Who the aimbot or trigger bot is on: health, distance and what they hold. Drag it to move it", function(enabled)
+			if featureSettings.targetHud ~= enabled then
+				featureSettings.targetHud = enabled
+				saveFeatureSettings()
+			end
+			if menuModules.targetHud then menuModules.targetHud.setEnabled(enabled) end
+		end, "scan-face", "crosshair")
 		addCommandToggle(combatTab, "Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
 		withIcon(combatTab, "CreateSection", { name = "Fling" }, "tornado")
 		addCommandToggle(combatTab, "Fling", "fling", "unfling", nil, "tornado")
@@ -15632,7 +15653,7 @@ if rayfieldLoaded and Rayfield then
 				-- character themselves every frame and steering switches change how you walk, so each
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball" }
 				local clashes = {}
 				local function clash(first, second)
@@ -15653,6 +15674,10 @@ if rayfieldLoaded and Rayfield then
 				clash("Drunk Walk", "Zoomies")
 				-- Fake Lag's stutter unanchors you, which would let a statue wander off.
 				clash("Fake Lag", "Statue")
+				-- Both of these switch Roblox's Animate script off and on as they go.
+				clash("Weeping Angel", "Copycat")
+				-- Copycat's following would keep pulling you off your post.
+				clash("Bodyguard", "Copycat")
 				local function claimMovement(name)
 					for other in pairs(clashes[name] or {}) do
 						switchOff(other)
@@ -15924,9 +15949,9 @@ if rayfieldLoaded and Rayfield then
 				}, "person-standing", "footprints")
 
 				-- How fast your animations play overall: the Animation Speed slider, backwards with Reverse
-				-- Animations, and not at all for Statue.
+				-- Animations, and not at all for Statue or while Weeping Angel has you frozen.
 				local function animationMultiplier()
-					if trolling.statue then return 0 end
+					if trolling.statue or trolling.angelFrozen then return 0 end
 					return trolling.animSpeed * (trolling.reverse and -1 or 1)
 				end
 				-- Unless that's 1, every animation on you is scaled to it each frame. Roblox's Animate script
@@ -16199,6 +16224,189 @@ if rayfieldLoaded and Rayfield then
 					end,
 				}, "smile", "music")
 				task.defer(function() trolling.emoteDropdownReady = true end)
+
+				-- Emote Wheel: hold its key (B to start with) and a wheel of eight emotes opens round the
+				-- cursor (the middle of the screen in first person). Point at one and let go, or click it,
+				-- to play it through the Emote switch; let go in the middle to stop the emote that's
+				-- playing. The key and the eight emotes are in its settings card.
+				local wheelDefaults = { "Wave", "Dance 1", "Floss Dance", "Laugh", "Cheer", "Shrek Roar", "Hot To Go!", "Confused" }
+				-- Saved slots that aren't emotes here any more go back to how they started.
+				for slot = 1, 8 do
+					if not emoteByName[featureSettings.emoteWheelEmotes[slot]] then
+						featureSettings.emoteWheelEmotes[slot] = wheelDefaults[slot]
+					end
+				end
+				for slot = #featureSettings.emoteWheelEmotes, 9, -1 do
+					table.remove(featureSettings.emoteWheelEmotes, slot)
+				end
+				addQuickToggle(trollTab, "Emote Wheel", "Hold a key (B to start with) for a wheel of emotes and point at one. Right-click to change them and the key", function(enabled)
+					if featureSettings.emoteWheel ~= enabled then
+						featureSettings.emoteWheel = enabled
+						saveFeatureSettings()
+					end
+				end, "pie-chart", "smile")
+				do
+					local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+					local previousGui = playerGui:FindFirstChild("SpreadCheeksEmoteWheel")
+					if previousGui then previousGui:Destroy() end
+					local gui = Instance.new("ScreenGui")
+					gui.Name = "SpreadCheeksEmoteWheel"
+					gui.ResetOnSpawn = false
+					gui.IgnoreGuiInset = true
+					-- Over the game's own buttons and the ; bar, under the notifications.
+					gui.DisplayOrder = 1002
+					gui.Enabled = false
+					gui.Parent = playerGui
+					-- Covers the screen while the wheel is open. Being Modal frees the mouse in first person
+					-- and shift lock, and it takes the click that picks an emote, so the game doesn't get it.
+					local cover = Instance.new("TextButton")
+					cover.Size = UDim2.fromScale(1, 1)
+					cover.AutoButtonColor = false
+					cover.BackgroundColor3 = Color3.new(0, 0, 0)
+					cover.BackgroundTransparency = 0.7
+					cover.BorderSizePixel = 0
+					cover.Text = ""
+					cover.Modal = true
+					cover.Parent = gui
+					local wheelFrame = Instance.new("Frame")
+					wheelFrame.Size = UDim2.fromOffset(0, 0)
+					wheelFrame.BackgroundTransparency = 1
+					wheelFrame.Parent = gui
+					local hub = Instance.new("TextLabel")
+					hub.AnchorPoint = Vector2.new(0.5, 0.5)
+					hub.Size = UDim2.fromOffset(84, 84)
+					hub.BorderSizePixel = 0
+					hub.Font = Enum.Font.GothamBold
+					hub.TextSize = 12
+					hub.Parent = wheelFrame
+					local hubCorner = Instance.new("UICorner")
+					hubCorner.CornerRadius = UDim.new(1, 0)
+					hubCorner.Parent = hub
+					local hubStroke = Instance.new("UIStroke")
+					hubStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+					hubStroke.Thickness = 1.5
+					hubStroke.Parent = hub
+					local slots = {}
+					for slot = 1, 8 do
+						-- Slot 1 at the top, then round clockwise.
+						local angle = math.rad((slot - 1) * 45)
+						local label = Instance.new("TextLabel")
+						label.AnchorPoint = Vector2.new(0.5, 0.5)
+						label.Position = UDim2.fromOffset(math.sin(angle) * 140, -math.cos(angle) * 140)
+						label.Size = UDim2.fromOffset(112, 38)
+						label.BorderSizePixel = 0
+						label.Font = Enum.Font.GothamMedium
+						label.TextSize = 12
+						label.TextWrapped = true
+						label.Parent = wheelFrame
+						local labelCorner = Instance.new("UICorner")
+						labelCorner.CornerRadius = UDim.new(0, 10)
+						labelCorner.Parent = label
+						local labelStroke = Instance.new("UIStroke")
+						labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+						labelStroke.Thickness = 1.5
+						labelStroke.Parent = label
+						slots[slot] = { label = label, stroke = labelStroke }
+					end
+
+					local open, hovered, wheelCenter, savedMouseIcon = false, 0, Vector2.zero, nil
+					local function emotePlaying()
+						local entry = quickToggleByName["Emote"]
+						return entry ~= nil and entry.state
+					end
+					local function paint()
+						local theme = auxiliaryUiTheme
+						for slot, parts in ipairs(slots) do
+							local selected = hovered == slot
+							parts.label.Text = tostring(featureSettings.emoteWheelEmotes[slot] or "")
+							parts.label.BackgroundColor3 = selected and theme.Accent or theme.Background
+							parts.label.TextColor3 = selected and theme.OnAccent or theme.Text
+							parts.stroke.Color = selected and theme.Accent or theme.Stroke
+						end
+						hub.Text = emotePlaying() and "Stop" or "Close"
+						hub.BackgroundColor3 = hovered == 0 and theme.Accent or theme.Card
+						hub.TextColor3 = hovered == 0 and theme.OnAccent or theme.SubText
+						hubStroke.Color = hovered == 0 and theme.Accent or theme.Stroke
+					end
+					-- The slot the mouse points at from the middle of the wheel, or 0 in the middle.
+					local function pointedSlot()
+						local offset = UserInputService:GetMouseLocation() - wheelCenter
+						if offset.Magnitude < 50 then return 0 end
+						local angle = math.deg(math.atan2(offset.X, -offset.Y)) % 360
+						return math.floor((angle + 22.5) / 45) % 8 + 1
+					end
+					local function setOpen(on)
+						if open == on then return end
+						open = on
+						if not on then
+							gui.Enabled = false
+							if savedMouseIcon ~= nil then UserInputService.MouseIconEnabled = savedMouseIcon end
+							savedMouseIcon = nil
+							return
+						end
+						-- Round the cursor, kept clear of the screen's edges.
+						local camera = workspace.CurrentCamera
+						local screen = camera and camera.ViewportSize or Vector2.new(1280, 720)
+						local mouse = UserInputService:GetMouseLocation()
+						wheelCenter = Vector2.new(math.clamp(mouse.X, 200, math.max(200, screen.X - 200)), math.clamp(mouse.Y, 170, math.max(170, screen.Y - 170)))
+						wheelFrame.Position = UDim2.fromOffset(wheelCenter.X, wheelCenter.Y)
+						hovered = pointedSlot()
+						paint()
+						-- Some games hide the cursor; it's needed to point.
+						savedMouseIcon = UserInputService.MouseIconEnabled
+						UserInputService.MouseIconEnabled = true
+						gui.Enabled = true
+					end
+					-- Plays the emote in a slot, or with 0 stops the one playing.
+					local function choose(slot)
+						if slot == 0 then
+							if emotePlaying() then trolling.stopAnimations() end
+							return
+						end
+						local name = featureSettings.emoteWheelEmotes[slot]
+						if not name or not trolling.chooseEmote(name) then return end
+						local entry = quickToggleByName["Emote"]
+						if entry and not entry.state then setQuickToggle(entry, true) end
+					end
+					-- The key is read straight from the keyboard each frame, so it still works when the game
+					-- uses that key for something too.
+					local wasDown, keyName, keyCode = false, nil, nil
+					pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksEmoteWheel") end)
+					RunService:BindToRenderStep("SpreadCheeksEmoteWheel", Enum.RenderPriority.Input.Value, function()
+						local entry = quickToggleByName["Emote Wheel"]
+						if not entry or not entry.state then
+							wasDown = false
+							return setOpen(false)
+						end
+						if featureSettings.emoteWheelKey ~= keyName then
+							keyName = featureSettings.emoteWheelKey
+							local keyOk, code = pcall(function() return Enum.KeyCode[keyName] end)
+							keyCode = keyOk and code or nil
+						end
+						local down = keyCode ~= nil and UserInputService:IsKeyDown(keyCode)
+						if down and not wasDown then
+							-- Not while typing in the chat or a text box.
+							if not UserInputService:GetFocusedTextBox() then setOpen(true) end
+						elseif not down and wasDown and open then
+							choose(hovered)
+							setOpen(false)
+						end
+						wasDown = down
+						if open then
+							local pointed = pointedSlot()
+							if pointed ~= hovered then
+								hovered = pointed
+								paint()
+							end
+						end
+					end)
+					cover.MouseButton1Click:Connect(function()
+						if not open then return end
+						choose(pointedSlot())
+						setOpen(false)
+					end)
+				end
+				if featureSettings.emoteWheel then setQuickToggle(quickToggleByName["Emote Wheel"], true) end
 
 				addQuickToggle(trollTab, "Reverse Animations", "Everything you do plays backwards", function(enabled)
 					trolling.reverse = enabled
@@ -17351,6 +17559,7 @@ if rayfieldLoaded and Rayfield then
 				-- Like Orbit, it moves you by velocity rather than teleporting, so everyone sees the flight
 				-- and the server agrees where you are, and it aims where they'll be once lag catches up. It
 				-- switches itself off when you arrive, or after a minute. The speed is in its settings card.
+				-- Server Tour flies the same way (glideTowards).
 				local glideState = { loop = nil, noclip = nil, collisions = nil, humanoid = nil, started = 0 }
 				-- keepPose: starting again on a new target, so you carry on flying.
 				local function stopGlide(keepPose)
@@ -17381,17 +17590,14 @@ if rayfieldLoaded and Rayfield then
 					end
 					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
 				end
-				local function setGlide(enabled)
-					stopGlide(enabled)
-					if not enabled then return end
-					local target = targetFor("Glide To")
-					if not target then return false end
+				-- Flies you over to target and lands you a few studs away, facing them: behind them, or in
+				-- front of them with inFront. arrived runs once you've landed; gaveUp runs instead, with
+				-- the reason, if they leave or a minute goes by first (with no reason after a respawn).
+				-- False if your character isn't ready.
+				local function glideTowards(target, inFront, arrived, gaveUp)
+					stopGlide(true)
 					local character, humanoid = myCharacter()
-					if not humanoid then
-						notify("Glide To", "Your character isn't ready yet.")
-						return false
-					end
-					claimMovement("Glide To")
+					if not humanoid then return false end
 					glideState.humanoid = humanoid
 					glideState.collisions = {}
 					for _, part in ipairs(character:GetDescendants()) do
@@ -17405,17 +17611,13 @@ if rayfieldLoaded and Rayfield then
 						end
 					end)
 					glideState.loop = RunService.Heartbeat:Connect(function(deltaTime)
-						if not target.Parent then
-							notify("Glide To", target.DisplayName .. " left the server")
-							return switchOff("Glide To")
-						end
+						if not target.Parent then return gaveUp(target.DisplayName .. " left the server") end
 						local _, myHumanoid, myRoot = myCharacter()
 						if not myHumanoid then return end
 						-- A new character ends it.
-						if myHumanoid ~= glideState.humanoid then return switchOff("Glide To") end
+						if myHumanoid ~= glideState.humanoid then return gaveUp(nil) end
 						if os.clock() - glideState.started > 60 then
-							notify("Glide To", "Gave up after a minute of gliding.")
-							return switchOff("Glide To")
+							return gaveUp("Couldn't get to " .. target.DisplayName .. " within a minute.")
 						end
 						myHumanoid.PlatformStand = true
 						myRoot.AssemblyAngularVelocity = Vector3.zero
@@ -17425,11 +17627,11 @@ if rayfieldLoaded and Rayfield then
 							myRoot.AssemblyLinearVelocity = Vector3.zero
 							return
 						end
-						-- Just behind them, where they'll be by the time they see you get there.
-						local behind = flat(theirRoot.CFrame.LookVector)
-						behind = behind.Magnitude > 0.1 and behind.Unit or Vector3.new(0, 0, -1)
+						-- Just behind them (or in front), where they'll be by the time they see you get there.
+						local front = flat(theirRoot.CFrame.LookVector)
+						front = front.Magnitude > 0.1 and front.Unit or Vector3.new(0, 0, -1)
 						local lead = math.clamp(networkPing() * 2 + 0.05, 0, 0.5)
-						local spot = theirRoot.Position + flat(theirRoot.AssemblyLinearVelocity) * lead - behind * 3
+						local spot = theirRoot.Position + flat(theirRoot.AssemblyLinearVelocity) * lead + front * (inFront and 4 or -3)
 						local offset = spot - myRoot.Position
 						local distance = offset.Magnitude
 						if distance < 1.5 then
@@ -17437,8 +17639,8 @@ if rayfieldLoaded and Rayfield then
 							local position = myRoot.Position
 							local towards = flat(theirRoot.Position - position)
 							if towards.Magnitude > 0.1 then myRoot.CFrame = CFrame.lookAt(position, position + towards) end
-							notify("Glide To", "Got to " .. target.DisplayName, 2)
-							return switchOff("Glide To")
+							stopGlide(false)
+							return arrived()
 						end
 						-- Never faster than reaches the spot this frame, so you don't overshoot it.
 						local speed = math.min(featureSettings.trollGlideSpeed, distance / math.max(deltaTime, 1 / 120))
@@ -17449,6 +17651,24 @@ if rayfieldLoaded and Rayfield then
 						if heading.Magnitude > 0.1 then
 							myRoot.CFrame = CFrame.lookAt(position, position + heading) * CFrame.Angles(-math.rad(15), 0, 0)
 						end
+					end)
+					return true
+				end
+				local function setGlide(enabled)
+					if not enabled then return stopGlide(false) end
+					local target = targetFor("Glide To")
+					if not target then return false end
+					if not myCharacter() then
+						notify("Glide To", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Glide To")
+					glideTowards(target, false, function()
+						notify("Glide To", "Got to " .. target.DisplayName, 2)
+						switchOff("Glide To")
+					end, function(reason)
+						if reason then notify("Glide To", reason) end
+						switchOff("Glide To")
 					end)
 				end
 				targetedSwitches["Glide To"] = setGlide
@@ -17461,6 +17681,405 @@ if rayfieldLoaded and Rayfield then
 					if not entry.state then return setQuickToggle(entry, true) end
 					if setGlide(true) == false then switchOff("Glide To") end
 				end
+
+				-- Server Tour: you glide over to everyone in the server in turn, nearest first, land in
+				-- front of them and wave, then fly on to the next. It switches itself off once everyone has
+				-- had a visit, people who join on the way included. It needs no target.
+				local tourState = { serial = 0, wave = nil }
+				local function stopTourWave()
+					if tourState.wave then
+						pcall(function() tourState.wave:Stop(0.3) end)
+						tourState.wave = nil
+					end
+				end
+				local function setServerTour(enabled)
+					-- Each tour has its own number, so the waits of one that's been stopped come to nothing.
+					tourState.serial += 1
+					local serial = tourState.serial
+					stopTourWave()
+					if not enabled then return stopGlide(false) end
+					if #Players:GetPlayers() < 2 then
+						notify("Server Tour", "There's nobody else in the server to visit.")
+						return false
+					end
+					if not myCharacter() then
+						notify("Server Tour", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Server Tour")
+					local visited, count = {}, 0
+					local nextStop
+					nextStop = function()
+						if tourState.serial ~= serial then return end
+						local _, _, root = myCharacter()
+						local nearest, nearestDistance = nil, math.huge
+						for _, player in ipairs(Players:GetPlayers()) do
+							local theirRoot = player ~= localPlayer and not visited[player] and player.Character and getRoot(player.Character)
+							if theirRoot then
+								local distance = root and (theirRoot.Position - root.Position).Magnitude or 0
+								if distance < nearestDistance then nearest, nearestDistance = player, distance end
+							end
+						end
+						if not nearest then
+							notify("Server Tour", "Tour over: you visited " .. count .. (count == 1 and " player." or " players."), 4)
+							return switchOff("Server Tour")
+						end
+						visited[nearest] = true
+						local started = glideTowards(nearest, true, function()
+							if tourState.serial ~= serial then return end
+							count += 1
+							-- A wave, then on to the next.
+							local _, humanoid = myCharacter()
+							local wave = emoteByName["Wave"]
+							if humanoid and wave then
+								tourState.wave = playOnMe("rbxassetid://" .. tostring(isR15(humanoid) and wave.r15 or wave.r6))
+							end
+							task.delay(2.5, function()
+								if tourState.serial ~= serial then return end
+								stopTourWave()
+								nextStop()
+							end)
+						end, function(reason)
+							if tourState.serial ~= serial then return end
+							-- A respawn ends the tour; someone leaving or out of reach is just skipped.
+							if not reason then return switchOff("Server Tour") end
+							nextStop()
+						end)
+						if not started then switchOff("Server Tour") end
+					end
+					nextStop()
+				end
+				addQuickToggle(trollTab, "Server Tour", "Glide over to everyone in the server, one at a time, and wave at each of them", setServerTour, "map", "plane")
+
+				-- Walking after someone, for Weeping Angel and Bodyguard: round walls and up stairs by
+				-- Roblox's pathfinding (jumping where the path needs it), straight there while a path is
+				-- being worked out, and when you're stuck, or there's no way there on foot (they've climbed
+				-- onto something), floating over to them through walls, the way Glide To flies. Each one
+				-- is made once, then stepped every frame (after the controls) with where to go.
+				local function newPath()
+					local made, path = pcall(function()
+						return PathService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, AgentCanClimb = true, WaypointSpacing = 4 })
+					end)
+					if made and path then return path end
+					return PathService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
+				end
+				local function newFollower()
+					local follower = {
+						waypoints = nil, index = 0, goal = nil, pathAt = 0, computing = false, serial = 0, noPath = false,
+						jump = false, humanoid = nil, lastPosition = nil, lastMoveAt = 0, hopped = false,
+						drifting = false, collisions = nil, noclip = nil, holdAt = nil,
+						-- How fast it floats (studs a second), and how far away it floats rather than walks
+						-- (nil: only when it has to). ignore is a character the ground check looks past.
+						driftSpeed = 20, driftBeyond = nil, ignore = nil,
+					}
+					local function stopDrift()
+						if not follower.drifting then return end
+						follower.drifting = false
+						follower.holdAt = nil
+						if follower.noclip then
+							follower.noclip:Disconnect()
+							follower.noclip = nil
+						end
+						for part, canCollide in pairs(follower.collisions or {}) do
+							if part.Parent then part.CanCollide = canCollide end
+						end
+						follower.collisions = nil
+						-- Walking again from here, with a new path.
+						follower.waypoints, follower.goal, follower.noPath = nil, nil, false
+						follower.lastPosition = nil
+						local humanoid = follower.humanoid
+						if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
+						humanoid.PlatformStand = false
+						local root = getRoot(humanoid.Parent)
+						if root then
+							root.AssemblyLinearVelocity = Vector3.zero
+							local look = flat(root.CFrame.LookVector)
+							if look.Magnitude > 0.1 then root.CFrame = CFrame.lookAt(root.Position, root.Position + look) end
+						end
+						humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+					end
+					local function startDrift(character)
+						if follower.drifting then return end
+						follower.drifting = true
+						follower.waypoints = nil
+						follower.collisions = {}
+						for _, part in ipairs(character:GetDescendants()) do
+							if part:IsA("BasePart") then follower.collisions[part] = part.CanCollide end
+						end
+						-- The humanoid keeps turning collisions back on, so they're switched off every frame.
+						follower.noclip = RunService.Stepped:Connect(function()
+							for part in pairs(follower.collisions) do
+								if part.Parent then part.CanCollide = false end
+							end
+						end)
+					end
+					-- Back on your feet with no path, as at the start.
+					function follower.reset()
+						stopDrift()
+						follower.serial += 1
+						follower.waypoints, follower.goal, follower.noPath, follower.computing = nil, nil, false, false
+						follower.jump, follower.hopped, follower.lastPosition = false, false, nil
+					end
+					-- Works out a path in the background; destination is kept to tell when it's moved on.
+					local function requestPath(from, pathGoal, destination)
+						follower.computing = true
+						follower.pathAt = os.clock()
+						follower.goal = destination
+						local serial = follower.serial
+						task.spawn(function()
+							local path = nil
+							local computed = pcall(function()
+								path = newPath()
+								path:ComputeAsync(from, pathGoal)
+							end)
+							if follower.serial ~= serial then return end
+							follower.computing = false
+							if computed and path.Status == Enum.PathStatus.Success then
+								local waypoints = path:GetWaypoints()
+								follower.waypoints, follower.index, follower.noPath = waypoints, 2, false
+								follower.jump = waypoints[2] ~= nil and waypoints[2].Action == Enum.PathWaypointAction.Jump
+							else
+								follower.waypoints, follower.noPath = nil, true
+							end
+						end)
+					end
+					-- Which way to walk along the path, or nil once it's used up.
+					local function pathDirection(root)
+						local waypoints = follower.waypoints
+						while waypoints and follower.index <= #waypoints do
+							local offset = flat(waypoints[follower.index].Position - root.Position)
+							if offset.Magnitude > 2 then return offset end
+							follower.index += 1
+							local upcoming = waypoints[follower.index]
+							if upcoming and upcoming.Action == Enum.PathWaypointAction.Jump then follower.jump = true end
+						end
+						return nil
+					end
+					-- One frame: heads for destination, unless hold, when it stays put (in mid-air, if it's
+					-- floating). True once it's within stopDistance of destination.
+					function follower.step(deltaTime, character, humanoid, root, destination, stopDistance, hold)
+						if humanoid ~= follower.humanoid then
+							-- A new character starts from scratch.
+							follower.reset()
+							follower.humanoid = humanoid
+						end
+						local now = os.clock()
+						local offset = destination - root.Position
+						if follower.drifting then
+							humanoid.PlatformStand = true
+							root.AssemblyAngularVelocity = Vector3.zero
+							if hold then
+								follower.holdAt = follower.holdAt or root.Position
+								root.AssemblyLinearVelocity = (follower.holdAt - root.Position) / math.max(deltaTime, 1 / 120)
+								return false
+							end
+							follower.holdAt = nil
+							local distance = offset.Magnitude
+							if distance < 1.5 then
+								stopDrift()
+								return true
+							end
+							-- Never faster than reaches the spot this frame, so it doesn't overshoot.
+							root.AssemblyLinearVelocity = offset.Unit * math.min(follower.driftSpeed, distance / math.max(deltaTime, 1 / 120))
+							local heading = flat(offset)
+							if heading.Magnitude > 0.1 then root.CFrame = CFrame.lookAt(root.Position, root.Position + heading) end
+							return false
+						end
+						local arrived = flat(offset).Magnitude < stopDistance and math.abs(offset.Y) < 4
+						if hold or arrived then
+							humanoid:Move(Vector3.zero, false)
+							if hold then humanoid.Jump = false end
+							follower.lastPosition, follower.lastMoveAt, follower.hopped = root.Position, now, false
+							return arrived
+						end
+						-- Too far to walk, or no way there on foot: float there instead.
+						if follower.noPath or (follower.driftBeyond and offset.Magnitude > follower.driftBeyond) then
+							startDrift(character)
+							return false
+						end
+						-- A new path when there isn't one, or the destination has moved on from it.
+						if not follower.computing and now - follower.pathAt > 1
+							and (not follower.waypoints or not follower.goal or (destination - follower.goal).Magnitude > 4) then
+							local ground = groundBelow(destination, { character, follower.ignore })
+							requestPath(root.Position, ground and Vector3.new(destination.X, ground, destination.Z) or destination, destination)
+						end
+						local direction = pathDirection(root) or flat(offset)
+						if direction.Magnitude > 0.05 then humanoid:Move(direction.Unit, false) end
+						if follower.jump then
+							follower.jump = false
+							humanoid.Jump = true
+						end
+						-- Not getting anywhere: a hop, and if that doesn't do it, float over.
+						if not follower.lastPosition or (root.Position - follower.lastPosition).Magnitude > 1.5 then
+							follower.lastPosition, follower.lastMoveAt, follower.hopped = root.Position, now, false
+						elseif now - follower.lastMoveAt > 2 then
+							startDrift(character)
+						elseif now - follower.lastMoveAt > 0.8 and not follower.hopped then
+							follower.hopped = true
+							humanoid.Jump = true
+						end
+						return false
+					end
+					return follower
+				end
+
+				-- Weeping Angel: you creep up on your target, but the moment they turn towards you (with
+				-- nothing in the way) you freeze mid-step, and creep on once they look away. Close up, you
+				-- wait frozen right by them. If they climb up out of reach, you float up after them
+				-- (freezing in mid-air when they look). Your own keys don't move you while it's on.
+				local angelState = { frozen = false, animate = nil }
+				local angelFollower = newFollower()
+				local angelParams = RaycastParams.new()
+				angelParams.FilterType = Enum.RaycastFilterType.Exclude
+				-- Frozen, your animations stop where they are. Roblox's Animate script is paused as well,
+				-- or it would swap your walk for standing still the moment you stop moving.
+				local function setAngelFrozen(frozen)
+					if angelState.frozen == frozen then return end
+					angelState.frozen = frozen
+					local character, humanoid = myCharacter()
+					local animate = character and character:FindFirstChild("Animate")
+					if frozen and animate and animate:IsA("BaseScript") and not animate.Disabled and animate ~= heldAnimate then
+						animate.Disabled = true
+						angelState.animate = animate
+					end
+					trolling.angelFrozen = frozen
+					updateSpeedLoop()
+					local paused = not frozen and angelState.animate
+					if paused then
+						angelState.animate = nil
+						if paused.Parent and paused.Disabled then
+							if next(animateHolds) ~= nil then
+								-- Something else wants it off now (Mannequin, say), so it's theirs to start again.
+								heldAnimate = heldAnimate or paused
+							else
+								-- It starts over when it's switched back on, so the frozen poses go first.
+								stopAllTracks(humanoid, 0.15)
+								paused.Disabled = false
+							end
+						end
+					end
+				end
+				-- Whether they could see you: you're within 60 degrees of the way they face, and there's no
+				-- wall in between.
+				local function angelSeen(theirCharacter, theirRoot, character, root)
+					local facing = flat(theirRoot.CFrame.LookVector)
+					local toMe = flat(root.Position - theirRoot.Position)
+					if facing.Magnitude < 0.1 or toMe.Magnitude < 0.1 then return true end
+					if facing.Unit:Dot(toMe.Unit) < 0.5 then return false end
+					local theirHead = theirCharacter:FindFirstChild("Head")
+					local myHead = character:FindFirstChild("Head")
+					local from = theirHead and theirHead.Position or theirRoot.Position
+					local to = myHead and myHead.Position or root.Position
+					angelParams.FilterDescendantsInstances = { theirCharacter, character }
+					local hit = workspace:Raycast(from, to - from, angelParams)
+					return hit == nil or hit.Instance.Transparency >= 0.8
+				end
+				local function setWeepingAngel(enabled)
+					afterControls("SpreadCheeksWeepingAngel", nil)
+					angelFollower.reset()
+					setAngelFrozen(false)
+					if not enabled then return end
+					local target = targetFor("Weeping Angel")
+					if not target then return false end
+					if not myCharacter() then
+						notify("Weeping Angel", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Weeping Angel")
+					afterControls("SpreadCheeksWeepingAngel", function(deltaTime)
+						if not target.Parent then
+							notify("Weeping Angel", target.DisplayName .. " left the server")
+							return switchOff("Weeping Angel")
+						end
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local theirCharacter = target.Character
+						local theirRoot = theirCharacter and getRoot(theirCharacter)
+						if not theirRoot then
+							-- Waiting where you are while they respawn.
+							angelFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+							return setAngelFrozen(false)
+						end
+						local fromThem = flat(root.Position - theirRoot.Position)
+						local close = fromThem.Magnitude < 4.5 and math.abs(root.Position.Y - theirRoot.Position.Y) < 4
+						-- Stock still while they're watching, and once you're right by them.
+						local still = close or angelSeen(theirCharacter, theirRoot, character, root)
+						setAngelFrozen(still)
+						-- Headed for just your side of them.
+						local side = fromThem.Magnitude > 0.1 and fromThem.Unit or -flat(theirRoot.CFrame.LookVector)
+						angelFollower.ignore = theirCharacter
+						angelFollower.step(deltaTime, character, humanoid, root, theirRoot.Position + side * 3, 1.5, still)
+					end)
+				end
+				targetedSwitches["Weeping Angel"] = setWeepingAngel
+				addQuickToggle(trollTab, "Weeping Angel", "Creep up on your target, freezing mid-step whenever they turn round to look", setWeepingAngel, "ghost", "eye")
+
+				-- Bodyguard: you stick by your target's side like security, on the side picked in its
+				-- settings card. When anyone else gets within range of them you step in between and stare
+				-- them down, and once they've gone you're back at your post. You walk, round walls and up
+				-- stairs, and fly over when they're far off. Your own keys don't move you while it's on.
+				local guardFollower = newFollower()
+				guardFollower.driftSpeed = 40
+				guardFollower.driftBeyond = 60
+				-- Where your post is, from them: x is to their right and z is behind them.
+				local guardPosts = {
+					Right = Vector3.new(3, 0, 0.5), Left = Vector3.new(-3, 0, 0.5),
+					Behind = Vector3.new(0, 0, 3.5), ["In front"] = Vector3.new(0, 0, -3.5),
+				}
+				local function setBodyguard(enabled)
+					afterControls("SpreadCheeksBodyguard", nil)
+					guardFollower.reset()
+					if not enabled then return end
+					local target = targetFor("Bodyguard")
+					if not target then return false end
+					if not myCharacter() then
+						notify("Bodyguard", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Bodyguard")
+					afterControls("SpreadCheeksBodyguard", function(deltaTime)
+						if not target.Parent then
+							notify("Bodyguard", target.DisplayName .. " left the server")
+							return switchOff("Bodyguard")
+						end
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local theirCharacter = target.Character
+						local theirRoot = theirCharacter and getRoot(theirCharacter)
+						if not theirRoot then
+							guardFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+							return
+						end
+						-- The nearest other player inside their personal space, if anyone's there.
+						local intruderRoot, nearest = nil, featureSettings.trollGuardRange
+						for _, player in ipairs(Players:GetPlayers()) do
+							local otherRoot = player ~= localPlayer and player ~= target and player.Character and getRoot(player.Character)
+							if otherRoot then
+								local distance = (otherRoot.Position - theirRoot.Position).Magnitude
+								if distance < nearest then intruderRoot, nearest = otherRoot, distance end
+							end
+						end
+						local post, facing
+						if intruderRoot then
+							-- In between them, facing whoever it is.
+							local towards = flat(intruderRoot.Position - theirRoot.Position)
+							towards = towards.Magnitude > 0.1 and towards.Unit or flat(theirRoot.CFrame.LookVector)
+							post = theirRoot.Position + towards * 3
+							facing = flat(intruderRoot.Position - root.Position)
+						else
+							post = theirRoot.CFrame:PointToWorldSpace(guardPosts[featureSettings.trollGuardSide] or guardPosts.Right)
+							facing = flat(theirRoot.CFrame.LookVector)
+						end
+						guardFollower.ignore = theirCharacter
+						if guardFollower.step(deltaTime, character, humanoid, root, post, 1.5, false) and facing.Magnitude > 0.1 then
+							-- At your post: turning to face the way they face, or to stare someone down.
+							local wanted = CFrame.lookAt(root.Position, root.Position + facing)
+							root.CFrame = root.CFrame:Lerp(wanted, math.clamp(deltaTime * 10, 0, 1))
+						end
+					end)
+				end
+				targetedSwitches["Bodyguard"] = setBodyguard
+				addQuickToggle(trollTab, "Bodyguard", "Stick by your target like security and stare down anyone who gets close. Right-click for where you stand", setBodyguard, "shield-check", "shield")
 
 				-- Only you can see: these change your own screen and nobody else's.
 				withIcon(trollTab, "CreateSection", { name = "Only you can see" }, "eye", "monitor")
@@ -17788,7 +18407,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Loading a config doesn't play dead, freeze you or go after a player who may not be in the
 				-- server.
-				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To" }) do
+				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard" }) do
 					if quickToggleByName[name] then quickToggleByName[name].noConfig = true end
 				end
 
@@ -17872,6 +18491,84 @@ if rayfieldLoaded and Rayfield then
 						end
 						showGroup(shownGroup)
 						emoteCard.addHint("It loops until you switch Emote off. Most of these need an R15 avatar; the Classic ones work on R6 too.")
+					end
+					local wheelCard = cardFor("Emote Wheel")
+					if wheelCard then
+						wheelCard.addSectionLabel("KEY", "keyboard")
+						addChoiceGrid(wheelCard, { "B", "G", "H", "T", "V", "X", "Y", "Z" }, 4, function() return featureSettings.emoteWheelKey end, function(key)
+							featureSettings.emoteWheelKey = key
+							saveFeatureSettings()
+						end)
+						wheelCard.addHint("Hold it to open the wheel. Pick one the game and your keybinds don't use; the emotewheelkey command takes any key.")
+						-- The eight slots: pick one, then the emote to put in it, which moves on to the next slot.
+						wheelCard.addSectionLabel("SLOTS", "pie-chart", "layout-grid")
+						wheelCard.addHint("Slot 1 is at the top of the wheel, then round clockwise. Pick a slot, then an emote for it.")
+						local editingSlot = 1
+						local wheelGroupNames, wheelGroupGrids = {}, {}
+						for _, group in ipairs(emoteGroups) do
+							table.insert(wheelGroupNames, group.name)
+						end
+						local shownWheelGroup = (emoteByName[featureSettings.emoteWheelEmotes[1]] or emotes[1]).group
+						local function showWheelGroup(name)
+							shownWheelGroup = name
+							for groupName, grid in pairs(wheelGroupGrids) do
+								grid.Visible = groupName == name
+							end
+						end
+						local slotGrid = Instance.new("Frame")
+						slotGrid.LayoutOrder = wheelCard.nextOrder()
+						slotGrid.Size = UDim2.fromScale(1, 0)
+						slotGrid.AutomaticSize = Enum.AutomaticSize.Y
+						slotGrid.BackgroundTransparency = 1
+						slotGrid.Parent = wheelCard.content
+						local slotLayout = Instance.new("UIGridLayout")
+						slotLayout.CellSize = UDim2.new(0.5, -3, 0, 28)
+						slotLayout.CellPadding = UDim2.fromOffset(6, 6)
+						slotLayout.SortOrder = Enum.SortOrder.LayoutOrder
+						slotLayout.Parent = slotGrid
+						local slotButtons = {}
+						for slot = 1, 8 do
+							local button = Instance.new("TextButton")
+							button.LayoutOrder = slot
+							button.AutoButtonColor = false
+							button.BorderSizePixel = 0
+							button.Font = Enum.Font.GothamMedium
+							button.TextSize = 12
+							button.TextTruncate = Enum.TextTruncate.AtEnd
+							button.Parent = slotGrid
+							local buttonCorner = Instance.new("UICorner")
+							buttonCorner.CornerRadius = UDim.new(0, 8)
+							buttonCorner.Parent = button
+							button.Activated:Connect(function()
+								editingSlot = slot
+								-- Straight to the category of the emote that's in it now.
+								local emote = emoteByName[featureSettings.emoteWheelEmotes[slot]]
+								if emote then showWheelGroup(emote.group) end
+								wheelCard.refresh()
+							end)
+							slotButtons[slot] = button
+						end
+						table.insert(wheelCard.refreshers, function()
+							local theme = auxiliaryUiTheme
+							for slot, button in ipairs(slotButtons) do
+								local selected = slot == editingSlot
+								button.Text = slot .. "   " .. tostring(featureSettings.emoteWheelEmotes[slot] or "")
+								button.BackgroundColor3 = selected and theme.Accent or theme.Inset
+								button.TextColor3 = selected and theme.OnAccent or theme.SubText
+							end
+						end)
+						wheelCard.addSectionLabel("CATEGORY", "layout-grid")
+						addChoiceGrid(wheelCard, wheelGroupNames, 3, function() return shownWheelGroup end, showWheelGroup)
+						wheelCard.addSectionLabel("EMOTE", "smile", "music")
+						for _, group in ipairs(emoteGroups) do
+							wheelGroupGrids[group.name] = addChoiceGrid(wheelCard, group.names, 3, function() return featureSettings.emoteWheelEmotes[editingSlot] end, function(name)
+								featureSettings.emoteWheelEmotes[editingSlot] = name
+								saveFeatureSettings()
+								editingSlot = editingSlot % 8 + 1
+							end)
+						end
+						showWheelGroup(shownWheelGroup)
+						wheelCard.refresh()
 					end
 					local deadCard = cardFor("Fake Dead")
 					if deadCard then
@@ -18009,6 +18706,22 @@ if rayfieldLoaded and Rayfield then
 								end,
 							},
 						}, 1)
+					end
+					local guardCard = cardFor("Bodyguard")
+					if guardCard then
+						guardCard.addSectionLabel("YOUR POST", "shield-check", "shield")
+						addSettingChoice(guardCard, "trollGuardSide", { "Right", "Left", "Behind", "In front" })
+						guardCard.addSectionLabel("PERSONAL SPACE", "users-round", "users")
+						guardCard.addSlider({
+							text = "Step in when someone's within",
+							icon = { "users-round", "user-round" },
+							min = 4, max = 40, step = 1,
+							get = function() return featureSettings.trollGuardRange end,
+							set = function(value) featureSettings.trollGuardRange = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs" end,
+						})
+						guardCard.addHint("Anyone that close to your target, you step in between and stare down. Once they've gone, you're back at your post.")
 					end
 					local glideCard = cardFor("Glide To")
 					if glideCard then
@@ -20213,7 +20926,7 @@ if rayfieldLoaded and Rayfield then
 			bindAuxiliaryUiColor(teamHint, "TextColor3", "SubText")
 			teamHint.Parent = content
 			espCard.addSectionLabel("DRAW", "pen-line", "pencil")
-			espCard.addSwitchGrid({ espOption("Outline", "outline"), espOption("Fill", "fill"), espOption("Box", "box"), espOption("Tracers", "tracers") })
+			espCard.addSwitchGrid({ espOption("Outline", "outline"), espOption("Fill", "fill"), espOption("Box", "box"), espOption("Tracers", "tracers"), espOption("Off-screen arrows", "offscreenArrows") })
 			espCard.addSectionLabel("LABEL", "tag")
 			espCard.addSwitchGrid({ espOption("Name", "name"), espOption("Distance", "distance"), espOption("Health bar", "health") })
 			espCard.addSectionLabel("COLOUR", "palette")
@@ -20588,6 +21301,33 @@ if rayfieldLoaded and Rayfield then
 		-- Aimbot: while the aim key is held, turns your view (or moves your cursor) onto the player
 		-- nearest the cursor inside the FOV circle, and stays on them until you let go. Its switch
 		-- (aimbotToggle) is under ESP.
+		-- Whether a player is one of your Roblox friends, for the aimbot's and trigger bot's Friend
+		-- check. Asking takes a web request, so everyone is looked up once in the background (now,
+		-- and as they join) and the answer kept; until it's back they count as not a friend. A
+		-- lookup that fails is tried again later.
+		do
+			local friendOf = {}
+			local function lookUp(player)
+				if player == Players.LocalPlayer or friendOf[player.UserId] ~= nil then return end
+				friendOf[player.UserId] = false
+				task.spawn(function()
+					local checked, isFriend = pcall(function() return Players.LocalPlayer:IsFriendsWith(player.UserId) end)
+					if checked then
+						friendOf[player.UserId] = isFriend == true
+					else
+						task.delay(15, function() friendOf[player.UserId] = nil end)
+					end
+				end)
+			end
+			for _, player in ipairs(Players:GetPlayers()) do lookUp(player) end
+			Players.PlayerAdded:Connect(lookUp)
+			function menuModules.isFriend(player)
+				if not player then return false end
+				lookUp(player)
+				return friendOf[player.UserId] == true
+			end
+		end
+
 		local function buildAimbot()
 			local localPlayer = Players.LocalPlayer
 			local state = aimbotState
@@ -20688,6 +21428,7 @@ if rayfieldLoaded and Rayfield then
 				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 				if not humanoid or humanoid.Health <= 0 then return nil end
 				if featureSettings.aimbotTeamCheck and espIsTeammate(player) then return nil end
+				if featureSettings.aimbotFriendCheck and menuModules.isFriend(player) then return nil end
 				local part = aimPart(character)
 				return part and part:IsA("BasePart") and part or nil
 			end
@@ -21014,7 +21755,7 @@ if rayfieldLoaded and Rayfield then
 					end
 					return nil
 				end)
-				card.addSwitchGrid({ setting("Team check", "aimbotTeamCheck"), setting("Wall check", "aimbotWallCheck") })
+				card.addSwitchGrid({ setting("Team check", "aimbotTeamCheck"), setting("Wall check", "aimbotWallCheck"), setting("Friend check", "aimbotFriendCheck") })
 
 				card.addSectionLabel("AIM", "mouse-pointer-2", "mouse-pointer")
 				addChoice({ "Camera", "Mouse", "Free aim" }, "aimbotMethod")
@@ -21315,8 +22056,9 @@ if rayfieldLoaded and Rayfield then
 					if player then
 						local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 						if player == localPlayer or not humanoid or humanoid.Health <= 0 then return nil end
-						-- A teammate in the way blocks the shot rather than being shot.
+						-- A teammate or friend in the way blocks the shot rather than being shot.
 						if featureSettings.triggerTeamCheck and espIsTeammate(player) then return nil end
+						if featureSettings.triggerFriendCheck and menuModules.isFriend(player) then return nil end
 						return player
 					end
 					if hit.Instance.Transparency < 0.8 then return nil end
@@ -21374,6 +22116,8 @@ if rayfieldLoaded and Rayfield then
 					and humanoid ~= nil and humanoid.Health > 0
 					and (not featureSettings.triggerWhileAiming or aimbotState.held == true)
 				local target = active and playerUnderCursor(camera, cursor) or nil
+				-- For the Target HUD.
+				state.target = target
 				local now = os.clock()
 				if target then
 					onTargetSince = onTargetSince or now
@@ -21478,7 +22222,7 @@ if rayfieldLoaded and Rayfield then
 					format = function(value) return math.floor(value + 0.5) .. " ms" end,
 				})
 				card.addSectionLabel("WHEN", "shield-check", "shield")
-				card.addSwitchGrid({ setting("Team check", "triggerTeamCheck"), setting("Show indicator", "triggerIndicator") })
+				card.addSwitchGrid({ setting("Team check", "triggerTeamCheck"), setting("Friend check", "triggerFriendCheck"), setting("Show indicator", "triggerIndicator") })
 				card.addSwitchGrid({ setting("Only while aim key held", "triggerWhileAiming") }, 1)
 				card.addHint(function()
 					return "With this on, it only fires while you hold the aimbot's aim key (" .. aimbotKeyText() .. "), so you choose when."
@@ -24030,9 +24774,10 @@ if rayfieldLoaded and Rayfield then
 			-- saved settings (switches are saved on their own, below).
 			local notConfigSettings = {
 				performanceStats = true, cheatDetector = true, keybindList = true, radar = true, logsWindow = true, joinAlerts = true,
-				mentionAlerts = true, favouritesBar = true, favourites = true,
+				mentionAlerts = true, favouritesBar = true, favourites = true, targetHud = true, emoteWheel = true,
 				keybindListX = true, keybindListY = true, performanceStatsX = true, performanceStatsY = true,
-				radarX = true, radarY = true, logsWindowX = true, logsWindowY = true, favouritesBarX = true, favouritesBarY = true, fpsCap = true,
+				radarX = true, radarY = true, logsWindowX = true, logsWindowY = true, favouritesBarX = true, favouritesBarY = true,
+				targetHudX = true, targetHudY = true, fpsCap = true,
 			}
 			local store = { configs = {}, autoload = "", applySwitches = true }
 			if readfile then
@@ -26175,6 +26920,249 @@ if rayfieldLoaded and Rayfield then
 		end)
 
 		------------------------------------------------------------------------------------------
+		-- Target HUD: who the aimbot is locked onto, or else who the trigger bot has under the
+		-- crosshair: their face, name, a health bar, how far away they are and what they're
+		-- holding. With nobody targeted it says so, so it can still be dragged into place (unless
+		-- it's set to hide then, in its settings card).
+		safeBuild("The Target HUD", function()
+			local localPlayer = Players.LocalPlayer
+			local hudWindow = menuModules.makeWindow({
+				name = "SpreadCheeksTargetHud", title = "Target", icons = { "crosshair", "target" },
+				width = 260, height = 118, xKey = "targetHudX", yKey = "targetHudY",
+				-- Under the middle of the screen, clear of the crosshair.
+				defaultPosition = function(screen, size) return (screen.X - size.X) / 2, screen.Y * 0.62 end,
+			})
+			local body = hudWindow.body
+			-- LOCKED (the aimbot) or IN SIGHT (the trigger bot), in the header.
+			local status = Instance.new("TextLabel")
+			status.AutomaticSize = Enum.AutomaticSize.X
+			status.Size = UDim2.fromOffset(0, 20)
+			status.BackgroundTransparency = 1
+			status.Font = Enum.Font.GothamBold
+			status.Text = ""
+			status.TextSize = 10
+			status.Parent = hudWindow.headerRight
+			local avatar = Instance.new("ImageLabel")
+			avatar.Position = UDim2.fromOffset(12, 2)
+			avatar.Size = UDim2.fromOffset(52, 52)
+			avatar.BorderSizePixel = 0
+			bindAuxiliaryUiColor(avatar, "BackgroundColor3", "Inset")
+			avatar.Parent = body
+			local avatarCorner = Instance.new("UICorner")
+			avatarCorner.CornerRadius = UDim.new(0, 10)
+			avatarCorner.Parent = avatar
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Position = UDim2.fromOffset(74, 2)
+			nameLabel.Size = UDim2.new(1, -86, 0, 18)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.TextSize = 14
+			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(nameLabel, "TextColor3", "Text")
+			nameLabel.Parent = body
+			local userLabel = Instance.new("TextLabel")
+			userLabel.Position = UDim2.fromOffset(74, 20)
+			userLabel.Size = UDim2.new(1, -86, 0, 14)
+			userLabel.BackgroundTransparency = 1
+			userLabel.Font = Enum.Font.Gotham
+			userLabel.TextSize = 11
+			userLabel.TextXAlignment = Enum.TextXAlignment.Left
+			userLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(userLabel, "TextColor3", "SubText")
+			userLabel.Parent = body
+			local healthBack = Instance.new("Frame")
+			healthBack.Position = UDim2.fromOffset(74, 42)
+			healthBack.Size = UDim2.new(1, -86, 0, 8)
+			healthBack.BorderSizePixel = 0
+			bindAuxiliaryUiColor(healthBack, "BackgroundColor3", "Inset")
+			healthBack.Parent = body
+			local healthBackCorner = Instance.new("UICorner")
+			healthBackCorner.CornerRadius = UDim.new(1, 0)
+			healthBackCorner.Parent = healthBack
+			local healthFill = Instance.new("Frame")
+			healthFill.Size = UDim2.fromScale(0, 1)
+			healthFill.BorderSizePixel = 0
+			healthFill.Parent = healthBack
+			local healthFillCorner = Instance.new("UICorner")
+			healthFillCorner.CornerRadius = UDim.new(1, 0)
+			healthFillCorner.Parent = healthFill
+			local detailLabel = Instance.new("TextLabel")
+			detailLabel.Position = UDim2.fromOffset(12, 62)
+			detailLabel.Size = UDim2.new(1, -24, 0, 14)
+			detailLabel.BackgroundTransparency = 1
+			detailLabel.Font = Enum.Font.GothamMedium
+			detailLabel.TextSize = 11
+			detailLabel.TextXAlignment = Enum.TextXAlignment.Left
+			detailLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(detailLabel, "TextColor3", "SubText")
+			detailLabel.Parent = body
+
+			local enabled, shownTarget, lastUpdate, connection = false, nil, 0, nil
+			-- Who to show: the aimbot's lock first, then whoever the trigger bot is on.
+			local function currentTarget()
+				local locked = aimbotState.target
+				if locked and locked.Parent then return locked, "LOCKED" end
+				local sighted = triggerBotState.enabled and triggerBotState.target
+				if sighted and sighted.Parent then return sighted, "IN SIGHT" end
+				return nil, nil
+			end
+			local function update()
+				local target, kind = currentTarget()
+				hudWindow.setShown(enabled and (target ~= nil or not featureSettings.targetHudAutoHide))
+				if not target then
+					shownTarget = nil
+					avatar.Image = ""
+					nameLabel.Text = "No target"
+					userLabel.Text = aimbotState.enabled and ("Hold " .. aimbotKeyText() .. " to lock on") or "Turn on the aimbot or trigger bot"
+					healthFill.Size = UDim2.fromScale(0, 1)
+					detailLabel.Text = ""
+					status.Text = ""
+					return
+				end
+				if target ~= shownTarget then
+					shownTarget = target
+					avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. target.UserId .. "&w=150&h=150"
+					nameLabel.Text = target.DisplayName
+					userLabel.Text = "@" .. target.Name
+				end
+				status.Text = kind
+				status.TextColor3 = auxiliaryUiTheme.AccentText
+				local character = target.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				local health = humanoid and math.max(humanoid.Health, 0) or 0
+				local maxHealth = humanoid and math.max(humanoid.MaxHealth, 1) or 100
+				local fraction = math.clamp(health / maxHealth, 0, 1)
+				healthFill.Size = UDim2.fromScale(fraction, 1)
+				-- Green when they're healthy, through yellow, to red when they're nearly done.
+				healthFill.BackgroundColor3 = Color3.fromHSV(fraction * 0.33, 0.7, 0.95)
+				local details = { math.floor(health + 0.5) .. " / " .. math.floor(maxHealth + 0.5) .. " HP" }
+				local root = character and getRoot(character)
+				local myRoot = localPlayer.Character and getRoot(localPlayer.Character)
+				if root and myRoot then
+					table.insert(details, math.floor((root.Position - myRoot.Position).Magnitude + 0.5) .. " studs")
+				end
+				local tool = character and character:FindFirstChildOfClass("Tool")
+				table.insert(details, tool and ("Holding " .. tool.Name) or "Empty-handed")
+				detailLabel.Text = table.concat(details, "  ·  ")
+			end
+			-- Ten times a second, and straight away when the target changes.
+			local function setEnabled(on)
+				enabled = on == true
+				if connection then
+					connection:Disconnect()
+					connection = nil
+				end
+				if not enabled then return hudWindow.setShown(false) end
+				connection = RunService.Heartbeat:Connect(function()
+					local now = os.clock()
+					if now - lastUpdate < 0.1 and currentTarget() == shownTarget then return end
+					lastUpdate = now
+					update()
+				end)
+				table.insert(hudWindow.connections, connection)
+				update()
+			end
+
+			local entry = quickToggleByName["Target HUD"]
+			local card = entry and createSettingsCard(entry)
+			if card then
+				card.addSectionLabel("SHOW", "eye")
+				card.addSwitchGrid({
+					{
+						text = "Hide when there's no target",
+						get = function() return featureSettings.targetHudAutoHide == true end,
+						set = function(on)
+							featureSettings.targetHudAutoHide = on
+							saveFeatureSettings()
+							if enabled then update() end
+						end,
+					},
+				}, 1)
+				card.addHint("It shows who the aimbot is locked onto while you hold the aim key, or else who the trigger bot has under your crosshair. Turn hiding off to drag it somewhere new.")
+				card.refresh()
+			end
+
+			menuModules.targetHud = { setEnabled = setEnabled }
+			if featureSettings.targetHud and entry then
+				setQuickToggle(entry, true)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- ESP off-screen arrows: while ESP is on, an arrow round the edge of the screen for each
+		-- player who's off it (behind you, say), pointing the way to them, in their ESP colour and
+		-- fainter the further away they are. It follows ESP's "Only show enemies". Switched on in
+		-- the ESP settings.
+		safeBuild("ESP off-screen arrows", function()
+			local localPlayer = Players.LocalPlayer
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild("SpreadCheeksEspArrows")
+			if previousGui then previousGui:Destroy() end
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksEspArrows"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			-- Under the aimbot's circle and the menu's windows.
+			gui.DisplayOrder = 997
+			gui.Parent = playerGui
+			local arrowImage = menuIcons.get("navigation-2", "chevron-up")
+			local arrows = {}
+			local function arrowFor(player)
+				local arrow = arrows[player]
+				if arrow then return arrow end
+				arrow = Instance.new("ImageLabel")
+				arrow.AnchorPoint = Vector2.new(0.5, 0.5)
+				arrow.Size = UDim2.fromOffset(22, 22)
+				arrow.BackgroundTransparency = 1
+				if arrowImage then menuIcons.apply(arrow, arrowImage) end
+				arrow.Parent = gui
+				arrows[player] = arrow
+				return arrow
+			end
+			Players.PlayerRemoving:Connect(function(player)
+				if arrows[player] then
+					arrows[player]:Destroy()
+					arrows[player] = nil
+				end
+			end)
+			-- After the camera has moved for the frame, so the arrows point from where it ends up.
+			pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksEspArrows") end)
+			RunService:BindToRenderStep("SpreadCheeksEspArrows", Enum.RenderPriority.Camera.Value + 3, function()
+				local camera = workspace.CurrentCamera
+				local shown = {}
+				if ESPenabled and espSettings.offscreenArrows and camera then
+					local center = camera.ViewportSize / 2
+					local myRoot = localPlayer.Character and getRoot(localPlayer.Character)
+					for _, player in ipairs(Players:GetPlayers()) do
+						local root = player ~= localPlayer and player.Character and getRoot(player.Character)
+						if root and not (espSettings.enemiesOnly and espIsTeammate(player)) then
+							local _, onScreen = camera:WorldToViewportPoint(root.Position)
+							if not onScreen then
+								-- Which way they are from the middle of the screen, as the camera sees it;
+								-- straight behind you comes out at the bottom.
+								local relative = camera.CFrame:PointToObjectSpace(root.Position)
+								local direction = Vector2.new(relative.X, -relative.Y)
+								direction = direction.Magnitude > 0.001 and direction.Unit or Vector2.new(0, 1)
+								local arrow = arrowFor(player)
+								arrow.Position = UDim2.fromOffset(center.X + direction.X * (center.X - 48), center.Y + direction.Y * (center.Y - 48))
+								arrow.Rotation = math.deg(math.atan2(direction.Y, direction.X)) + 90
+								arrow.ImageColor3 = espColorFor(player)
+								local distance = myRoot and (root.Position - myRoot.Position).Magnitude or 0
+								arrow.ImageTransparency = math.clamp((distance - 50) / 500, 0, 0.6)
+								arrow.Visible = true
+								shown[player] = true
+							end
+						end
+					end
+				end
+				for player, arrow in pairs(arrows) do
+					if not shown[player] then arrow.Visible = false end
+				end
+			end)
+		end)
+
+		------------------------------------------------------------------------------------------
 		-- Player info: a card under the Player name box in the Players tab with everything about the
 		-- selected player (account age, team, health, distance, what they're holding, membership,
 		-- whether they're your friend and who they're friends with here), and quick actions.
@@ -26593,6 +27581,17 @@ if rayfieldLoaded and Rayfield then
 				if aimbotState.refreshKey then aimbotState.refreshKey() end
 				notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
 			end)
+			describe("friendcheck [on/off]", "Whether the aimbot and trigger bot leave your Roblox friends alone (on to start with)")
+			addcmd("friendcheck", {}, function(args)
+				local choice = firstArgument(args)
+				if choice ~= "on" and choice ~= "off" then return notify("Friend Check", "Choose on or off, like friendcheck on") end
+				featureSettings.aimbotFriendCheck = choice == "on"
+				featureSettings.triggerFriendCheck = choice == "on"
+				saveFeatureSettings()
+				notify("Friend Check", choice == "on" and "The aimbot and trigger bot leave your friends alone" or "Friends can be aimed at too", 3)
+			end)
+			addSwitchCommands("Target HUD", { { "targethud" }, { "untargethud" }, "toggletargethud" },
+				"Shows the Target HUD: who you're aiming at, their health, distance and what they're holding", "Hides the Target HUD", "the Target HUD")
 
 			-- Trigger bot.
 			addSwitchCommands("Trigger Bot", { { "triggerbot", "tbot" }, { "untriggerbot", "untbot" }, "toggletriggerbot" },
@@ -26657,6 +27656,18 @@ if rayfieldLoaded and Rayfield then
 				espSettings.enemiesOnly = false
 				saveEspSettings()
 				notify("ESP", "Showing everyone", 2)
+			end)
+			describe("esparrows", "ESP shows arrows round the edge of your screen pointing at players who are off it")
+			describe("unesparrows", "Takes the ESP's off-screen arrows away")
+			addcmd("esparrows", {}, function()
+				espSettings.offscreenArrows = true
+				saveEspSettings()
+				notify("ESP", "Off-screen arrows on" .. (ESPenabled and "" or ". Turn ESP on to see them"), 3)
+			end)
+			addcmd("unesparrows", {}, function()
+				espSettings.offscreenArrows = false
+				saveEspSettings()
+				notify("ESP", "Off-screen arrows off", 2)
 			end)
 
 			-- The menu: its theme, its tabs, and joining servers.
@@ -26813,6 +27824,23 @@ if rayfieldLoaded and Rayfield then
 				setSwitch("Emote", true)
 			end)
 			addcmd("unemoteloop", {}, function() setSwitch("Emote", false) end)
+			addSwitchCommands("Emote Wheel", { { "emotewheel" }, { "unemotewheel" }, "toggleemotewheel" },
+				"Hold the wheel key (B to start with) for a wheel of emotes, then point at one and let go", "Turns the Emote Wheel off", "the Emote Wheel")
+			describe("emotewheelkey [key]", "The key you hold for the Emote Wheel, like emotewheelkey g")
+			addcmd("emotewheelkey", {}, function(args)
+				local typed = firstArgument(args)
+				local key = nil
+				for _, keyCode in ipairs(Enum.KeyCode:GetEnumItems()) do
+					if keyCode.Name:lower() == typed and not reservedKeys[keyCode] and not isMenuToggleKey(keyCode) then
+						key = keyCode.Name
+						break
+					end
+				end
+				if not key then return notify("Emote Wheel", "Give a key, like emotewheelkey g") end
+				featureSettings.emoteWheelKey = key
+				saveFeatureSettings()
+				notify("Emote Wheel", "Hold " .. key .. " for the wheel", 2.5)
+			end)
 			addSwitchCommands("Reverse Animations", { { "reverseanims", "reverseanimations" }, { "unreverseanims", "unreverseanimations" }, "togglereverseanims" },
 				"Everything you do plays backwards", "Your animations play forwards again")
 			addSwitchCommands("Mannequin", { { "mannequin" }, { "unmannequin" }, "togglemannequin" },
@@ -26925,6 +27953,29 @@ if rayfieldLoaded and Rayfield then
 				featureSettings.trollGlideSpeed = math.clamp(math.floor(speed / 5 + 0.5) * 5, 10, 200)
 				saveFeatureSettings()
 				notify("Glide To", featureSettings.trollGlideSpeed .. " studs a second", 2)
+			end)
+			addSwitchCommands("Server Tour", { { "servertour", "tour" }, { "unservertour", "untour" }, "toggleservertour" },
+				"Glide over to everyone in the server, one at a time, and wave at each of them", "Ends the tour where you are", "the Server Tour")
+			describe("weepingangel [player]", "Creep up on a player, freezing whenever they turn round to look (the Trolling tab's target if you leave the name out)")
+			describe("unweepingangel", "Stops the creeping")
+			addcmd("weepingangel", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Weeping Angel") then setSwitch("Weeping Angel", true) end
+			end)
+			addcmd("unweepingangel", {}, function() setSwitch("Weeping Angel", false) end)
+			describe("bodyguard [player]", "Stick by a player like security and stare down anyone who gets close (the Trolling tab's target if you leave the name out)")
+			describe("unbodyguard", "Off duty")
+			addcmd("bodyguard", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Bodyguard") then setSwitch("Bodyguard", true) end
+			end)
+			addcmd("unbodyguard", {}, function() setSwitch("Bodyguard", false) end)
+			describe("guardside [right/left/behind/front]", "Which side of your target Bodyguard stands")
+			addcmd("guardside", {}, function(args)
+				local sides = { right = "Right", left = "Left", behind = "Behind", front = "In front" }
+				local side = sides[firstArgument(args)]
+				if not side then return notify("Bodyguard", "Choose right, left, behind or front, like guardside left") end
+				featureSettings.trollGuardSide = side
+				saveFeatureSettings()
+				notify("Bodyguard", side, 2)
 			end)
 
 			-- Only you can see.
