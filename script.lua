@@ -14635,11 +14635,20 @@ if rayfieldLoaded and Rayfield then
 			cheatNoclip = true, cheatFling = true, cheatSensitivity = "Normal", cheatOutline = true,
 			-- The Performance Stats window, and where it was dragged to (like keybindListX/Y).
 			performanceStats = false, performanceStatsX = -1, performanceStatsY = -1,
+			-- The radar window: shown, position, how far it reaches (studs) and whether it shows names.
+			radar = false, radarX = -1, radarY = -1, radarRange = 150, radarNames = true,
+			-- The Logs window (chat, joins, notifications): shown, and its position.
+			logsWindow = false, logsWindowX = -1, logsWindowY = -1,
+			-- Join Alerts: on or off, who to alert about, and the watch list (usernames).
+			joinAlerts = false, joinAlertFriends = true, joinAlertEveryone = false, watchList = {},
+			-- The FPS cap set with the Interface slider (0 until it's moved).
+			fpsCap = 0,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
 			aimbotFov = { 20, 600 }, aimbotSmoothness = { 1, 10 }, aimbotFreeAimSpeed = { 0.1, 3 },
 			triggerDelay = { 0, 500 }, triggerInterval = { 50, 1000 },
+			radarRange = { 50, 500 }, fpsCap = { 0, 360 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -14906,6 +14915,11 @@ if rayfieldLoaded and Rayfield then
 			return element
 		end
 
+		-- Shared between the later parts of the menu (the radar, logs window, join alerts and so on),
+		-- so each doesn't need its own variable here. notificationLog keeps recent notifications for
+		-- the Logs window.
+		local menuModules = { notificationLog = {} }
+
 		task.spawn(function()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 			local previousToastGui = playerGui:FindFirstChild("SpreadCheeksNotifications")
@@ -14981,6 +14995,11 @@ if rayfieldLoaded and Rayfield then
 				local title = text2 and tostring(text or "Notification") or "SpreadCheeksGUI"
 				local message = tostring(text2 or text or "")
 				local duration = math.clamp(tonumber(length) or 4.5, 1.5, 12)
+				-- Kept (the last 100) for the Logs window, so a notification can be read again.
+				local notificationLog = menuModules.notificationLog
+				table.insert(notificationLog, { at = os.time(), title = title, message = message })
+				if #notificationLog > 100 then table.remove(notificationLog, 1) end
+				if menuModules.onNotification then task.spawn(menuModules.onNotification) end
 				-- Size the card to its text so one-word toasts stay small.
 				local bodyHeight = 0
 				if message ~= "" then
@@ -15177,7 +15196,18 @@ if rayfieldLoaded and Rayfield then
 		for _, palette in ipairs(themePalettes) do
 			table.insert(themeNames, palette.name)
 		end
-		withIcon(window.rfSettings, "CreateDropdown", {
+		-- The Theme dropdown and the theme command both switch themes through here.
+		local function applyTheme(palette)
+			currentPalette = palette
+			window:ChangeTheme(makeTheme(palette))
+			restoreLogoPresentation()
+			updateAuxiliaryUiTheme(window.theme, palette)
+			if featureSettings.theme ~= palette.name then
+				featureSettings.theme = palette.name
+				saveFeatureSettings()
+			end
+		end
+		local themeDropdown = withIcon(window.rfSettings, "CreateDropdown", {
 			name = "Theme",
 			description = "The colours for this menu and its windows. Frost, Daylight and Sakura are light. Remembered between sessions.",
 			options = themeNames,
@@ -15185,15 +15215,7 @@ if rayfieldLoaded and Rayfield then
 			callback = function(value)
 				if type(value) == "table" then value = value[1] end
 				local palette = paletteNamed(tostring(value))
-				if not palette then return end
-				currentPalette = palette
-				window:ChangeTheme(makeTheme(palette))
-				restoreLogoPresentation()
-				updateAuxiliaryUiTheme(window.theme, palette)
-				if featureSettings.theme ~= palette.name then
-					featureSettings.theme = palette.name
-					saveFeatureSettings()
-				end
+				if palette then applyTheme(palette) end
 			end,
 		}, "palette")
 		-- Quick toggles register here so a keybind can flip them and keep the
@@ -15323,20 +15345,22 @@ if rayfieldLoaded and Rayfield then
 			local name = featureSettings.aimbotKey
 			return name == "RightClick" and "RMB" or name == "LeftClick" and "LMB" or name
 		end
+		-- The switch and the aimbot commands both turn it on and off through here.
+		local function applyAimbot(enabled)
+			enabled = enabled == true
+			if enabled == aimbotState.enabled then return end
+			aimbotState.enabled = enabled
+			aimbotState.held = false
+			aimbotState.target = nil
+			if enabled then
+				notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
+			end
+		end
 		local aimbotToggle = withIcon(combatTab, "CreateToggle", {
 			name = "Aimbot",
 			description = "Hold the key to aim. Right-click for settings",
 			value = false,
-			callback = function(enabled)
-				enabled = enabled == true
-				if enabled == aimbotState.enabled then return end
-				aimbotState.enabled = enabled
-				aimbotState.held = false
-				aimbotState.target = nil
-				if enabled then
-					notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
-				end
-			end,
+			callback = applyAimbot,
 		}, "crosshair")
 		-- Trigger Bot fires for you while your crosshair is on another player. Its switch is made
 		-- here, under Aimbot, so it gets a key box; the rest comes from buildTriggerBot further down.
@@ -15380,10 +15404,88 @@ if rayfieldLoaded and Rayfield then
 			end
 		end, "footprints")
 
-		-- View: the camera. The Field of View slider is added further down.
+		-- View: the camera, then lighting and sight.
 		withIcon(viewTab, "CreateSection", { name = "Camera" }, "camera")
 		addCommandToggle(viewTab, "Freecam", "freecam", "unfreecam", "Right-click for freecam speed", "video")
 		addCommandToggle(viewTab, "First Person", "firstp", "thirdp", nil, "glasses", "eye")
+		-- Made here, not with the other sliders, so it stays in Camera above Lighting.
+		withIcon(viewTab, "CreateSlider", {
+			name = "Field of View",
+			range = { 40, 120 },
+			value = 70,
+			increment = 1,
+			suffix = "°",
+			callback = function(value)
+				execCmd("fov " .. tostring(value), Players.LocalPlayer, true)
+			end,
+		}, "focus")
+		-- Fullbright and No Fog note how the game's lighting was when they're switched on and put it
+		-- back when they're switched off. Both reapply every frame, since games keep resetting it.
+		local lightingSaved = {}
+		local function setFullbright(enabled)
+			if lightingSaved.brightLoop then
+				lightingSaved.brightLoop:Disconnect()
+				lightingSaved.brightLoop = nil
+			end
+			if enabled then
+				lightingSaved.bright = {
+					Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime,
+					GlobalShadows = Lighting.GlobalShadows, OutdoorAmbient = Lighting.OutdoorAmbient,
+				}
+				lightingSaved.brightLoop = RunService.RenderStepped:Connect(function()
+					Lighting.Brightness = 2
+					Lighting.ClockTime = 14
+					Lighting.GlobalShadows = false
+					Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+				end)
+			elseif lightingSaved.bright then
+				for property, value in pairs(lightingSaved.bright) do
+					pcall(function() Lighting[property] = value end)
+				end
+				lightingSaved.bright = nil
+			end
+		end
+		local function setNoFog(enabled)
+			if lightingSaved.fogLoop then
+				lightingSaved.fogLoop:Disconnect()
+				lightingSaved.fogLoop = nil
+			end
+			if enabled then
+				local saved = { FogStart = Lighting.FogStart, FogEnd = Lighting.FogEnd, atmospheres = {} }
+				lightingSaved.fog = saved
+				lightingSaved.fogLoop = RunService.RenderStepped:Connect(function()
+					Lighting.FogStart = 100000
+					Lighting.FogEnd = 100000
+					-- Atmospheres make haze too; each is noted the first time it's seen, then cleared.
+					for _, atmosphere in ipairs(Lighting:GetChildren()) do
+						if atmosphere:IsA("Atmosphere") then
+							if not saved.atmospheres[atmosphere] then
+								saved.atmospheres[atmosphere] = { Density = atmosphere.Density, Haze = atmosphere.Haze }
+							end
+							atmosphere.Density = 0
+							atmosphere.Haze = 0
+						end
+					end
+				end)
+			elseif lightingSaved.fog then
+				local saved = lightingSaved.fog
+				pcall(function()
+					Lighting.FogStart = saved.FogStart
+					Lighting.FogEnd = saved.FogEnd
+				end)
+				for atmosphere, values in pairs(saved.atmospheres) do
+					if atmosphere.Parent then
+						atmosphere.Density = values.Density
+						atmosphere.Haze = values.Haze
+					end
+				end
+				lightingSaved.fog = nil
+			end
+		end
+		withIcon(viewTab, "CreateSection", { name = "Lighting & sight" }, "sun")
+		addQuickToggle(viewTab, "Fullbright", "Lights everything up, day or night", setFullbright, "sun")
+		addQuickToggle(viewTab, "No Fog", "Clears fog and haze so you can see far", setNoFog, "cloud-off", "cloud")
+		addCommandToggle(viewTab, "X-ray", "xray", "unxray", "See through walls and buildings", "scan", "eye")
 
 		-- Protection: staying safe and unseen.
 		withIcon(protectionTab, "CreateSection", { name = "Safety" }, "shield-check", "shield")
@@ -15395,6 +15497,22 @@ if rayfieldLoaded and Rayfield then
 		end
 		addQuickToggle(protectionTab, "Anti-Fling", "Toggle Infinite Yield's Anti-Fling module", setAntiFling, "shield")
 		addQuickToggle(protectionTab, "No Fall Damage", "Prevents fall damage in Natural Disaster Survival", setNoFall, "feather")
+		-- When Roblox notices you've gone idle, a click is sent for you, so you aren't kicked.
+		addQuickToggle(protectionTab, "Anti-AFK", "Stops Roblox kicking you for being idle", function(enabled)
+			if menuModules.antiAfk then
+				menuModules.antiAfk:Disconnect()
+				menuModules.antiAfk = nil
+			end
+			if enabled then
+				menuModules.antiAfk = Players.LocalPlayer.Idled:Connect(function()
+					pcall(function()
+						local virtualUser = game:GetService("VirtualUser")
+						virtualUser:CaptureController()
+						virtualUser:ClickButton2(Vector2.new())
+					end)
+				end)
+			end
+		end, "coffee", "clock")
 		withIcon(protectionTab, "CreateSection", { name = "Stealth" }, "eye-off")
 		addCommandToggle(protectionTab, "Invisible", "invisible", "visible", nil, "eye-off")
 		-- Cheater Detector warns you about players who move like cheaters. Its switch is made here,
@@ -15409,6 +15527,16 @@ if rayfieldLoaded and Rayfield then
 			end
 			if cheaterDetector then cheaterDetector.setEnabled(enabled) end
 		end, "radar", "siren", "shield-alert")
+		addCommandToggle(protectionTab, "Staff Watch", "staffwatch", "unstaffwatch", "Tells you when the game's group staff are in the server", "badge-check", "shield-alert")
+		-- Join Alerts tell you when friends or players on your watch list come and go. The
+		-- listening is built further down (menuModules.joinAlerts); this remembers on or off.
+		addQuickToggle(protectionTab, "Join Alerts", "Tells you when friends or watched players join or leave. Right-click for settings", function(enabled)
+			if featureSettings.joinAlerts ~= enabled then
+				featureSettings.joinAlerts = enabled
+				saveFeatureSettings()
+			end
+			if enabled and menuModules.joinAlerts then menuModules.joinAlerts.announceHere() end
+		end, "bell-ring", "bell")
 
 		-- Interface: windows on screen, keybinds and extras. Performance Stats is made here, with the
 		-- other switches, so it gets a key box; its window is built further down (buildPerformanceStats).
@@ -15421,6 +15549,21 @@ if rayfieldLoaded and Rayfield then
 			end
 			if performanceStats then performanceStats.setShown(enabled) end
 		end, "activity", "gauge")
+		-- The radar and logs windows, built further down (menuModules.radar and .logs).
+		addQuickToggle(interfaceTab, "Radar", "A minimap of players around you. Drag it to move it; right-click for settings", function(enabled)
+			if featureSettings.radar ~= enabled then
+				featureSettings.radar = enabled
+				saveFeatureSettings()
+			end
+			if menuModules.radar then menuModules.radar.setShown(enabled) end
+		end, "radar", "map")
+		addQuickToggle(interfaceTab, "Logs", "Chat, joins and recent notifications in a window. Drag it to move it", function(enabled)
+			if featureSettings.logsWindow ~= enabled then
+				featureSettings.logsWindow = enabled
+				saveFeatureSettings()
+			end
+			if menuModules.logs then menuModules.logs.setShown(enabled) end
+		end, "scroll-text", "message-square")
 
 		local keybindFile = "SpreadCheeksGUI_Keybinds.json"
 		-- Semicolon opens the quick command bar; Escape and Backspace are used while capturing.
@@ -16167,18 +16310,20 @@ if rayfieldLoaded and Rayfield then
 			warn("[SpreadCheeksGUI] The keybind list couldn't be added: " .. tostring(keybindList))
 			keybindList = nil
 		end
-		withIcon(interfaceTab, "CreateToggle", {
+		-- The switch and the keybind list commands both show and hide it through here.
+		local function showKeybindList(enabled)
+			enabled = enabled == true
+			if featureSettings.keybindList ~= enabled then
+				featureSettings.keybindList = enabled
+				saveFeatureSettings()
+			end
+			if keybindList then keybindList.setShown(enabled) end
+		end
+		local keybindListToggle = withIcon(interfaceTab, "CreateToggle", {
 			name = "Keybind List",
 			description = "Shows your keybinds on screen. Drag it to move it",
 			value = featureSettings.keybindList,
-			callback = function(enabled)
-				enabled = enabled == true
-				if featureSettings.keybindList ~= enabled then
-					featureSettings.keybindList = enabled
-					saveFeatureSettings()
-				end
-				if keybindList then keybindList.setShown(enabled) end
-			end,
+			callback = showKeybindList,
 		}, "layout-list", "list")
 		if keybindList then keybindList.setShown(featureSettings.keybindList) end
 
@@ -16796,6 +16941,43 @@ if rayfieldLoaded and Rayfield then
 				end)
 			end,
 		}, "disc")
+
+		-- Performance: the frame rate cap, through the executor's setfpscap. It's only set once the
+		-- slider has been moved (now or in an earlier session), so the game's own cap is otherwise
+		-- left alone.
+		withIcon(interfaceTab, "CreateSection", { name = "Performance" }, "gauge")
+		local function applyFpsCap(value)
+			if type(setfpscap) ~= "function" then
+				if not menuModules.fpsCapWarned then
+					menuModules.fpsCapWarned = true
+					notify("FPS cap", "Your executor can't change the frame rate cap.")
+				end
+				return
+			end
+			pcall(setfpscap, value)
+		end
+		withIcon(interfaceTab, "CreateSlider", {
+			name = "FPS cap",
+			range = { 30, 360 },
+			value = featureSettings.fpsCap > 0 and featureSettings.fpsCap or 60,
+			increment = 10,
+			suffix = " fps",
+			callback = function(value)
+				-- Rayfield may call this as the slider is made; only a real move counts.
+				if not menuModules.fpsSliderReady then return end
+				value = math.floor(tonumber(value) or 60)
+				applyFpsCap(value)
+				featureSettings.fpsCap = value
+				-- Saved once the slider settles, not on every step of a drag.
+				menuModules.fpsSaveSerial = (menuModules.fpsSaveSerial or 0) + 1
+				local serial = menuModules.fpsSaveSerial
+				task.delay(0.6, function()
+					if menuModules.fpsSaveSerial == serial then saveFeatureSettings() end
+				end)
+			end,
+		}, "gauge")
+		task.defer(function() menuModules.fpsSliderReady = true end)
+		if featureSettings.fpsCap > 0 then applyFpsCap(featureSettings.fpsCap) end
 
 		-- Settings cards open under a switch the way Rayfield's dropdowns do. Right-click a switch's
 		-- row to open or close its card (ESP also has an arrow, in place of its key box).
@@ -17692,13 +17874,12 @@ if rayfieldLoaded and Rayfield then
 		end
 
 		-- Fly and freecam speed are in those switches' settings cards (right-click them). These land
-		-- at the bottom of their tabs: Mobility gets a section of its own, and Field of View joins
-		-- the Camera section in View.
+		-- at the bottom of Mobility, in a section of their own. (Field of View is made with the View
+		-- switches, so it stays in Camera.)
 		withIcon(mobilityTab, "CreateSection", { name = "Character values" }, "gauge")
 		addCommandSlider(mobilityTab, "Walk Speed", 0, 150, 16, "speed", 1, nil, "gauge")
 		addCommandSlider(mobilityTab, "Jump Power", 0, 300, 50, "jpower", 1, nil, "arrow-big-up")
 		addCommandSlider(mobilityTab, "Gravity", 0, 300, 196, "gravity", 1, nil, "orbit")
-		addCommandSlider(viewTab, "Field of View", 40, 120, 70, "fov", 1, "°", "focus")
 
 		-- Whether the pointer is over this menu. Clicks there are for the menu (right-clicking a switch
 		-- for its settings, say): they never count as the aim key, and the trigger bot doesn't fire.
@@ -18102,6 +18283,8 @@ if rayfieldLoaded and Rayfield then
 				chip.Parent = row
 				showChip()
 				table.insert(auxiliaryUiThemeListeners, showChip)
+				-- So the aimbotkey command can update the box.
+				state.refreshKey = showChip
 			end
 
 			-- Settings, opened by right-clicking the switch.
@@ -18995,6 +19178,7 @@ if rayfieldLoaded and Rayfield then
 		local function selectPlayer(name, label)
 			selectedPlayerName = name
 			selectedPlayerDisplay:Set(label)
+			if menuModules.onPlayerSelected then task.spawn(menuModules.onPlayerSelected) end
 			if locatedPlayerName and locatedPlayerName ~= name then
 				execCmd("nolocate " .. locatedPlayerName, Players.LocalPlayer, true)
 				execCmd("locate " .. name, Players.LocalPlayer, true)
@@ -19338,7 +19522,8 @@ if rayfieldLoaded and Rayfield then
 			}, "layout-grid")
 		end
 		buildFacePicker()
-		withIcon(playerTab, "CreateInput", {
+		-- Kept so the player info panel can sit right under it.
+		menuModules.playerNameInput = withIcon(playerTab, "CreateInput", {
 			name = "Player name",
 			description = "Enter a username if the player is not in the list",
 			placeholder = selectedPlayerName,
@@ -20368,6 +20553,1330 @@ if rayfieldLoaded and Rayfield then
 			warn("[SpreadCheeksGUI] The Servers page couldn't be built: " .. tostring(serversError))
 		end
 
+		-- IY Settings: Infinite Yield's own settings, which otherwise live in the hidden classic
+		-- window. Its keybinds (any command, Click Teleport, Click Delete), prefix, staying loaded
+		-- after a teleport, aliases, waypoints and plugins, all saved to IY's own file as before.
+		local iySettingsTab = withIcon(window, "CreateTab", { name = "IY Settings" }, "settings-2", "settings", "cog")
+		local function buildIySettingsPage()
+			local page = iySettingsTab and iySettingsTab.tabPage
+			if typeof(page) ~= "Instance" then
+				warn("[SpreadCheeksGUI] Couldn't build the IY Settings page; Rayfield's tab layout may have changed.")
+				return
+			end
+
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius or UDim.new(0, 12)
+				corner.Parent = object
+			end
+			local function addList(object, gap, horizontal)
+				local layout = Instance.new("UIListLayout")
+				layout.Padding = UDim.new(0, gap)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				if horizontal then
+					layout.FillDirection = Enum.FillDirection.Horizontal
+					layout.VerticalAlignment = Enum.VerticalAlignment.Center
+				end
+				layout.Parent = object
+				return layout
+			end
+			local function makeFrame(parent, order, height)
+				local frame = Instance.new("Frame")
+				frame.LayoutOrder = order or 0
+				frame.Size = UDim2.new(1, 0, 0, height or 0)
+				if not height then frame.AutomaticSize = Enum.AutomaticSize.Y end
+				frame.BackgroundTransparency = 1
+				frame.Parent = parent
+				return frame
+			end
+			local function makeCard(parent, order)
+				local card = Instance.new("Frame")
+				card.LayoutOrder = order
+				card.Size = UDim2.fromScale(1, 0)
+				card.AutomaticSize = Enum.AutomaticSize.Y
+				card.BorderSizePixel = 0
+				bindAuxiliaryUiColor(card, "BackgroundColor3", "Card")
+				addCorner(card)
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.3
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = card
+				local padding = Instance.new("UIPadding")
+				padding.PaddingTop = UDim.new(0, 14)
+				padding.PaddingBottom = UDim.new(0, 14)
+				padding.PaddingLeft = UDim.new(0, 14)
+				padding.PaddingRight = UDim.new(0, 14)
+				padding.Parent = card
+				addList(card, 10)
+				card.Parent = parent
+				return card
+			end
+			local function makeLabel(parent, options)
+				local label = Instance.new("TextLabel")
+				label.LayoutOrder = options.order or 0
+				label.BackgroundTransparency = 1
+				label.Font = options.font or Enum.Font.Gotham
+				label.TextSize = options.size or 12
+				label.Text = options.text or ""
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.Position = options.position or UDim2.new()
+				label.Size = options.frameSize or UDim2.new(1, 0, 0, (options.size or 12) + 4)
+				if options.wrap then
+					label.Size = UDim2.fromScale(1, 0)
+					label.AutomaticSize = Enum.AutomaticSize.Y
+					label.TextWrapped = true
+					label.TextTruncate = Enum.TextTruncate.None
+				end
+				bindAuxiliaryUiColor(label, "TextColor3", options.role or "Text")
+				label.Parent = parent
+				return label
+			end
+			local function makeIcon(parent, size, role, ...)
+				local icon = menuIcons.get(...)
+				local image = Instance.new("ImageLabel")
+				image.BackgroundTransparency = 1
+				image.Size = UDim2.fromOffset(size, size)
+				image.Visible = icon ~= nil
+				if icon then menuIcons.apply(image, icon) end
+				bindAuxiliaryUiColor(image, "ImageColor3", role)
+				image.Parent = parent
+				return image
+			end
+			-- A small rounded button or tag, as wide as its text, in the given background and text roles.
+			local function makePill(parent, text, order, backgroundRole, textRole, className)
+				local pill = Instance.new(className or "TextButton")
+				pill.LayoutOrder = order or 0
+				pill.AutomaticSize = Enum.AutomaticSize.X
+				pill.Size = UDim2.fromOffset(0, 26)
+				pill.BorderSizePixel = 0
+				pill.Font = Enum.Font.GothamMedium
+				pill.Text = text
+				pill.TextSize = 12
+				if pill:IsA("TextButton") then pill.AutoButtonColor = false end
+				bindAuxiliaryUiColor(pill, "BackgroundColor3", backgroundRole or "Inset")
+				bindAuxiliaryUiColor(pill, "TextColor3", textRole or "SubText")
+				addCorner(pill, UDim.new(0, 7))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 11)
+				padding.PaddingRight = UDim.new(0, 11)
+				padding.Parent = pill
+				pill.Parent = parent
+				return pill
+			end
+			local function makeTitleRow(card, title, ...)
+				local row = makeFrame(card, 0, 24)
+				local icon = makeIcon(row, 16, "AccentText", ...)
+				icon.Position = UDim2.fromOffset(0, 4)
+				makeLabel(row, {
+					text = title, font = Enum.Font.GothamBold, size = 14,
+					position = UDim2.fromOffset(24, 3), frameSize = UDim2.new(1, -150, 0, 18),
+				})
+				return row
+			end
+			local function makeHeading(parent, order, text)
+				return makeLabel(parent, { order = order, text = text, font = Enum.Font.GothamBold, size = 10, role = "Muted" })
+			end
+			local function makeTextBox(parent, order, placeholder)
+				local box = Instance.new("TextBox")
+				box.LayoutOrder = order or 0
+				box.Size = UDim2.new(1, 0, 0, 34)
+				box.BorderSizePixel = 0
+				box.ClearTextOnFocus = false
+				box.Font = Enum.Font.Gotham
+				box.PlaceholderText = placeholder
+				box.Text = ""
+				box.TextSize = 13
+				box.TextXAlignment = Enum.TextXAlignment.Left
+				box.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(box, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(box, "TextColor3", "Text")
+				bindAuxiliaryUiColor(box, "PlaceholderColor3", "Muted")
+				addCorner(box, UDim.new(0, 8))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 10)
+				padding.PaddingRight = UDim.new(0, 10)
+				padding.Parent = box
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.35
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = box
+				box.Focused:Connect(function() stroke.Color = auxiliaryUiTheme.Accent end)
+				box.FocusLost:Connect(function() stroke.Color = auxiliaryUiTheme.Stroke end)
+				box.Parent = parent
+				return box
+			end
+			local function trimmed(text)
+				return (tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+			end
+			-- A command typed with the prefix works too.
+			local function withoutPrefix(text)
+				text = trimmed(text)
+				local commandPrefix = tostring(prefix or ";")
+				if commandPrefix ~= "" and text:sub(1, #commandPrefix) == commandPrefix then
+					text = trimmed(text:sub(#commandPrefix + 1))
+				end
+				return text
+			end
+
+			-- Colours that depend on state (switches, choices) are set again on a theme change.
+			local refreshers = {}
+			local function repaint()
+				for _, refresher in ipairs(refreshers) do refresher() end
+			end
+			table.insert(auxiliaryUiThemeListeners, repaint)
+			-- Buttons, one per choice, like the ESP colour modes.
+			local function makeChoice(parent, order, options, get, set)
+				local row = makeFrame(parent, order, 28)
+				local width = Instance.new("UISizeConstraint")
+				width.MaxSize = Vector2.new(130 * #options, 28)
+				width.Parent = row
+				addList(row, 6, true)
+				local buttons = {}
+				for index, option in ipairs(options) do
+					local button = Instance.new("TextButton")
+					button.LayoutOrder = index
+					button.Size = UDim2.new(1 / #options, -6 * (#options - 1) / #options, 1, 0)
+					button.AutoButtonColor = false
+					button.BorderSizePixel = 0
+					button.Font = Enum.Font.GothamMedium
+					button.Text = option
+					button.TextSize = 12
+					addCorner(button, UDim.new(0, 8))
+					button.Parent = row
+					button.Activated:Connect(function()
+						set(option)
+						repaint()
+					end)
+					buttons[option] = button
+				end
+				table.insert(refreshers, function()
+					local theme = auxiliaryUiTheme
+					local current = get()
+					for option, button in pairs(buttons) do
+						button.BackgroundColor3 = current == option and theme.Accent or theme.Inset
+						button.TextColor3 = current == option and theme.OnAccent or theme.SubText
+					end
+				end)
+				return row
+			end
+			-- An on/off line: the whole line is clickable, with a switch on the right.
+			local function makeSwitch(parent, order, text, get, set)
+				local cell = Instance.new("TextButton")
+				cell.LayoutOrder = order
+				cell.Size = UDim2.new(1, 0, 0, 34)
+				cell.AutoButtonColor = false
+				cell.BorderSizePixel = 0
+				cell.Text = ""
+				bindAuxiliaryUiColor(cell, "BackgroundColor3", "Inset")
+				addCorner(cell, UDim.new(0, 8))
+				cell.Parent = parent
+				makeLabel(cell, { text = text, size = 13, position = UDim2.fromOffset(12, 0), frameSize = UDim2.new(1, -70, 1, 0) })
+				local track = Instance.new("Frame")
+				track.AnchorPoint = Vector2.new(1, 0.5)
+				track.Position = UDim2.new(1, -10, 0.5, 0)
+				track.Size = UDim2.fromOffset(34, 18)
+				track.BorderSizePixel = 0
+				addCorner(track, UDim.new(1, 0))
+				track.Parent = cell
+				local trackStroke = Instance.new("UIStroke")
+				trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				trackStroke.Parent = track
+				local knob = Instance.new("Frame")
+				knob.AnchorPoint = Vector2.new(0, 0.5)
+				knob.Size = UDim2.fromOffset(14, 14)
+				knob.BorderSizePixel = 0
+				addCorner(knob, UDim.new(1, 0))
+				knob.Parent = track
+				cell.Activated:Connect(function()
+					set(not get())
+					repaint()
+				end)
+				table.insert(refreshers, function()
+					local theme = auxiliaryUiTheme
+					local on = get() == true
+					track.BackgroundColor3 = on and theme.Accent or theme.Card
+					trackStroke.Color = on and theme.Accent or theme.Stroke
+					knob.BackgroundColor3 = on and Color3.new(1, 1, 1) or theme.SubText
+					knob.Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+				end)
+				return cell
+			end
+			-- Lists here are rebuilt as things change, so their old theme bindings are cleared out.
+			local function pruneDeadThemeBindings()
+				for index = #auxiliaryUiColorBindings, 1, -1 do
+					if not auxiliaryUiColorBindings[index][1].Parent then
+						table.remove(auxiliaryUiColorBindings, index)
+					end
+				end
+			end
+			local function clearList(list)
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				pruneDeadThemeBindings()
+			end
+			-- One line of a list: an optional tag (a key, say), the main text with a note under it,
+			-- and buttons on the right. Each button is { text, onClick, primary }.
+			local function makeListRow(parent, order, tagText, text, note, buttons)
+				local row = Instance.new("Frame")
+				row.LayoutOrder = order
+				row.Size = UDim2.new(1, 0, 0, note and 40 or 32)
+				row.BorderSizePixel = 0
+				bindAuxiliaryUiColor(row, "BackgroundColor3", "Inset")
+				addCorner(row, UDim.new(0, 8))
+				row.Parent = parent
+				local textX = 12
+				if tagText then
+					local tag = makePill(row, tagText, 0, "Card", "AccentText", "TextLabel")
+					tag.Font = Enum.Font.GothamBold
+					tag.AutomaticSize = Enum.AutomaticSize.None
+					tag.Size = UDim2.fromOffset(92, 24)
+					tag.TextTruncate = Enum.TextTruncate.AtEnd
+					tag.AnchorPoint = Vector2.new(0, 0.5)
+					tag.Position = UDim2.new(0, 6, 0.5, 0)
+					textX = 108
+				end
+				local buttonsWidth = 0
+				for _, button in ipairs(buttons) do
+					buttonsWidth += TextService:GetTextSize(button[1], 12, Enum.Font.GothamMedium, Vector2.new(1000, 26)).X + 26
+				end
+				makeLabel(row, {
+					text = text, font = Enum.Font.GothamMedium, size = 12,
+					position = UDim2.fromOffset(textX, note and 5 or 0), frameSize = UDim2.new(1, -(textX + buttonsWidth + 8), 0, note and 16 or 32),
+				})
+				if note then
+					makeLabel(row, {
+						text = note, size = 10, role = "Muted",
+						position = UDim2.fromOffset(textX, 21), frameSize = UDim2.new(1, -(textX + buttonsWidth + 8), 0, 13),
+					})
+				end
+				local buttonRow = Instance.new("Frame")
+				buttonRow.AnchorPoint = Vector2.new(1, 0.5)
+				buttonRow.Position = UDim2.new(1, -5, 0.5, 0)
+				buttonRow.Size = UDim2.fromOffset(0, 26)
+				buttonRow.AutomaticSize = Enum.AutomaticSize.X
+				buttonRow.BackgroundTransparency = 1
+				buttonRow.Parent = row
+				addList(buttonRow, 4, true)
+				for index, button in ipairs(buttons) do
+					local pill = makePill(buttonRow, button[1], index, button[3] and "Accent" or "Card", button[3] and "OnAccent" or "SubText")
+					pill.Activated:Connect(button[2])
+				end
+				return row
+			end
+
+			local root = Instance.new("Frame")
+			root.Name = "IySettings"
+			root.LayoutOrder = 1
+			root.Size = UDim2.new(1, -20, 0, 0)
+			root.AutomaticSize = Enum.AutomaticSize.Y
+			root.BackgroundTransparency = 1
+			root.Parent = page
+			addList(root, 8)
+
+			------------------------------------------------------------------------------------------
+			-- Keybinds: Infinite Yield's own, which run a command (or click teleport / click delete)
+			-- when a key is pressed. They also show in the on-screen keybind list.
+			local keybindsCard = makeCard(root, 1)
+			local keybindsTitle = makeTitleRow(keybindsCard, "Keybinds", "keyboard")
+			local keybindCount = makePill(keybindsTitle, "", 0, "Inset", "SubText", "TextLabel")
+			keybindCount.AnchorPoint = Vector2.new(1, 0)
+			keybindCount.Position = UDim2.fromScale(1, 0)
+			keybindCount.Size = UDim2.fromOffset(0, 24)
+			makeLabel(keybindsCard, {
+				order = 1, size = 12, role = "SubText", wrap = true,
+				text = "Run any command with a key, or teleport and delete with a click while you hold one. Keys for the Quick Controls switches are set on the switches themselves.",
+			})
+			local bindList = makeFrame(keybindsCard, 2)
+			addList(bindList, 6)
+			local bindEmpty = makeLabel(keybindsCard, { order = 3, size = 12, role = "Muted", text = "No keybinds yet. Add one below." })
+
+			makeHeading(keybindsCard, 4, "ADD A KEYBIND")
+			local chosenKey, recordingKey = nil, false
+			local bindAction, bindTrigger = "Command", "Key down"
+			local keyRow = makeFrame(keybindsCard, 5, 28)
+			local keyButton = makePill(keyRow, "Choose a key", 0, "Inset", "Text")
+			keyButton.Size = UDim2.fromOffset(0, 28)
+			local keyStroke = Instance.new("UIStroke")
+			keyStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			keyStroke.Transparency = 0.35
+			bindAuxiliaryUiColor(keyStroke, "Color", "Stroke")
+			keyStroke.Parent = keyButton
+			makeLabel(keyRow, {
+				text = "Click, then press a key or click a mouse button in the game. Esc cancels.", size = 11, role = "Muted",
+				position = UDim2.fromOffset(150, 0), frameSize = UDim2.new(1, -150, 1, 0),
+			})
+			makeChoice(keybindsCard, 6, { "Command", "Click Teleport", "Click Delete" }, function() return bindAction end, function(option)
+				bindAction = option
+			end)
+			local commandBox = makeTextBox(keybindsCard, 7, "Command to run, like fly or speed 50")
+			local triggerChoice = makeChoice(keybindsCard, 8, { "Key down", "Key up", "Toggle" }, function() return bindTrigger end, function(option)
+				bindTrigger = option
+			end)
+			local toggleBox = makeTextBox(keybindsCard, 9, "Command for the next press, like unfly")
+			local bindHint = makeLabel(keybindsCard, { order = 10, size = 11, role = "SubText", wrap = true })
+			local bindButtons = makeFrame(keybindsCard, 11, 28)
+			addList(bindButtons, 6, true)
+			local addBindButton = makePill(bindButtons, "Add keybind", 1, "Accent", "OnAccent")
+			addBindButton.Size = UDim2.fromOffset(0, 28)
+			local clearBindsButton = makePill(bindButtons, "Clear all", 2, "Inset", "SubText")
+			clearBindsButton.Size = UDim2.fromOffset(0, 28)
+
+			local function keyText(key)
+				if key == "LeftClick" then return "Left click" end
+				if key == "RightClick" then return "Right click" end
+				return (tostring(key):gsub("^Enum%.KeyCode%.", ""))
+			end
+			local function showKeyButton()
+				keyButton.Text = recordingKey and "Press a key..." or (chosenKey and keyText(chosenKey) or "Choose a key")
+				keyStroke.Color = recordingKey and auxiliaryUiTheme.Accent or auxiliaryUiTheme.Stroke
+				keyStroke.Transparency = recordingKey and 0 or 0.35
+			end
+			-- Which fields show, and what the chosen kind of keybind does.
+			table.insert(refreshers, function()
+				local isCommand = bindAction == "Command"
+				commandBox.Visible = isCommand
+				triggerChoice.Visible = isCommand
+				toggleBox.Visible = isCommand and bindTrigger == "Toggle"
+				if bindAction == "Click Teleport" then
+					bindHint.Text = "Hold the key and click somewhere to teleport there."
+				elseif bindAction == "Click Delete" then
+					bindHint.Text = "Hold the key and click a part to delete it. Only you see it go."
+				elseif bindTrigger == "Key up" then
+					bindHint.Text = "Runs the command when you let go of the key."
+				elseif bindTrigger == "Toggle" then
+					bindHint.Text = "Runs the first command, then the second on the next press, and so on (fly, then unfly)."
+				else
+					bindHint.Text = "Runs the command when you press the key."
+				end
+				showKeyButton()
+			end)
+			keyButton.Activated:Connect(function()
+				recordingKey = not recordingKey
+				showKeyButton()
+			end)
+
+			local function describeBind(bind)
+				local command = tostring(bind.COMMAND)
+				if command == "clicktp" then return "Click Teleport", "Hold it, then click where to go" end
+				if command == "clickdel" then return "Click Delete", "Hold it, then click a part to delete" end
+				if bind.TOGGLE then return command, "Then " .. tostring(bind.TOGGLE) .. " on the next press" end
+				return command, bind.ISKEYUP and "Runs when you let go" or "Runs when you press it"
+			end
+			local bindSignature = nil
+			local function refreshBindList(force)
+				local list = type(binds) == "table" and binds or {}
+				local parts = {}
+				for _, bind in ipairs(list) do
+					table.insert(parts, tostring(bind.KEY) .. "|" .. tostring(bind.COMMAND) .. "|" .. tostring(bind.TOGGLE) .. "|" .. tostring(bind.ISKEYUP))
+				end
+				local signature = table.concat(parts, "\n")
+				if signature == bindSignature and not force then return end
+				bindSignature = signature
+				clearList(bindList)
+				for index, bind in ipairs(list) do
+					local text, note = describeBind(bind)
+					makeListRow(bindList, index, keyText(bind.KEY), text, note, {
+						{ "Remove", function() unkeybind(bind.COMMAND, bind.KEY) refreshBindList() end },
+					})
+				end
+				bindList.Visible = #list > 0
+				bindEmpty.Visible = #list == 0
+				keybindCount.Text = #list == 1 and "1 keybind" or (#list .. " keybinds")
+			end
+
+			addBindButton.Activated:Connect(function()
+				if not chosenKey then
+					notify("Keybinds", "Choose a key first: click Choose a key, then press one.")
+					return
+				end
+				local summary
+				if bindAction == "Click Teleport" then
+					addbind("clicktp", chosenKey, false)
+					summary = "click teleport"
+				elseif bindAction == "Click Delete" then
+					addbind("clickdel", chosenKey, false)
+					summary = "click delete"
+				else
+					local command = withoutPrefix(commandBox.Text)
+					local second = withoutPrefix(toggleBox.Text)
+					if command == "" then
+						notify("Keybinds", "Type the command to run first.")
+						return
+					end
+					if command:find("\\\\", 1, true) or second:find("\\\\", 1, true) then
+						notify("Keybinds", "Use one backslash between commands to run several from one key.")
+						return
+					end
+					if bindTrigger == "Toggle" then
+						if second == "" then
+							notify("Keybinds", "Type the command for the next press too, like unfly.")
+							return
+						end
+						addbind(command, chosenKey, false, second)
+						summary = command .. " / " .. second
+					else
+						addbind(command, chosenKey, bindTrigger == "Key up")
+						summary = command
+					end
+				end
+				refreshbinds()
+				updatesaves()
+				notify("Keybinds", keyText(chosenKey) .. " now runs " .. summary)
+				chosenKey = nil
+				commandBox.Text = ""
+				toggleBox.Text = ""
+				repaint()
+				refreshBindList()
+			end)
+			local clearConfirmUntil = 0
+			clearBindsButton.Activated:Connect(function()
+				local count = type(binds) == "table" and #binds or 0
+				if count == 0 then
+					notify("Keybinds", "There are no keybinds to clear.")
+					return
+				end
+				if os.clock() > clearConfirmUntil then
+					clearConfirmUntil = os.clock() + 4
+					notify("Clear all keybinds?", "Click Clear all again to remove " .. (count == 1 and "your keybind" or ("all " .. count .. " keybinds")) .. ".", 4)
+					return
+				end
+				clearConfirmUntil = 0
+				binds = {}
+				refreshbinds()
+				updatesaves()
+				notify("Keybinds", "Removed all keybinds")
+				refreshBindList()
+			end)
+
+			-- Setting a key: the next key press, or a click in the game (clicks on this menu don't
+			-- count, so the box can be clicked again to cancel).
+			if sharedEnv.SpreadCheeksIyKeyCapture then
+				pcall(function() sharedEnv.SpreadCheeksIyKeyCapture:Disconnect() end)
+			end
+			sharedEnv.SpreadCheeksIyKeyCapture = UserInputService.InputBegan:Connect(function(input)
+				if not recordingKey or UserInputService:GetFocusedTextBox() then return end
+				if input.UserInputType == Enum.UserInputType.Keyboard then
+					if input.KeyCode == Enum.KeyCode.Escape then
+						recordingKey = false
+						showKeyButton()
+						return
+					end
+					if input.KeyCode == Enum.KeyCode.Semicolon or isMenuToggleKey(input.KeyCode) then
+						notify("Keybinds", input.KeyCode.Name .. " is already used by this menu, pick another key")
+						return
+					end
+					chosenKey = tostring(input.KeyCode)
+				elseif input.UserInputType == Enum.UserInputType.MouseButton1 and not pointerOverMenu() then
+					chosenKey = "LeftClick"
+				elseif input.UserInputType == Enum.UserInputType.MouseButton2 and not pointerOverMenu() then
+					chosenKey = "RightClick"
+				else
+					return
+				end
+				recordingKey = false
+				showKeyButton()
+			end)
+
+			------------------------------------------------------------------------------------------
+			-- General: the command prefix, and loading again after a teleport.
+			local generalCard = makeCard(root, 2)
+			makeTitleRow(generalCard, "General", "sliders-horizontal", "settings")
+			local prefixRow = makeFrame(generalCard, 1, 34)
+			makeLabel(prefixRow, { text = "Command prefix", size = 13, position = UDim2.fromOffset(0, 0), frameSize = UDim2.new(1, -90, 1, 0) })
+			local prefixBox = makeTextBox(prefixRow, 0, ";")
+			prefixBox.AnchorPoint = Vector2.new(1, 0)
+			prefixBox.Position = UDim2.fromScale(1, 0)
+			prefixBox.Size = UDim2.fromOffset(80, 34)
+			prefixBox.TextXAlignment = Enum.TextXAlignment.Center
+			prefixBox.Text = tostring(prefix or ";")
+			prefixBox.FocusLost:Connect(function()
+				local newPrefix = trimmed(prefixBox.Text)
+				if newPrefix == "" or newPrefix:find("%s") then
+					prefixBox.Text = tostring(prefix or ";")
+					return
+				end
+				if newPrefix == prefix then return end
+				-- Infinite Yield's own prefix box saves it and updates its command bar.
+				local changed = pcall(function() PrefixBox.Text = newPrefix end)
+				if not changed or prefix ~= newPrefix then
+					prefix = newPrefix
+					updatesaves()
+				end
+				notify("Prefix", "Commands in chat and the classic bar now start with " .. newPrefix)
+			end)
+			makeLabel(generalCard, {
+				order = 2, size = 11, role = "SubText", wrap = true,
+				text = "What chat commands start with, like ;fly. The ; key still opens the quick command bar.",
+			})
+			local canKeep = type(queueteleport) == "function"
+			makeSwitch(generalCard, 3, "Load again after a teleport", function()
+				return canKeep and KeepInfYield == true
+			end, function(on)
+				if not canKeep then
+					notify("Keep loaded", "Your executor can't do this (it has no queue_on_teleport).")
+					return
+				end
+				KeepInfYield = on
+				updatesaves()
+			end)
+			makeLabel(generalCard, {
+				order = 4, size = 11, role = "SubText", wrap = true,
+				text = canKeep and "Runs this script again when you join another server or game. It loads 'Infinite Yield - UI polish.txt' from your executor's workspace folder, so keep it there."
+					or "Your executor can't run scripts after a teleport, so this stays off.",
+			})
+
+			------------------------------------------------------------------------------------------
+			-- Aliases: other names for commands.
+			local aliasesCard = makeCard(root, 3)
+			makeTitleRow(aliasesCard, "Aliases", "tag")
+			makeLabel(aliasesCard, {
+				order = 1, size = 12, role = "SubText", wrap = true,
+				text = "Give a command another name: with fly and f, typing f runs fly.",
+			})
+			local aliasList = makeFrame(aliasesCard, 2)
+			addList(aliasList, 6)
+			local aliasEmpty = makeLabel(aliasesCard, { order = 3, size = 12, role = "Muted", text = "No aliases yet." })
+			makeHeading(aliasesCard, 4, "ADD AN ALIAS")
+			local aliasCommandBox = makeTextBox(aliasesCard, 5, "Command, like fly")
+			local aliasNameBox = makeTextBox(aliasesCard, 6, "New name for it, like f")
+			local addAliasButton = makePill(aliasesCard, "Add alias", 7, "Accent", "OnAccent")
+			addAliasButton.Size = UDim2.fromOffset(0, 28)
+			local aliasSignature = nil
+			local function refreshAliasList()
+				local list = type(aliases) == "table" and aliases or {}
+				local parts = {}
+				for _, alias in ipairs(list) do
+					table.insert(parts, tostring(alias.ALIAS) .. "|" .. tostring(alias.CMD))
+				end
+				local signature = table.concat(parts, "\n")
+				if signature == aliasSignature then return end
+				aliasSignature = signature
+				clearList(aliasList)
+				for index, alias in ipairs(list) do
+					local name = tostring(alias.ALIAS)
+					makeListRow(aliasList, index, nil, name .. "  →  " .. tostring(alias.CMD), nil, {
+						{ "Remove", function()
+							execCmd("removealias " .. name, Players.LocalPlayer)
+							task.delay(0.1, refreshAliasList)
+						end },
+					})
+				end
+				aliasList.Visible = #list > 0
+				aliasEmpty.Visible = #list == 0
+			end
+			addAliasButton.Activated:Connect(function()
+				local command = withoutPrefix(aliasCommandBox.Text):lower()
+				local name = withoutPrefix(aliasNameBox.Text):lower()
+				if command == "" or name == "" or command:find("%s") or name:find("%s") then
+					notify("Aliases", "Type a command and a one-word name for it.")
+					return
+				end
+				if not findCmd(command) then
+					notify("Aliases", "There's no command called " .. command .. ".")
+					return
+				end
+				execCmd("addalias " .. command .. " " .. name, Players.LocalPlayer)
+				aliasCommandBox.Text = ""
+				aliasNameBox.Text = ""
+				task.delay(0.1, refreshAliasList)
+			end)
+
+			------------------------------------------------------------------------------------------
+			-- Waypoints: saved spots in this game to teleport back to.
+			local waypointsCard = makeCard(root, 4)
+			makeTitleRow(waypointsCard, "Waypoints", "map-pin")
+			makeLabel(waypointsCard, {
+				order = 1, size = 12, role = "SubText", wrap = true,
+				text = "Save where you're standing and teleport back any time. Waypoints are kept for each game.",
+			})
+			local waypointList = makeFrame(waypointsCard, 2)
+			addList(waypointList, 6)
+			local waypointEmpty = makeLabel(waypointsCard, { order = 3, size = 12, role = "Muted", text = "No waypoints in this game yet." })
+			makeHeading(waypointsCard, 4, "SAVE A WAYPOINT")
+			local waypointNameBox = makeTextBox(waypointsCard, 5, "Name, like base or spawn")
+			local saveWaypointButton = makePill(waypointsCard, "Save where I'm standing", 6, "Accent", "OnAccent")
+			saveWaypointButton.Size = UDim2.fromOffset(0, 28)
+			local markersShown = false
+			makeSwitch(waypointsCard, 7, "Show markers in the world", function() return markersShown end, function(on)
+				markersShown = on
+				execCmd(on and "showwaypoints" or "hidewaypoints", Players.LocalPlayer)
+			end)
+			local waypointSignature = nil
+			local function refreshWaypointList()
+				local list = type(WayPoints) == "table" and WayPoints or {}
+				local parts = {}
+				for _, waypoint in ipairs(list) do
+					table.insert(parts, tostring(waypoint.NAME) .. "|" .. table.concat(waypoint.COORD or {}, ","))
+				end
+				local signature = table.concat(parts, "\n")
+				if signature == waypointSignature then return end
+				waypointSignature = signature
+				clearList(waypointList)
+				for index, waypoint in ipairs(list) do
+					local name = tostring(waypoint.NAME)
+					local coord = waypoint.COORD or {}
+					local where = string.format("%s, %s, %s", tostring(coord[1] or "?"), tostring(coord[2] or "?"), tostring(coord[3] or "?"))
+					makeListRow(waypointList, index, nil, name, where, {
+						{ "Go", function() execCmd("waypoint " .. name, Players.LocalPlayer) end, true },
+						{ "Remove", function()
+							execCmd("deletewaypoint " .. name, Players.LocalPlayer)
+							task.delay(0.1, refreshWaypointList)
+						end },
+					})
+				end
+				waypointList.Visible = #list > 0
+				waypointEmpty.Visible = #list == 0
+			end
+			saveWaypointButton.Activated:Connect(function()
+				local name = trimmed(waypointNameBox.Text)
+				if name == "" then
+					notify("Waypoints", "Type a name for this spot first.")
+					return
+				end
+				execCmd("setwaypoint " .. name, Players.LocalPlayer)
+				waypointNameBox.Text = ""
+				task.delay(0.1, refreshWaypointList)
+			end)
+
+			------------------------------------------------------------------------------------------
+			-- Plugins: extra commands from .iy files in the executor's workspace folder.
+			local pluginsCard = makeCard(root, 5)
+			makeTitleRow(pluginsCard, "Plugins", "puzzle")
+			makeLabel(pluginsCard, {
+				order = 1, size = 12, role = "SubText", wrap = true,
+				text = "Add commands from Infinite Yield plugin files (.iy). Put the file in your executor's workspace folder, then add it by name.",
+			})
+			local pluginList = makeFrame(pluginsCard, 2)
+			addList(pluginList, 6)
+			local pluginEmpty = makeLabel(pluginsCard, { order = 3, size = 12, role = "Muted", text = "No plugins added." })
+			local pluginNameBox = makeTextBox(pluginsCard, 4, "Plugin file name, like myplugin.iy")
+			local addPluginButton = makePill(pluginsCard, "Add plugin", 5, "Accent", "OnAccent")
+			addPluginButton.Size = UDim2.fromOffset(0, 28)
+			local pluginSignature = nil
+			local function refreshPluginList()
+				local list = type(PluginsTable) == "table" and PluginsTable or {}
+				local signature = table.concat(list, "\n")
+				if signature == pluginSignature then return end
+				pluginSignature = signature
+				clearList(pluginList)
+				for index, fileName in ipairs(list) do
+					local pluginName = tostring(fileName)
+					makeListRow(pluginList, index, nil, pluginName, nil, {
+						{ "Remove", function()
+							pcall(deletePlugin, pluginName)
+							task.delay(0.1, refreshPluginList)
+						end },
+					})
+				end
+				pluginList.Visible = #list > 0
+				pluginEmpty.Visible = #list == 0
+			end
+			addPluginButton.Activated:Connect(function()
+				local name = trimmed(pluginNameBox.Text)
+				if name == "" then
+					notify("Plugins", "Type the plugin's file name first.")
+					return
+				end
+				local added, problem = pcall(addPlugin, name)
+				if not added then
+					notify("Plugins", "Couldn't add it: " .. tostring(problem))
+				end
+				pluginNameBox.Text = ""
+				task.delay(0.2, refreshPluginList)
+			end)
+
+			repaint()
+			refreshBindList(true)
+			refreshAliasList()
+			refreshWaypointList()
+			refreshPluginList()
+			-- Changes made with commands (;addalias, ;swp...) show up too, while the tab is open.
+			task.spawn(function()
+				while root.Parent do
+					task.wait(1)
+					if page.Visible then
+						refreshBindList()
+						refreshAliasList()
+						refreshWaypointList()
+						refreshPluginList()
+						if not prefixBox:IsFocused() then
+							prefixBox.Text = tostring(prefix or ";")
+						end
+					end
+				end
+			end)
+		end
+		-- Kept separate so a problem on this page can't stop the rest of the menu loading.
+		local iySettingsOk, iySettingsError = pcall(buildIySettingsPage)
+		if not iySettingsOk then
+			warn("[SpreadCheeksGUI] The IY Settings page couldn't be built: " .. tostring(iySettingsError))
+		end
+
+		-- Configs: your whole setup saved under a name (aimbot, trigger bot, ESP look, speeds, the
+		-- theme, switch keybinds and which switches are on), to load again later, load by itself on
+		-- start, or share as text. Kept in SpreadCheeksGUI_Configs.json.
+		local configsTab = withIcon(window, "CreateTab", { name = "Configs" }, "folder-cog", "folder", "save")
+		local function buildConfigsPage()
+			local configFile = "SpreadCheeksGUI_Configs.json"
+			-- Settings that are about this screen or are really switches, so they're left out of the
+			-- saved settings (switches are saved on their own, below).
+			local notConfigSettings = {
+				performanceStats = true, cheatDetector = true, keybindList = true, radar = true, logsWindow = true, joinAlerts = true,
+				keybindListX = true, keybindListY = true, performanceStatsX = true, performanceStatsY = true,
+				radarX = true, radarY = true, logsWindowX = true, logsWindowY = true, fpsCap = true,
+			}
+			local store = { configs = {}, autoload = "", applySwitches = true }
+			if readfile then
+				local readOk, contents = readfile(configFile, true)
+				if readOk and type(contents) == "string" and contents ~= "" then
+					local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+					if decodeOk and type(data) == "table" then
+						-- Anything in the file that isn't a named config is skipped.
+						for name, config in pairs(type(data.configs) == "table" and data.configs or {}) do
+							if type(name) == "string" and type(config) == "table" then
+								store.configs[name] = config
+							end
+						end
+						if type(data.autoload) == "string" then store.autoload = data.autoload end
+						if type(data.applySwitches) == "boolean" then store.applySwitches = data.applySwitches end
+					end
+				end
+			end
+			local function saveStore()
+				if writefile then
+					writefile(configFile, HttpService:JSONEncode(store), true)
+				end
+			end
+
+			-- Everything a config holds, from how things are set right now.
+			local function captureConfig()
+				local features = {}
+				for key, value in pairs(featureSettings) do
+					-- Lists (the watch list) are copied, so the config doesn't change along with them.
+					if not notConfigSettings[key] then features[key] = type(value) == "table" and table.clone(value) or value end
+				end
+				local esp = {}
+				for key in pairs(espDefaultSettings) do
+					esp[key] = espSettings[key]
+				end
+				local keys, switches = {}, {}
+				for _, entry in ipairs(quickToggles) do
+					if entry.key then keys[entry.name] = entry.key.Name end
+					switches[entry.name] = entry.state == true
+				end
+				switches["Aimbot"] = aimbotState.enabled == true
+				switches["Keybind List"] = featureSettings.keybindList == true
+				return { version = 1, savedAt = os.time(), features = features, esp = esp, keys = keys, switches = switches }
+			end
+
+			-- Puts a config's settings in place, and (withSwitches) turns switches on and off to match.
+			local function applyConfig(config, withSwitches)
+				if type(config) ~= "table" then return false end
+				if type(config.features) == "table" then
+					for key, default in pairs(featureSettings) do
+						local value = config.features[key]
+						if not notConfigSettings[key] and value ~= nil and type(value) == type(default) then
+							featureSettings[key] = type(value) == "table" and table.clone(value) or value
+						end
+					end
+					for key, limits in pairs(featureLimits) do
+						featureSettings[key] = math.clamp(featureSettings[key], limits[1], limits[2])
+					end
+					iyflyspeed = featureSettings.flySpeed
+					vehicleflyspeed = featureSettings.vehicleFlySpeed
+					NAV_KEYBOARD_SPEED = Vector3.new(featureSettings.freecamSpeed, featureSettings.freecamSpeed, featureSettings.freecamSpeed)
+					QEfly = featureSettings.flyUpDownKeys
+					saveFeatureSettings()
+					local palette = paletteNamed(featureSettings.theme)
+					if palette and palette ~= currentPalette then
+						applyTheme(palette)
+						pcall(function() themeDropdown:Set(palette.name, true) end)
+					end
+					if aimbotState.refreshKey then aimbotState.refreshKey() end
+				end
+				if type(config.esp) == "table" then
+					for key, default in pairs(espDefaultSettings) do
+						local value = config.esp[key]
+						if value ~= nil and type(value) == type(default) then espSettings[key] = value end
+					end
+					saveEspSettings()
+				end
+				if type(config.keys) == "table" then
+					stopKeyRecording()
+					for _, entry in ipairs(quickToggles) do
+						local keyName = config.keys[entry.name]
+						local keyOk, keyCode = pcall(function() return Enum.KeyCode[keyName] end)
+						local usable = not entry.noKeybind and type(keyName) == "string" and keyOk and keyCode and not reservedKeys[keyCode]
+						entry.key = usable and keyCode or nil
+						refreshKeyChip(entry)
+					end
+					saveQuickKeybinds()
+				end
+				if withSwitches and type(config.switches) == "table" then
+					for _, entry in ipairs(quickToggles) do
+						local on = config.switches[entry.name] == true
+						if entry.state ~= on then setQuickToggle(entry, on) end
+					end
+					applyAimbot(config.switches["Aimbot"] == true)
+					pcall(function() aimbotToggle:Set(aimbotState.enabled, true) end)
+					showKeybindList(config.switches["Keybind List"] == true)
+					pcall(function() keybindListToggle:Set(featureSettings.keybindList, true) end)
+				end
+				return true
+			end
+
+			local function cleanName(text)
+				local name = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+				return name:sub(1, 32)
+			end
+			local function configNames()
+				local names = {}
+				for name in pairs(store.configs) do table.insert(names, name) end
+				-- Most recently saved first.
+				table.sort(names, function(left, right)
+					local leftTime = tonumber(store.configs[left].savedAt) or 0
+					local rightTime = tonumber(store.configs[right].savedAt) or 0
+					if leftTime ~= rightTime then return leftTime > rightTime end
+					return left:lower() < right:lower()
+				end)
+				return names
+			end
+			local function findConfig(name)
+				name = cleanName(name):lower()
+				for existing in pairs(store.configs) do
+					if existing:lower() == name then return existing end
+				end
+				return nil
+			end
+			local refreshList
+			local api = {}
+			function api.save(name)
+				name = cleanName(name)
+				if name == "" then
+					notify("Configs", "Give the config a name first.")
+					return false
+				end
+				local existing = findConfig(name)
+				if existing then store.configs[existing] = nil end
+				store.configs[name] = captureConfig()
+				saveStore()
+				notify("Configs", (existing and "Updated " or "Saved ") .. name, 3)
+				if refreshList then refreshList() end
+				return true
+			end
+			function api.load(name, quiet)
+				local existing = findConfig(name)
+				if not existing then
+					if not quiet then notify("Configs", "There's no config called " .. cleanName(name) .. ".") end
+					return false
+				end
+				local loaded = applyConfig(store.configs[existing], store.applySwitches)
+				if loaded then notify("Configs", "Loaded " .. existing, 3) end
+				return loaded
+			end
+			function api.names()
+				return configNames()
+			end
+			-- The autoload config goes in once the rest of the menu has finished building.
+			if store.autoload ~= "" then
+				task.defer(function()
+					if store.configs[store.autoload] then
+						api.load(store.autoload, true)
+					end
+				end)
+			end
+
+			------------------------------------------------------------------------------------------
+			-- The page, drawn with our own cards like the other tools.
+			local page = configsTab and configsTab.tabPage
+			if typeof(page) ~= "Instance" then
+				warn("[SpreadCheeksGUI] Couldn't build the Configs page; Rayfield's tab layout may have changed.")
+				return api
+			end
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius or UDim.new(0, 12)
+				corner.Parent = object
+			end
+			local function addList(object, gap, horizontal)
+				local layout = Instance.new("UIListLayout")
+				layout.Padding = UDim.new(0, gap)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				if horizontal then
+					layout.FillDirection = Enum.FillDirection.Horizontal
+					layout.VerticalAlignment = Enum.VerticalAlignment.Center
+				end
+				layout.Parent = object
+				return layout
+			end
+			local function makeFrame(parent, order, height)
+				local frame = Instance.new("Frame")
+				frame.LayoutOrder = order or 0
+				frame.Size = UDim2.new(1, 0, 0, height or 0)
+				if not height then frame.AutomaticSize = Enum.AutomaticSize.Y end
+				frame.BackgroundTransparency = 1
+				frame.Parent = parent
+				return frame
+			end
+			local function makeCard(parent, order)
+				local card = Instance.new("Frame")
+				card.LayoutOrder = order
+				card.Size = UDim2.fromScale(1, 0)
+				card.AutomaticSize = Enum.AutomaticSize.Y
+				card.BorderSizePixel = 0
+				bindAuxiliaryUiColor(card, "BackgroundColor3", "Card")
+				addCorner(card)
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.3
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = card
+				local padding = Instance.new("UIPadding")
+				padding.PaddingTop = UDim.new(0, 14)
+				padding.PaddingBottom = UDim.new(0, 14)
+				padding.PaddingLeft = UDim.new(0, 14)
+				padding.PaddingRight = UDim.new(0, 14)
+				padding.Parent = card
+				addList(card, 10)
+				card.Parent = parent
+				return card
+			end
+			local function makeLabel(parent, options)
+				local label = Instance.new("TextLabel")
+				label.LayoutOrder = options.order or 0
+				label.BackgroundTransparency = 1
+				label.Font = options.font or Enum.Font.Gotham
+				label.TextSize = options.size or 12
+				label.Text = options.text or ""
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.Position = options.position or UDim2.new()
+				label.Size = options.frameSize or UDim2.new(1, 0, 0, (options.size or 12) + 4)
+				if options.wrap then
+					label.Size = UDim2.fromScale(1, 0)
+					label.AutomaticSize = Enum.AutomaticSize.Y
+					label.TextWrapped = true
+					label.TextTruncate = Enum.TextTruncate.None
+				end
+				bindAuxiliaryUiColor(label, "TextColor3", options.role or "Text")
+				label.Parent = parent
+				return label
+			end
+			local function makeIcon(parent, size, role, ...)
+				local icon = menuIcons.get(...)
+				local image = Instance.new("ImageLabel")
+				image.BackgroundTransparency = 1
+				image.Size = UDim2.fromOffset(size, size)
+				image.Visible = icon ~= nil
+				if icon then menuIcons.apply(image, icon) end
+				bindAuxiliaryUiColor(image, "ImageColor3", role)
+				image.Parent = parent
+				return image
+			end
+			-- A small rounded button or tag, as wide as its text, in the given background and text roles.
+			local function makePill(parent, text, order, backgroundRole, textRole, className)
+				local pill = Instance.new(className or "TextButton")
+				pill.LayoutOrder = order or 0
+				pill.AutomaticSize = Enum.AutomaticSize.X
+				pill.Size = UDim2.fromOffset(0, 26)
+				pill.BorderSizePixel = 0
+				pill.Font = Enum.Font.GothamMedium
+				pill.Text = text
+				pill.TextSize = 12
+				if pill:IsA("TextButton") then pill.AutoButtonColor = false end
+				bindAuxiliaryUiColor(pill, "BackgroundColor3", backgroundRole or "Inset")
+				bindAuxiliaryUiColor(pill, "TextColor3", textRole or "SubText")
+				addCorner(pill, UDim.new(0, 7))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 11)
+				padding.PaddingRight = UDim.new(0, 11)
+				padding.Parent = pill
+				pill.Parent = parent
+				return pill
+			end
+			local function makeTitleRow(card, title, ...)
+				local row = makeFrame(card, 0, 24)
+				local icon = makeIcon(row, 16, "AccentText", ...)
+				icon.Position = UDim2.fromOffset(0, 4)
+				makeLabel(row, {
+					text = title, font = Enum.Font.GothamBold, size = 14,
+					position = UDim2.fromOffset(24, 3), frameSize = UDim2.new(1, -150, 0, 18),
+				})
+				return row
+			end
+			local function makeTextBox(parent, order, placeholder)
+				local box = Instance.new("TextBox")
+				box.LayoutOrder = order or 0
+				box.Size = UDim2.new(1, 0, 0, 34)
+				box.BorderSizePixel = 0
+				box.ClearTextOnFocus = false
+				box.Font = Enum.Font.Gotham
+				box.PlaceholderText = placeholder
+				box.Text = ""
+				box.TextSize = 13
+				box.TextXAlignment = Enum.TextXAlignment.Left
+				box.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(box, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(box, "TextColor3", "Text")
+				bindAuxiliaryUiColor(box, "PlaceholderColor3", "Muted")
+				addCorner(box, UDim.new(0, 8))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 10)
+				padding.PaddingRight = UDim.new(0, 10)
+				padding.Parent = box
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.35
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = box
+				box.Focused:Connect(function() stroke.Color = auxiliaryUiTheme.Accent end)
+				box.FocusLost:Connect(function() stroke.Color = auxiliaryUiTheme.Stroke end)
+				box.Parent = parent
+				return box
+			end
+			local function timeAgo(timestamp)
+				local seconds = math.max(0, os.time() - (tonumber(timestamp) or os.time()))
+				if seconds < 60 then return "just now" end
+				if seconds < 3600 then return math.floor(seconds / 60) .. "m ago" end
+				if seconds < 86400 then return math.floor(seconds / 3600) .. "h ago" end
+				return math.floor(seconds / 86400) .. "d ago"
+			end
+			-- Lists here are rebuilt as things change, so their old theme bindings are cleared out.
+			local function pruneDeadThemeBindings()
+				for index = #auxiliaryUiColorBindings, 1, -1 do
+					if not auxiliaryUiColorBindings[index][1].Parent then
+						table.remove(auxiliaryUiColorBindings, index)
+					end
+				end
+			end
+			-- A second click within four seconds confirms something that can't be undone.
+			local confirmUntil = {}
+			local function confirmed(action, message)
+				if (confirmUntil[action] or 0) > os.clock() then
+					confirmUntil[action] = nil
+					return true
+				end
+				confirmUntil[action] = os.clock() + 4
+				notify("Configs", message, 4)
+				return false
+			end
+
+			local root = Instance.new("Frame")
+			root.Name = "Configs"
+			root.LayoutOrder = 1
+			root.Size = UDim2.new(1, -20, 0, 0)
+			root.AutomaticSize = Enum.AutomaticSize.Y
+			root.BackgroundTransparency = 1
+			root.Parent = page
+			addList(root, 8)
+
+			-- Save the current setup.
+			local saveCard = makeCard(root, 1)
+			makeTitleRow(saveCard, "Save a config", "save")
+			makeLabel(saveCard, {
+				order = 1, size = 12, role = "SubText", wrap = true,
+				text = "Saves how everything is set right now: aimbot, trigger bot and ESP settings, speeds, the theme, switch keybinds and which switches are on.",
+			})
+			local nameBox = makeTextBox(saveCard, 2, "Config name, like PvP or Chill")
+			local saveButton = makePill(saveCard, "Save config", 3, "Accent", "OnAccent")
+			saveButton.Size = UDim2.fromOffset(0, 28)
+			saveButton.Activated:Connect(function()
+				local name = cleanName(nameBox.Text)
+				local existing = name ~= "" and findConfig(name)
+				if existing and not confirmed("overwrite:" .. existing:lower(), "Click Save config again to replace " .. existing .. ".") then
+					return
+				end
+				if api.save(name) then nameBox.Text = "" end
+			end)
+
+			-- Saved configs.
+			local listCard = makeCard(root, 2)
+			local listTitle = makeTitleRow(listCard, "Your configs", "folder", "folder-open")
+			local countTag = makePill(listTitle, "", 0, "Inset", "SubText", "TextLabel")
+			countTag.AnchorPoint = Vector2.new(1, 0)
+			countTag.Position = UDim2.fromScale(1, 0)
+			countTag.Size = UDim2.fromOffset(0, 24)
+			local list = makeFrame(listCard, 1)
+			addList(list, 6)
+			local emptyLabel = makeLabel(listCard, { order = 2, size = 12, role = "Muted", text = "No configs yet. Save one above." })
+			-- Whether loading also turns switches on and off to match, a switch for the whole list.
+			local switchesCell = Instance.new("TextButton")
+			switchesCell.LayoutOrder = 3
+			switchesCell.Size = UDim2.new(1, 0, 0, 34)
+			switchesCell.AutoButtonColor = false
+			switchesCell.BorderSizePixel = 0
+			switchesCell.Text = ""
+			bindAuxiliaryUiColor(switchesCell, "BackgroundColor3", "Inset")
+			addCorner(switchesCell, UDim.new(0, 8))
+			switchesCell.Parent = listCard
+			makeLabel(switchesCell, {
+				text = "Loading turns switches on and off to match", size = 13,
+				position = UDim2.fromOffset(12, 0), frameSize = UDim2.new(1, -70, 1, 0),
+			})
+			local track = Instance.new("Frame")
+			track.AnchorPoint = Vector2.new(1, 0.5)
+			track.Position = UDim2.new(1, -10, 0.5, 0)
+			track.Size = UDim2.fromOffset(34, 18)
+			track.BorderSizePixel = 0
+			addCorner(track, UDim.new(1, 0))
+			track.Parent = switchesCell
+			local trackStroke = Instance.new("UIStroke")
+			trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			trackStroke.Parent = track
+			local knob = Instance.new("Frame")
+			knob.AnchorPoint = Vector2.new(0, 0.5)
+			knob.Size = UDim2.fromOffset(14, 14)
+			knob.BorderSizePixel = 0
+			addCorner(knob, UDim.new(1, 0))
+			knob.Parent = track
+			local function showSwitch()
+				local theme = auxiliaryUiTheme
+				local on = store.applySwitches
+				track.BackgroundColor3 = on and theme.Accent or theme.Card
+				trackStroke.Color = on and theme.Accent or theme.Stroke
+				knob.BackgroundColor3 = on and Color3.new(1, 1, 1) or theme.SubText
+				knob.Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+			end
+			switchesCell.Activated:Connect(function()
+				store.applySwitches = not store.applySwitches
+				saveStore()
+				showSwitch()
+			end)
+			table.insert(auxiliaryUiThemeListeners, showSwitch)
+			makeLabel(listCard, {
+				order = 4, size = 11, role = "SubText", wrap = true,
+				text = "Autoload loads that config by itself each time the script starts. Copy puts a config on your clipboard to share; paste it under Import.",
+			})
+
+			refreshList = function()
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				pruneDeadThemeBindings()
+				local names = configNames()
+				list.Visible = #names > 0
+				emptyLabel.Visible = #names == 0
+				countTag.Text = #names == 1 and "1 config" or (#names .. " configs")
+				for index, name in ipairs(names) do
+					local config = store.configs[name]
+					local isAutoload = store.autoload == name
+					local row = Instance.new("Frame")
+					row.LayoutOrder = index
+					row.Size = UDim2.new(1, 0, 0, 42)
+					row.BorderSizePixel = 0
+					bindAuxiliaryUiColor(row, "BackgroundColor3", "Inset")
+					addCorner(row, UDim.new(0, 8))
+					row.Parent = list
+					local buttons = Instance.new("Frame")
+					buttons.AnchorPoint = Vector2.new(1, 0.5)
+					buttons.Position = UDim2.new(1, -6, 0.5, 0)
+					buttons.Size = UDim2.fromOffset(0, 26)
+					buttons.AutomaticSize = Enum.AutomaticSize.X
+					buttons.BackgroundTransparency = 1
+					buttons.Parent = row
+					addList(buttons, 4, true)
+					local loadButton = makePill(buttons, "Load", 1, "Accent", "OnAccent")
+					loadButton.Activated:Connect(function() api.load(name) end)
+					local autoloadButton = makePill(buttons, isAutoload and "Autoloads" or "Autoload", 2, isAutoload and "SelectedCard" or "Card", isAutoload and "AccentText" or "SubText")
+					autoloadButton.Activated:Connect(function()
+						store.autoload = isAutoload and "" or name
+						saveStore()
+						notify("Configs", isAutoload and ("Nothing loads on start now") or (name .. " will load each time the script starts"), 3)
+						refreshList()
+					end)
+					local copyButton = makePill(buttons, "Copy", 3, "Card", "SubText")
+					copyButton.Activated:Connect(function()
+						local encodeOk, text = pcall(function()
+							return HttpService:JSONEncode({ spreadCheeksConfig = 1, name = name, config = store.configs[name] })
+						end)
+						if encodeOk then toClipboard(text) end
+					end)
+					local deleteButton = makePill(buttons, "Delete", 4, "Card", "SubText")
+					deleteButton.Activated:Connect(function()
+						if not confirmed("delete:" .. name:lower(), "Click Delete again to delete " .. name .. ".") then return end
+						store.configs[name] = nil
+						if store.autoload == name then store.autoload = "" end
+						saveStore()
+						notify("Configs", "Deleted " .. name, 3)
+						refreshList()
+					end)
+					-- The buttons take about 260px together; the name and note get the rest.
+					makeLabel(row, {
+						text = name, font = Enum.Font.GothamMedium, size = 13,
+						position = UDim2.fromOffset(12, 5), frameSize = UDim2.new(1, -280, 0, 17),
+					})
+					local switchesOn = 0
+					for _, on in pairs(type(config.switches) == "table" and config.switches or {}) do
+						if on == true then switchesOn += 1 end
+					end
+					local theme = type(config.features) == "table" and config.features.theme or nil
+					makeLabel(row, {
+						text = "Saved " .. timeAgo(config.savedAt) .. "  ·  " .. switchesOn .. (switchesOn == 1 and " switch on" or " switches on")
+							.. (theme and ("  ·  " .. tostring(theme)) or "") .. (isAutoload and "  ·  loads on start" or ""),
+						size = 10, role = isAutoload and "AccentText" or "Muted",
+						position = UDim2.fromOffset(12, 23), frameSize = UDim2.new(1, -280, 0, 13),
+					})
+				end
+			end
+
+			-- Import a config someone shared.
+			local importCard = makeCard(root, 3)
+			makeTitleRow(importCard, "Import", "clipboard-paste", "download")
+			makeLabel(importCard, {
+				order = 1, size = 12, role = "SubText", wrap = true,
+				text = "Paste a config copied with Copy, give it a name if you like, then import it.",
+			})
+			local importBox = makeTextBox(importCard, 2, "Paste the config here (Ctrl+V)")
+			local importNameBox = makeTextBox(importCard, 3, "Name (optional)")
+			local importButton = makePill(importCard, "Import config", 4, "Accent", "OnAccent")
+			importButton.Size = UDim2.fromOffset(0, 28)
+			importButton.Activated:Connect(function()
+				local decodeOk, data = pcall(function() return HttpService:JSONDecode(importBox.Text) end)
+				local config = decodeOk and type(data) == "table" and (type(data.config) == "table" and data.config or data) or nil
+				if not config or (type(config.features) ~= "table" and type(config.esp) ~= "table") then
+					notify("Configs", "That doesn't look like a config. Copy it again with the Copy button.")
+					return
+				end
+				local name = cleanName(importNameBox.Text)
+				if name == "" then name = cleanName(type(data.name) == "string" and data.name or "Imported") end
+				if name == "" then name = "Imported" end
+				-- Never replaces a config you have: picks a free name instead.
+				local baseName, number = name, 2
+				while findConfig(name) do
+					name = cleanName(baseName .. " " .. number)
+					number += 1
+				end
+				config.savedAt = os.time()
+				store.configs[name] = config
+				saveStore()
+				importBox.Text = ""
+				importNameBox.Text = ""
+				notify("Configs", "Imported " .. name .. ". Press Load to use it.", 4)
+				refreshList()
+			end)
+
+			showSwitch()
+			refreshList()
+			-- Keeps the "saved ... ago" notes current while the tab is open.
+			task.spawn(function()
+				while root.Parent do
+					task.wait(30)
+					if page.Visible then refreshList() end
+				end
+			end)
+			return api
+		end
+		-- Kept separate so a problem here can't stop the rest of the menu loading.
+		local configsOk, configsApi = pcall(buildConfigsPage)
+		if not configsOk then
+			warn("[SpreadCheeksGUI] The Configs page couldn't be built: " .. tostring(configsApi))
+			configsApi = nil
+		end
+
 		window:CreateSection({ name = "ADMIN COMMANDS" })
 		for _, category in ipairs(categories) do
 			local categoryCommands = commandsByCategory[category.name]
@@ -20387,6 +21896,1552 @@ if rayfieldLoaded and Rayfield then
 					}, menuIcons.forCommand(commandName, category.icon))
 				end
 			end
+		end
+
+		-- Runs one part of the menu's setup, so a problem in it can't stop the rest from loading.
+		local function safeBuild(label, build)
+			local built, problem = pcall(build)
+			if not built then
+				warn("[SpreadCheeksGUI] " .. label .. " couldn't be added: " .. tostring(problem))
+			end
+		end
+
+		-- A small window of its own on screen, like the keybind list and Performance Stats: a header
+		-- with an icon, title and room on the right for buttons, a body below, dragged by its header
+		-- to anywhere, its spot remembered (as a share of the screen, in featureSettings[xKey/yKey]),
+		-- fading in and out. The caller fills body and calls setShown.
+		function menuModules.makeWindow(options)
+			local playerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui") or Players.LocalPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild(options.name)
+			if previousGui then previousGui:Destroy() end
+			-- Kept in the shared environment so running the script again drops the old listeners.
+			local sharedKey = options.name .. "Connections"
+			if sharedEnv[sharedKey] then
+				for _, connection in ipairs(sharedEnv[sharedKey]) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			local connections = {}
+			sharedEnv[sharedKey] = connections
+
+			local headerHeight = 36
+			local size = Vector2.new(options.width, options.height)
+			local gui = Instance.new("ScreenGui")
+			gui.Name = options.name
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			-- Level with the keybind list: under the ; bar (1000) and the notifications (10001).
+			gui.DisplayOrder = 999
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.Enabled = false
+			gui.Parent = playerGui
+			local panel = Instance.new("Frame")
+			panel.Name = "Window"
+			panel.Active = true
+			panel.BackgroundTransparency = 0.04
+			panel.BorderSizePixel = 0
+			panel.ClipsDescendants = true
+			panel.Size = UDim2.fromOffset(size.X, size.Y)
+			bindAuxiliaryUiColor(panel, "BackgroundColor3", "Background")
+			panel.Parent = gui
+			local panelCorner = Instance.new("UICorner")
+			panelCorner.CornerRadius = UDim.new(0, 12)
+			panelCorner.Parent = panel
+			local panelStroke = Instance.new("UIStroke")
+			panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			panelStroke.Transparency = 0.3
+			bindAuxiliaryUiColor(panelStroke, "Color", "Stroke")
+			panelStroke.Parent = panel
+
+			-- The header is the handle the window is dragged by.
+			local handle = Instance.new("TextButton")
+			handle.Name = "DragHandle"
+			handle.Size = UDim2.new(1, 0, 0, headerHeight)
+			handle.AutoButtonColor = false
+			handle.BackgroundTransparency = 1
+			handle.Text = ""
+			handle.Parent = panel
+			local icon = Instance.new("ImageLabel")
+			icon.AnchorPoint = Vector2.new(0, 0.5)
+			icon.Position = UDim2.new(0, 12, 0, headerHeight / 2)
+			icon.Size = UDim2.fromOffset(15, 15)
+			icon.BackgroundTransparency = 1
+			local iconImage = menuIcons.get(table.unpack(options.icons or {}))
+			if iconImage then menuIcons.apply(icon, iconImage) end
+			icon.Visible = iconImage ~= nil
+			bindAuxiliaryUiColor(icon, "ImageColor3", "AccentText")
+			icon.Parent = panel
+			local title = Instance.new("TextLabel")
+			title.AnchorPoint = Vector2.new(0, 0.5)
+			title.Position = UDim2.new(0, 35, 0, headerHeight / 2)
+			title.Size = UDim2.new(0.5, -35, 0, 16)
+			title.BackgroundTransparency = 1
+			title.Font = Enum.Font.GothamBold
+			title.Text = options.title
+			title.TextSize = 13
+			title.TextXAlignment = Enum.TextXAlignment.Left
+			title.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(title, "TextColor3", "Text")
+			title.Parent = panel
+			local headerRight = Instance.new("Frame")
+			headerRight.AnchorPoint = Vector2.new(1, 0.5)
+			headerRight.Position = UDim2.new(1, -8, 0, headerHeight / 2)
+			headerRight.Size = UDim2.fromOffset(0, 24)
+			headerRight.AutomaticSize = Enum.AutomaticSize.X
+			headerRight.BackgroundTransparency = 1
+			headerRight.ZIndex = 2
+			headerRight.Parent = panel
+			local headerRightLayout = Instance.new("UIListLayout")
+			headerRightLayout.FillDirection = Enum.FillDirection.Horizontal
+			headerRightLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+			headerRightLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+			headerRightLayout.Padding = UDim.new(0, 4)
+			headerRightLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			headerRightLayout.Parent = headerRight
+			local body = Instance.new("Frame")
+			body.Name = "Body"
+			body.Position = UDim2.fromOffset(0, headerHeight)
+			body.Size = UDim2.new(1, 0, 1, -headerHeight)
+			body.BackgroundTransparency = 1
+			body.Parent = panel
+
+			local shown, ready, wantShown = false, false, false
+			local dragInput, dragFrom, panelFrom = nil, nil, nil
+			local function screenSize()
+				local camera = workspace.CurrentCamera
+				return camera and camera.ViewportSize or gui.AbsoluteSize
+			end
+			local function clampToScreen(x, y)
+				local screen = screenSize()
+				x = math.clamp(x, 0, math.max(0, screen.X - size.X))
+				y = math.clamp(y, 0, math.max(0, screen.Y - size.Y))
+				return UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+			end
+			local function placePanel()
+				local screen = screenSize()
+				local savedX, savedY = featureSettings[options.xKey], featureSettings[options.yKey]
+				if savedX >= 0 and savedY >= 0 then
+					panel.Position = clampToScreen(savedX * screen.X, savedY * screen.Y)
+				else
+					local x, y = options.defaultPosition(screen, size)
+					panel.Position = clampToScreen(x, y)
+				end
+			end
+			handle.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					dragInput = input
+					dragFrom = Vector2.new(input.Position.X, input.Position.Y)
+					panelFrom = Vector2.new(panel.Position.X.Offset, panel.Position.Y.Offset)
+					panelStroke.Color = auxiliaryUiTheme.Accent
+				end
+			end)
+			table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+				if dragInput and (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then
+					panel.Position = clampToScreen(panelFrom.X + input.Position.X - dragFrom.X, panelFrom.Y + input.Position.Y - dragFrom.Y)
+				end
+			end))
+			table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+				if dragInput and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+					dragInput = nil
+					panelStroke.Color = auxiliaryUiTheme.Stroke
+					local screen = screenSize()
+					featureSettings[options.xKey] = panel.Position.X.Offset / math.max(screen.X, 1)
+					featureSettings[options.yKey] = panel.Position.Y.Offset / math.max(screen.Y, 1)
+					saveFeatureSettings()
+				end
+			end))
+
+			-- Fading: each part goes fully see-through and back to the transparency it was made with,
+			-- recorded the first time it's seen (always at rest).
+			local resting = setmetatable({}, { __mode = "k" })
+			local fadeProperties = {
+				{ "GuiObject", "BackgroundTransparency" },
+				{ "TextLabel", "TextTransparency" },
+				{ "TextButton", "TextTransparency" },
+				{ "TextBox", "TextTransparency" },
+				{ "ImageLabel", "ImageTransparency" },
+				{ "UIStroke", "Transparency" },
+			}
+			local function fadeParts()
+				local parts = {}
+				local function visit(object)
+					local record = resting[object]
+					if not record then
+						record = {}
+						for _, entry in ipairs(fadeProperties) do
+							if object:IsA(entry[1]) then record[entry[2]] = object[entry[2]] end
+						end
+						resting[object] = record
+					end
+					for property, value in pairs(record) do
+						if value < 1 then table.insert(parts, { object, property, value }) end
+					end
+				end
+				visit(panel)
+				for _, descendant in ipairs(panel:GetDescendants()) do visit(descendant) end
+				return parts
+			end
+			local windowApi = { gui = gui, panel = panel, body = body, headerRight = headerRight, connections = connections }
+			local fadeSerial = 0
+			local function applyShown()
+				local visible = wantShown and ready
+				if visible == shown then return end
+				fadeSerial += 1
+				local serial = fadeSerial
+				if visible then
+					if windowApi.onShown then pcall(windowApi.onShown) end
+					shown = true
+					placePanel()
+					local parts = fadeParts()
+					for _, part in ipairs(parts) do part[1][part[2]] = 1 end
+					gui.Enabled = true
+					local info = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+					for _, part in ipairs(parts) do
+						TweenService:Create(part[1], info, { [part[2]] = part[3] }):Play()
+					end
+				else
+					shown = false
+					dragInput = nil
+					local info = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+					for _, part in ipairs(fadeParts()) do
+						TweenService:Create(part[1], info, { [part[2]] = 1 }):Play()
+					end
+					-- Switched off once faded, so the hidden window can't be clicked.
+					task.delay(0.2, function()
+						if fadeSerial == serial then gui.Enabled = false end
+					end)
+				end
+			end
+			function windowApi.setShown(on)
+				wantShown = on == true
+				applyShown()
+			end
+			function windowApi.isShown()
+				return shown
+			end
+			-- Stays on screen when the screen changes size.
+			local lastScreen = nil
+			table.insert(connections, RunService.Heartbeat:Connect(function()
+				if not shown or dragInput then return end
+				local screen = screenSize()
+				if screen ~= lastScreen then
+					lastScreen = screen
+					placePanel()
+				end
+			end))
+			-- Appears as the menu finishes opening, along with everything in it.
+			task.spawn(function()
+				local waited = 0
+				while not windowOpenedAt and waited < 15 do
+					waited += task.wait(0.1)
+				end
+				task.wait(math.max(0, (windowOpenedAt or os.clock()) + 1.45 - os.clock()))
+				ready = true
+				applyShown()
+			end)
+			return windowApi
+		end
+
+		-- Turns colours into RichText's #RRGGBB, and makes text safe to put inside RichText.
+		function menuModules.hex(color)
+			return string.format("#%02X%02X%02X", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+		end
+		function menuModules.escape(text)
+			return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+		end
+
+		------------------------------------------------------------------------------------------
+		-- Logs: a window with three lists. Chat is everything said in the server since the script
+		-- started, Joins is who came and went, and Alerts is the menu's recent notifications. Each
+		-- list keeps its last 200 lines (Alerts its last 100) and can be searched.
+		safeBuild("The Logs window", function()
+			local logWindow = menuModules.makeWindow({
+				name = "SpreadCheeksLogs", title = "Logs", icons = { "scroll-text", "message-square" },
+				width = 340, height = 330, xKey = "logsWindowX", yKey = "logsWindowY",
+				-- Bottom left, above Roblox's chat bar.
+				defaultPosition = function(screen, size) return 16, screen.Y - size.Y - 110 end,
+			})
+			local body = logWindow.body
+			local logs = { Chat = {}, Joins = {} }
+			local currentTab, query = "Chat", ""
+
+			-- Tabs in the header.
+			local tabPills = {}
+			for index, tabName in ipairs({ "Chat", "Joins", "Alerts" }) do
+				local pill = Instance.new("TextButton")
+				pill.LayoutOrder = index
+				pill.AutomaticSize = Enum.AutomaticSize.X
+				pill.Size = UDim2.fromOffset(0, 22)
+				pill.AutoButtonColor = false
+				pill.BorderSizePixel = 0
+				pill.Font = Enum.Font.GothamMedium
+				pill.Text = tabName
+				pill.TextSize = 11
+				pill.ZIndex = 3
+				local pillCorner = Instance.new("UICorner")
+				pillCorner.CornerRadius = UDim.new(0, 7)
+				pillCorner.Parent = pill
+				local pillPadding = Instance.new("UIPadding")
+				pillPadding.PaddingLeft = UDim.new(0, 9)
+				pillPadding.PaddingRight = UDim.new(0, 9)
+				pillPadding.Parent = pill
+				pill.Parent = logWindow.headerRight
+				tabPills[tabName] = pill
+			end
+
+			-- Search, Clear, and the list.
+			local search = Instance.new("TextBox")
+			search.Position = UDim2.fromOffset(10, 2)
+			search.Size = UDim2.new(1, -78, 0, 28)
+			search.BorderSizePixel = 0
+			search.ClearTextOnFocus = false
+			search.Font = Enum.Font.Gotham
+			search.PlaceholderText = "Search"
+			search.Text = ""
+			search.TextSize = 12
+			search.TextXAlignment = Enum.TextXAlignment.Left
+			bindAuxiliaryUiColor(search, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(search, "TextColor3", "Text")
+			bindAuxiliaryUiColor(search, "PlaceholderColor3", "Muted")
+			local searchCorner = Instance.new("UICorner")
+			searchCorner.CornerRadius = UDim.new(0, 8)
+			searchCorner.Parent = search
+			local searchPadding = Instance.new("UIPadding")
+			searchPadding.PaddingLeft = UDim.new(0, 10)
+			searchPadding.PaddingRight = UDim.new(0, 10)
+			searchPadding.Parent = search
+			search.Parent = body
+			local clear = Instance.new("TextButton")
+			clear.AnchorPoint = Vector2.new(1, 0)
+			clear.Position = UDim2.new(1, -10, 0, 2)
+			clear.Size = UDim2.fromOffset(60, 28)
+			clear.AutoButtonColor = false
+			clear.BorderSizePixel = 0
+			clear.Font = Enum.Font.GothamMedium
+			clear.Text = "Clear"
+			clear.TextSize = 12
+			bindAuxiliaryUiColor(clear, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(clear, "TextColor3", "SubText")
+			local clearCorner = Instance.new("UICorner")
+			clearCorner.CornerRadius = UDim.new(0, 8)
+			clearCorner.Parent = clear
+			clear.Parent = body
+			local list = Instance.new("ScrollingFrame")
+			list.Position = UDim2.fromOffset(6, 38)
+			list.Size = UDim2.new(1, -12, 1, -44)
+			list.BackgroundTransparency = 1
+			list.BorderSizePixel = 0
+			list.ScrollBarThickness = 3
+			list.ScrollingDirection = Enum.ScrollingDirection.Y
+			list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			list.CanvasSize = UDim2.new()
+			bindAuxiliaryUiColor(list, "ScrollBarImageColor3", "Muted")
+			list.Parent = body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 3)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 4)
+			listPadding.PaddingRight = UDim.new(0, 8)
+			listPadding.Parent = list
+			local emptyLabel = Instance.new("TextLabel")
+			emptyLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+			emptyLabel.Position = UDim2.new(0.5, 0, 0.5, 18)
+			emptyLabel.Size = UDim2.new(1, -40, 0, 32)
+			emptyLabel.BackgroundTransparency = 1
+			emptyLabel.Font = Enum.Font.Gotham
+			emptyLabel.TextSize = 12
+			emptyLabel.TextWrapped = true
+			bindAuxiliaryUiColor(emptyLabel, "TextColor3", "Muted")
+			emptyLabel.Parent = body
+
+			local function entriesFor(tabName)
+				return tabName == "Alerts" and menuModules.notificationLog or logs[tabName]
+			end
+			-- One line, as RichText: the time, who (or what), and the text.
+			local function lineText(tabName, entry)
+				local theme = auxiliaryUiTheme
+				local hex, escape = menuModules.hex, menuModules.escape
+				local clock = os.date("*t", entry.at)
+				local time = '<font color="' .. hex(theme.Muted) .. '">' .. string.format("%02d:%02d", clock.hour, clock.min) .. "</font>  "
+				if tabName == "Chat" then
+					return time .. '<b><font color="' .. hex(theme.AccentText) .. '">' .. escape(entry.name) .. "</font></b>  " .. escape(entry.text)
+				elseif tabName == "Joins" then
+					local verb = entry.joined and ('<font color="' .. hex(theme.Good) .. '">joined</font>') or ('<font color="' .. hex(theme.Bad) .. '">left</font>')
+					return time .. "<b>" .. escape(entry.name) .. "</b> " .. verb .. '  <font color="' .. hex(theme.Muted) .. '">@' .. escape(entry.user) .. "</font>"
+				end
+				return time .. "<b>" .. escape(entry.title) .. "</b>  " .. escape(entry.message)
+			end
+			local function matches(tabName, entry)
+				if query == "" then return true end
+				local haystack = tabName == "Alerts" and (entry.title .. " " .. entry.message) or (entry.name .. " " .. (entry.user or "") .. " " .. (entry.text or ""))
+				return haystack:lower():find(query, 1, true) ~= nil
+			end
+			local lineCount = 0
+			local function addLine(tabName, entry)
+				lineCount += 1
+				local line = Instance.new("TextLabel")
+				line.LayoutOrder = lineCount
+				line.Size = UDim2.fromScale(1, 0)
+				line.AutomaticSize = Enum.AutomaticSize.Y
+				line.BackgroundTransparency = 1
+				line.Font = Enum.Font.Gotham
+				line.RichText = true
+				line.Text = lineText(tabName, entry)
+				line.TextSize = 12
+				line.TextWrapped = true
+				line.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(line, "TextColor3", "Text")
+				line.Parent = list
+				return line
+			end
+			local function scrollToEnd()
+				task.defer(function()
+					list.CanvasPosition = Vector2.new(0, math.max(0, list.AbsoluteCanvasSize.Y - list.AbsoluteWindowSize.Y))
+				end)
+			end
+			local function pruneDeadThemeBindings()
+				for index = #auxiliaryUiColorBindings, 1, -1 do
+					if not auxiliaryUiColorBindings[index][1].Parent then
+						table.remove(auxiliaryUiColorBindings, index)
+					end
+				end
+			end
+			local function render()
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("TextLabel") then child:Destroy() end
+				end
+				pruneDeadThemeBindings()
+				local shownCount = 0
+				for _, entry in ipairs(entriesFor(currentTab)) do
+					if matches(currentTab, entry) then
+						addLine(currentTab, entry)
+						shownCount += 1
+					end
+				end
+				local emptyText = { Chat = "No chat yet.", Joins = "No one has joined or left yet.", Alerts = "No notifications yet." }
+				emptyLabel.Text = query ~= "" and "Nothing matches your search." or emptyText[currentTab]
+				emptyLabel.Visible = shownCount == 0
+				scrollToEnd()
+			end
+			local function paintTabs()
+				local theme = auxiliaryUiTheme
+				for tabName, pill in pairs(tabPills) do
+					local selected = tabName == currentTab
+					pill.BackgroundColor3 = selected and theme.Accent or theme.Inset
+					pill.TextColor3 = selected and theme.OnAccent or theme.SubText
+				end
+			end
+			for tabName, pill in pairs(tabPills) do
+				pill.Activated:Connect(function()
+					currentTab = tabName
+					paintTabs()
+					render()
+				end)
+			end
+			search:GetPropertyChangedSignal("Text"):Connect(function()
+				query = search.Text:lower()
+				render()
+			end)
+			clear.Activated:Connect(function()
+				table.clear(entriesFor(currentTab))
+				render()
+			end)
+			-- Colours are written into each line, so lines are redrawn after a theme change.
+			table.insert(auxiliaryUiThemeListeners, function()
+				paintTabs()
+				if logWindow.isShown() then render() end
+			end)
+			logWindow.onShown = render
+
+			-- A new line for one of the lists: added to the end when that list is showing, and the
+			-- oldest dropped once there are more than 200.
+			local function push(tabName, entry)
+				local entries = logs[tabName]
+				table.insert(entries, entry)
+				if #entries > 200 then table.remove(entries, 1) end
+				if not logWindow.isShown() or currentTab ~= tabName or not matches(tabName, entry) then return end
+				local nearEnd = list.CanvasPosition.Y >= list.AbsoluteCanvasSize.Y - list.AbsoluteWindowSize.Y - 40
+				addLine(tabName, entry)
+				emptyLabel.Visible = false
+				local lines = {}
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("TextLabel") then table.insert(lines, child) end
+				end
+				if #lines > 200 then
+					table.sort(lines, function(left, right) return left.LayoutOrder < right.LayoutOrder end)
+					lines[1]:Destroy()
+				end
+				-- Follows new lines, unless you've scrolled up to read something.
+				if nearEnd then scrollToEnd() end
+			end
+			menuModules.onNotification = function()
+				if logWindow.isShown() and currentTab == "Alerts" then render() end
+			end
+
+			-- Chat, from Roblox's newer chat or the legacy one, whichever the game uses.
+			local function addChat(player, text)
+				if not player or type(text) ~= "string" or text == "" then return end
+				push("Chat", { at = os.time(), name = player.DisplayName, user = player.Name, text = text })
+			end
+			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				table.insert(logWindow.connections, TextChatService.MessageReceived:Connect(function(message)
+					local source = message.TextSource
+					if source then
+						addChat(Players:GetPlayerByUserId(source.UserId), message.Text)
+					end
+				end))
+			else
+				local function listenTo(player)
+					table.insert(logWindow.connections, player.Chatted:Connect(function(text)
+						addChat(player, text)
+					end))
+				end
+				for _, player in ipairs(Players:GetPlayers()) do listenTo(player) end
+				table.insert(logWindow.connections, Players.PlayerAdded:Connect(listenTo))
+			end
+			table.insert(logWindow.connections, Players.PlayerAdded:Connect(function(player)
+				push("Joins", { at = os.time(), name = player.DisplayName, user = player.Name, joined = true })
+			end))
+			table.insert(logWindow.connections, Players.PlayerRemoving:Connect(function(player)
+				push("Joins", { at = os.time(), name = player.DisplayName, user = player.Name, joined = false })
+			end))
+
+			paintTabs()
+			menuModules.logs = { setShown = logWindow.setShown }
+			if featureSettings.logsWindow and quickToggleByName["Logs"] then
+				setQuickToggle(quickToggleByName["Logs"], true)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Radar: a round minimap of players around you. You're in the middle and the top is the way
+		-- the camera faces; players further than its range sit on the edge, faded. Right-click its
+		-- switch for the range and names.
+		safeBuild("The radar", function()
+			local radarWindow = menuModules.makeWindow({
+				name = "SpreadCheeksRadar", title = "Radar", icons = { "radar", "map" },
+				width = 204, height = 240, xKey = "radarX", yKey = "radarY",
+				-- Bottom right, clear of the keybind list and Performance Stats.
+				defaultPosition = function(screen, size) return screen.X - size.X - 16, screen.Y - size.Y - 110 end,
+			})
+			local body = radarWindow.body
+			local rangeLabel = Instance.new("TextLabel")
+			rangeLabel.AutomaticSize = Enum.AutomaticSize.X
+			rangeLabel.Size = UDim2.fromOffset(0, 20)
+			rangeLabel.BackgroundTransparency = 1
+			rangeLabel.Font = Enum.Font.GothamMedium
+			rangeLabel.TextSize = 11
+			bindAuxiliaryUiColor(rangeLabel, "TextColor3", "SubText")
+			rangeLabel.Parent = radarWindow.headerRight
+
+			local mapSize = 188
+			local map = Instance.new("Frame")
+			map.AnchorPoint = Vector2.new(0.5, 0)
+			map.Position = UDim2.new(0.5, 0, 0, 2)
+			map.Size = UDim2.fromOffset(mapSize, mapSize)
+			map.BorderSizePixel = 0
+			bindAuxiliaryUiColor(map, "BackgroundColor3", "Inset")
+			map.Parent = body
+			local mapCorner = Instance.new("UICorner")
+			mapCorner.CornerRadius = UDim.new(1, 0)
+			mapCorner.Parent = map
+			local mapStroke = Instance.new("UIStroke")
+			mapStroke.Transparency = 0.4
+			bindAuxiliaryUiColor(mapStroke, "Color", "Stroke")
+			mapStroke.Parent = map
+			-- A ring at half the range, and lines through the middle.
+			local ring = Instance.new("Frame")
+			ring.AnchorPoint = Vector2.new(0.5, 0.5)
+			ring.Position = UDim2.fromScale(0.5, 0.5)
+			ring.Size = UDim2.fromOffset(mapSize / 2, mapSize / 2)
+			ring.BackgroundTransparency = 1
+			ring.Parent = map
+			local ringCorner = Instance.new("UICorner")
+			ringCorner.CornerRadius = UDim.new(1, 0)
+			ringCorner.Parent = ring
+			local ringStroke = Instance.new("UIStroke")
+			ringStroke.Transparency = 0.55
+			bindAuxiliaryUiColor(ringStroke, "Color", "Stroke")
+			ringStroke.Parent = ring
+			for _, vertical in ipairs({ true, false }) do
+				local line = Instance.new("Frame")
+				line.AnchorPoint = Vector2.new(0.5, 0.5)
+				line.Position = UDim2.fromScale(0.5, 0.5)
+				line.Size = vertical and UDim2.new(0, 1, 1, -12) or UDim2.new(1, -12, 0, 1)
+				line.BackgroundTransparency = 0.6
+				line.BorderSizePixel = 0
+				bindAuxiliaryUiColor(line, "BackgroundColor3", "Stroke")
+				line.Parent = map
+			end
+			-- You: an arrow pointing the way the camera faces.
+			local you = Instance.new("ImageLabel")
+			you.AnchorPoint = Vector2.new(0.5, 0.5)
+			you.Position = UDim2.fromScale(0.5, 0.5)
+			you.Size = UDim2.fromOffset(14, 14)
+			you.BackgroundTransparency = 1
+			-- Rayfield's dropdown arrow, which points up.
+			you.Image = "rbxassetid://88479147175134"
+			you.ZIndex = 3
+			bindAuxiliaryUiColor(you, "ImageColor3", "AccentText")
+			you.Parent = map
+
+			-- A dot (and name) for each other player, reused while they're in the server.
+			local markers = {}
+			local function markerFor(player)
+				local marker = markers[player]
+				if marker then return marker end
+				local dot = Instance.new("Frame")
+				dot.AnchorPoint = Vector2.new(0.5, 0.5)
+				dot.Size = UDim2.fromOffset(8, 8)
+				dot.BorderSizePixel = 0
+				dot.ZIndex = 2
+				dot.Parent = map
+				local dotCorner = Instance.new("UICorner")
+				dotCorner.CornerRadius = UDim.new(1, 0)
+				dotCorner.Parent = dot
+				local dotStroke = Instance.new("UIStroke")
+				dotStroke.Color = Color3.new(0, 0, 0)
+				dotStroke.Transparency = 0.5
+				dotStroke.Parent = dot
+				local name = Instance.new("TextLabel")
+				name.AnchorPoint = Vector2.new(0.5, 0)
+				name.Position = UDim2.new(0.5, 0, 1, 1)
+				name.Size = UDim2.fromOffset(80, 11)
+				name.BackgroundTransparency = 1
+				name.Font = Enum.Font.GothamMedium
+				name.Text = player.DisplayName
+				name.TextSize = 9
+				name.TextStrokeTransparency = 0.5
+				name.TextTruncate = Enum.TextTruncate.AtEnd
+				name.ZIndex = 2
+				bindAuxiliaryUiColor(name, "TextColor3", "Text")
+				name.Parent = dot
+				marker = { dot = dot, name = name }
+				markers[player] = marker
+				return marker
+			end
+			table.insert(radarWindow.connections, Players.PlayerRemoving:Connect(function(player)
+				if markers[player] then
+					markers[player].dot:Destroy()
+					markers[player] = nil
+				end
+			end))
+
+			local sinceUpdate = 0
+			table.insert(radarWindow.connections, RunService.RenderStepped:Connect(function(deltaTime)
+				if not radarWindow.isShown() then return end
+				-- About 30 times a second is plenty for a map.
+				sinceUpdate += deltaTime
+				if sinceUpdate < 1 / 30 then return end
+				sinceUpdate = 0
+				local range = featureSettings.radarRange
+				rangeLabel.Text = range .. " studs"
+				local camera = workspace.CurrentCamera
+				local myCharacter = Players.LocalPlayer.Character
+				local myRoot = myCharacter and getRoot(myCharacter)
+				-- Up on the map is the way the camera faces, flattened onto the ground.
+				local look = camera and camera.CFrame.LookVector or Vector3.new(0, 0, -1)
+				local flat = Vector2.new(look.X, look.Z)
+				flat = flat.Magnitude > 1e-3 and flat.Unit or Vector2.new(0, -1)
+				local radius = mapSize / 2 - 7
+				local scale = radius / range
+				for _, player in ipairs(Players:GetPlayers()) do
+					if player ~= Players.LocalPlayer then
+						local character = player.Character
+						local root = character and getRoot(character)
+						local marker = markerFor(player)
+						if not root or not myRoot then
+							marker.dot.Visible = false
+						else
+							local offset = root.Position - myRoot.Position
+							local along = offset.X * flat.X + offset.Z * flat.Y
+							local across = offset.X * -flat.Y + offset.Z * flat.X
+							local x, y = across * scale, -along * scale
+							local distance = math.sqrt(x * x + y * y)
+							local outside = distance > radius
+							if outside then
+								x, y = x / distance * radius, y / distance * radius
+							end
+							marker.dot.Visible = true
+							marker.dot.Position = UDim2.new(0.5, x, 0.5, y)
+							-- Team colours when there are teams, otherwise the menu's accent.
+							local useTeam = not player.Neutral and not Players.LocalPlayer.Neutral
+							marker.dot.BackgroundColor3 = useTeam and player.TeamColor.Color or auxiliaryUiTheme.AccentText
+							marker.dot.BackgroundTransparency = outside and 0.55 or 0
+							marker.name.Visible = featureSettings.radarNames and not outside
+						end
+					end
+				end
+			end))
+
+			-- Settings, opened by right-clicking the switch.
+			local entry = quickToggleByName["Radar"]
+			local card = entry and createSettingsCard(entry)
+			if card then
+				card.addSectionLabel("MAP", "map", "radar")
+				card.addSlider({
+					text = "Range",
+					icon = { "ruler", "move" },
+					min = 50, max = 500, step = 10,
+					get = function() return featureSettings.radarRange end,
+					set = function(value) featureSettings.radarRange = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return math.floor(value + 0.5) .. " studs" end,
+				})
+				card.addSwitchGrid({
+					{
+						text = "Show names",
+						get = function() return featureSettings.radarNames == true end,
+						set = function(on)
+							featureSettings.radarNames = on
+							saveFeatureSettings()
+						end,
+					},
+				}, 1)
+				card.addHint("Up on the map is the way your camera faces. Players further than the range sit on the edge, faded.")
+				card.refresh()
+			end
+
+			menuModules.radar = { setShown = radarWindow.setShown }
+			if featureSettings.radar and quickToggleByName["Radar"] then
+				setQuickToggle(quickToggleByName["Radar"], true)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Join Alerts: a notification when a friend, someone on your watch list, or (if you want)
+		-- anyone joins or leaves. Right-click its switch to choose who, and to edit the watch list.
+		safeBuild("Join Alerts", function()
+			local localPlayer = Players.LocalPlayer
+			-- Whether someone is your friend takes a web request, so the answer is remembered.
+			local friendCache = {}
+			local function isFriend(player)
+				if friendCache[player.UserId] == nil then
+					local checked, friends = pcall(function() return localPlayer:IsFriendsWith(player.UserId) end)
+					friendCache[player.UserId] = checked and friends == true
+				end
+				return friendCache[player.UserId]
+			end
+			local function watchList()
+				return type(featureSettings.watchList) == "table" and featureSettings.watchList or {}
+			end
+			local function isWatched(player)
+				for _, name in ipairs(watchList()) do
+					local lowered = tostring(name):lower()
+					if lowered == player.Name:lower() or lowered == player.DisplayName:lower() then return true end
+				end
+				return false
+			end
+			local function enabled()
+				local entry = quickToggleByName["Join Alerts"]
+				return entry ~= nil and entry.state
+			end
+			-- Why to say something about this player, or nil to stay quiet.
+			local function reasonFor(player)
+				if player == localPlayer then return nil end
+				if isWatched(player) then return "Watched player" end
+				if featureSettings.joinAlertFriends and isFriend(player) then return "Friend" end
+				if featureSettings.joinAlertEveryone then return "Player" end
+				return nil
+			end
+			local function describe(player)
+				return player.DisplayName ~= player.Name and (player.DisplayName .. " (@" .. player.Name .. ")") or player.Name
+			end
+			local connections = {}
+			if sharedEnv.SpreadCheeksJoinAlerts then
+				for _, connection in ipairs(sharedEnv.SpreadCheeksJoinAlerts) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			sharedEnv.SpreadCheeksJoinAlerts = connections
+			table.insert(connections, Players.PlayerAdded:Connect(function(player)
+				if not enabled() then return end
+				local reason = reasonFor(player)
+				if reason then notify(reason .. " joined", describe(player) .. " joined the server", 5) end
+			end))
+			table.insert(connections, Players.PlayerRemoving:Connect(function(player)
+				if not enabled() then return end
+				local reason = reasonFor(player)
+				if reason then notify(reason .. " left", describe(player) .. " left the server", 5) end
+			end))
+
+			-- When it's switched on: who of note is already here.
+			local function announceHere()
+				task.spawn(function()
+					local here = {}
+					for _, player in ipairs(Players:GetPlayers()) do
+						if player ~= localPlayer and (isWatched(player) or (featureSettings.joinAlertFriends and isFriend(player))) then
+							table.insert(here, describe(player))
+						end
+					end
+					if #here > 0 then
+						notify("Join Alerts", "Already here: " .. table.concat(here, ", "), 6)
+					end
+				end)
+			end
+
+			-- Settings: who to alert about, and the watch list.
+			local entry = quickToggleByName["Join Alerts"]
+			local card = entry and createSettingsCard(entry)
+			if card then
+				card.addSectionLabel("ALERT ME ABOUT", "bell")
+				card.addSwitchGrid({
+					{
+						text = "Friends",
+						get = function() return featureSettings.joinAlertFriends == true end,
+						set = function(on)
+							featureSettings.joinAlertFriends = on
+							saveFeatureSettings()
+						end,
+					},
+					{
+						text = "Everyone",
+						get = function() return featureSettings.joinAlertEveryone == true end,
+						set = function(on)
+							featureSettings.joinAlertEveryone = on
+							saveFeatureSettings()
+						end,
+					},
+				})
+				card.addSectionLabel("WATCH LIST", "eye")
+				card.addHint("Usernames or display names to always tell you about, friend or not.")
+				-- Add a name: a box and a button on one line.
+				local addRow = Instance.new("Frame")
+				addRow.LayoutOrder = card.nextOrder()
+				addRow.Size = UDim2.new(1, 0, 0, 30)
+				addRow.BackgroundTransparency = 1
+				addRow.Parent = card.content
+				local nameBox = Instance.new("TextBox")
+				nameBox.Size = UDim2.new(1, -78, 1, 0)
+				nameBox.BorderSizePixel = 0
+				nameBox.ClearTextOnFocus = false
+				nameBox.Font = Enum.Font.Gotham
+				nameBox.PlaceholderText = "Username"
+				nameBox.Text = ""
+				nameBox.TextSize = 12
+				nameBox.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(nameBox, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(nameBox, "TextColor3", "Text")
+				bindAuxiliaryUiColor(nameBox, "PlaceholderColor3", "Muted")
+				local nameCorner = Instance.new("UICorner")
+				nameCorner.CornerRadius = UDim.new(0, 8)
+				nameCorner.Parent = nameBox
+				local namePadding = Instance.new("UIPadding")
+				namePadding.PaddingLeft = UDim.new(0, 10)
+				namePadding.PaddingRight = UDim.new(0, 10)
+				namePadding.Parent = nameBox
+				nameBox.Parent = addRow
+				local addButton = Instance.new("TextButton")
+				addButton.AnchorPoint = Vector2.new(1, 0)
+				addButton.Position = UDim2.fromScale(1, 0)
+				addButton.Size = UDim2.new(0, 70, 1, 0)
+				addButton.AutoButtonColor = false
+				addButton.BorderSizePixel = 0
+				addButton.Font = Enum.Font.GothamBold
+				addButton.Text = "Watch"
+				addButton.TextSize = 12
+				bindAuxiliaryUiColor(addButton, "BackgroundColor3", "Accent")
+				bindAuxiliaryUiColor(addButton, "TextColor3", "OnAccent")
+				local addCorner = Instance.new("UICorner")
+				addCorner.CornerRadius = UDim.new(0, 8)
+				addCorner.Parent = addButton
+				addButton.Parent = addRow
+				-- The names, each with a remove button.
+				local names = Instance.new("Frame")
+				names.LayoutOrder = card.nextOrder()
+				names.Size = UDim2.fromScale(1, 0)
+				names.AutomaticSize = Enum.AutomaticSize.Y
+				names.BackgroundTransparency = 1
+				names.Parent = card.content
+				local namesLayout = Instance.new("UIListLayout")
+				namesLayout.Padding = UDim.new(0, 4)
+				namesLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				namesLayout.Parent = names
+				local function showNames()
+					for _, child in ipairs(names:GetChildren()) do
+						if child:IsA("GuiObject") then child:Destroy() end
+					end
+					local list = watchList()
+					if #list == 0 then
+						local none = Instance.new("TextLabel")
+						none.Size = UDim2.new(1, 0, 0, 18)
+						none.BackgroundTransparency = 1
+						none.Font = Enum.Font.Gotham
+						none.Text = "No one on your watch list."
+						none.TextSize = 11
+						none.TextXAlignment = Enum.TextXAlignment.Left
+						none.TextColor3 = auxiliaryUiTheme.Muted
+						none.Parent = names
+						return
+					end
+					for index, name in ipairs(list) do
+						local row = Instance.new("Frame")
+						row.LayoutOrder = index
+						row.Size = UDim2.new(1, 0, 0, 28)
+						row.BorderSizePixel = 0
+						row.BackgroundColor3 = auxiliaryUiTheme.Inset
+						local rowCorner = Instance.new("UICorner")
+						rowCorner.CornerRadius = UDim.new(0, 7)
+						rowCorner.Parent = row
+						row.Parent = names
+						local label = Instance.new("TextLabel")
+						label.Position = UDim2.fromOffset(10, 0)
+						label.Size = UDim2.new(1, -90, 1, 0)
+						label.BackgroundTransparency = 1
+						label.Font = Enum.Font.GothamMedium
+						label.Text = tostring(name)
+						label.TextSize = 12
+						label.TextXAlignment = Enum.TextXAlignment.Left
+						label.TextTruncate = Enum.TextTruncate.AtEnd
+						label.TextColor3 = auxiliaryUiTheme.Text
+						label.Parent = row
+						local remove = Instance.new("TextButton")
+						remove.AnchorPoint = Vector2.new(1, 0.5)
+						remove.Position = UDim2.new(1, -4, 0.5, 0)
+						remove.Size = UDim2.fromOffset(70, 22)
+						remove.AutoButtonColor = false
+						remove.BorderSizePixel = 0
+						remove.Font = Enum.Font.GothamMedium
+						remove.Text = "Remove"
+						remove.TextSize = 11
+						remove.BackgroundColor3 = auxiliaryUiTheme.Card
+						remove.TextColor3 = auxiliaryUiTheme.SubText
+						local removeCorner = Instance.new("UICorner")
+						removeCorner.CornerRadius = UDim.new(0, 6)
+						removeCorner.Parent = remove
+						remove.Parent = row
+						remove.Activated:Connect(function()
+							table.remove(watchList(), index)
+							saveFeatureSettings()
+							showNames()
+						end)
+					end
+				end
+				-- Colours here depend on the list, so the list is redrawn with the card.
+				table.insert(card.refreshers, showNames)
+				local function addName()
+					local name = nameBox.Text:gsub("^%s+", ""):gsub("%s+$", ""):gsub("^@", "")
+					if name == "" or name:find("%s") then return end
+					if type(featureSettings.watchList) ~= "table" then featureSettings.watchList = {} end
+					for _, existing in ipairs(featureSettings.watchList) do
+						if tostring(existing):lower() == name:lower() then
+							nameBox.Text = ""
+							return
+						end
+					end
+					table.insert(featureSettings.watchList, name)
+					saveFeatureSettings()
+					nameBox.Text = ""
+					showNames()
+					notify("Join Alerts", "Watching " .. name, 2)
+				end
+				addButton.Activated:Connect(addName)
+				nameBox.FocusLost:Connect(function(enterPressed)
+					if enterPressed then addName() end
+				end)
+				card.refresh()
+			end
+
+			menuModules.joinAlerts = {
+				announceHere = announceHere,
+				-- For the watch and unwatch commands.
+				watch = function(name)
+					name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("^@", "")
+					if name == "" then return false end
+					if type(featureSettings.watchList) ~= "table" then featureSettings.watchList = {} end
+					for _, existing in ipairs(featureSettings.watchList) do
+						if tostring(existing):lower() == name:lower() then return true end
+					end
+					table.insert(featureSettings.watchList, name)
+					saveFeatureSettings()
+					if card then card.refresh() end
+					return true
+				end,
+				unwatch = function(name)
+					name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("^@", ""):lower()
+					local list = watchList()
+					for index = #list, 1, -1 do
+						if tostring(list[index]):lower() == name then
+							table.remove(list, index)
+							saveFeatureSettings()
+							if card then card.refresh() end
+							return true
+						end
+					end
+					return false
+				end,
+			}
+			if featureSettings.joinAlerts and quickToggleByName["Join Alerts"] then
+				setQuickToggle(quickToggleByName["Join Alerts"], true)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Player info: a card under the Player name box in the Players tab with everything about the
+		-- selected player (account age, team, health, distance, what they're holding, membership,
+		-- whether they're your friend and who they're friends with here), and quick actions.
+		safeBuild("The player info panel", function()
+			local anchor = menuModules.playerNameInput and menuModules.playerNameInput.main
+			if typeof(anchor) ~= "Instance" or not anchor.Parent then
+				warn("[SpreadCheeksGUI] Couldn't add the player info panel; Rayfield's input layout may have changed.")
+				return
+			end
+			local localPlayer = Players.LocalPlayer
+			local page = anchor.Parent
+
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius or UDim.new(0, 8)
+				corner.Parent = object
+			end
+			local function makeLabel(parent, text, font, size, role, position, frameSize)
+				local label = Instance.new("TextLabel")
+				label.BackgroundTransparency = 1
+				label.Font = font
+				label.Text = text
+				label.TextSize = size
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.Position = position
+				label.Size = frameSize
+				bindAuxiliaryUiColor(label, "TextColor3", role)
+				label.Parent = parent
+				return label
+			end
+
+			-- As wide as the rows, right under the Player name box (wherever Rayfield numbers it).
+			local width = anchor.Size.X
+			if width.Scale == 0 and width.Offset <= 0 then width = UDim.new(1, -20) end
+			local card = Instance.new("Frame")
+			card.Name = "PlayerInfo"
+			card.Size = UDim2.new(width, UDim.new(0, 0))
+			card.AutomaticSize = Enum.AutomaticSize.Y
+			card.BorderSizePixel = 0
+			card.LayoutOrder = anchor.LayoutOrder + 5
+			anchor:GetPropertyChangedSignal("LayoutOrder"):Connect(function()
+				card.LayoutOrder = anchor.LayoutOrder + 5
+			end)
+			bindAuxiliaryUiColor(card, "BackgroundColor3", "Card")
+			addCorner(card, UDim.new(0, 10))
+			local cardStroke = Instance.new("UIStroke")
+			cardStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			cardStroke.Transparency = 0.35
+			bindAuxiliaryUiColor(cardStroke, "Color", "Stroke")
+			cardStroke.Parent = card
+			local cardPadding = Instance.new("UIPadding")
+			cardPadding.PaddingTop = UDim.new(0, 12)
+			cardPadding.PaddingBottom = UDim.new(0, 12)
+			cardPadding.PaddingLeft = UDim.new(0, 12)
+			cardPadding.PaddingRight = UDim.new(0, 12)
+			cardPadding.Parent = card
+			local cardLayout = Instance.new("UIListLayout")
+			cardLayout.Padding = UDim.new(0, 8)
+			cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			cardLayout.Parent = card
+			card.Parent = page
+
+			-- Who: their picture, names and whether they're here.
+			local top = Instance.new("Frame")
+			top.LayoutOrder = 1
+			top.Size = UDim2.new(1, 0, 0, 48)
+			top.BackgroundTransparency = 1
+			top.Parent = card
+			local avatar = Instance.new("ImageLabel")
+			avatar.Size = UDim2.fromOffset(48, 48)
+			avatar.BorderSizePixel = 0
+			bindAuxiliaryUiColor(avatar, "BackgroundColor3", "Inset")
+			addCorner(avatar, UDim.new(1, 0))
+			avatar.Parent = top
+			local nameLabel = makeLabel(top, "", Enum.Font.GothamBold, 14, "Text", UDim2.fromOffset(58, 6), UDim2.new(1, -170, 0, 18))
+			local userLabel = makeLabel(top, "", Enum.Font.Gotham, 11, "SubText", UDim2.fromOffset(58, 26), UDim2.new(1, -170, 0, 14))
+			local status = Instance.new("TextLabel")
+			status.AnchorPoint = Vector2.new(1, 0)
+			status.Position = UDim2.new(1, 0, 0, 4)
+			status.AutomaticSize = Enum.AutomaticSize.X
+			status.Size = UDim2.fromOffset(0, 22)
+			status.BorderSizePixel = 0
+			status.Font = Enum.Font.GothamBold
+			status.TextSize = 10
+			bindAuxiliaryUiColor(status, "BackgroundColor3", "Inset")
+			addCorner(status, UDim.new(0, 7))
+			local statusPadding = Instance.new("UIPadding")
+			statusPadding.PaddingLeft = UDim.new(0, 9)
+			statusPadding.PaddingRight = UDim.new(0, 9)
+			statusPadding.Parent = status
+			status.Parent = top
+
+			-- The facts, two to a line.
+			local grid = Instance.new("Frame")
+			grid.LayoutOrder = 2
+			grid.Size = UDim2.fromScale(1, 0)
+			grid.AutomaticSize = Enum.AutomaticSize.Y
+			grid.BackgroundTransparency = 1
+			grid.Parent = card
+			local gridLayout = Instance.new("UIGridLayout")
+			gridLayout.CellSize = UDim2.new(0.5, -4, 0, 36)
+			gridLayout.CellPadding = UDim2.fromOffset(8, 6)
+			gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			gridLayout.Parent = grid
+			local facts = {}
+			for index, caption in ipairs({ "Account age", "Team", "Health", "Distance", "Holding", "Membership", "Your friend", "Joined Roblox" }) do
+				local cell = Instance.new("Frame")
+				cell.LayoutOrder = index
+				cell.BorderSizePixel = 0
+				bindAuxiliaryUiColor(cell, "BackgroundColor3", "Inset")
+				addCorner(cell, UDim.new(0, 8))
+				cell.Parent = grid
+				makeLabel(cell, caption:upper(), Enum.Font.GothamBold, 9, "Muted", UDim2.fromOffset(10, 5), UDim2.new(1, -16, 0, 11))
+				facts[caption] = makeLabel(cell, "--", Enum.Font.GothamMedium, 12, "Text", UDim2.fromOffset(10, 17), UDim2.new(1, -16, 0, 15))
+			end
+			-- Who they're friends with here can be a long list, so it gets a full line.
+			local friendsLine = Instance.new("Frame")
+			friendsLine.LayoutOrder = 3
+			friendsLine.Size = UDim2.fromScale(1, 0)
+			friendsLine.AutomaticSize = Enum.AutomaticSize.Y
+			friendsLine.BorderSizePixel = 0
+			bindAuxiliaryUiColor(friendsLine, "BackgroundColor3", "Inset")
+			addCorner(friendsLine, UDim.new(0, 8))
+			friendsLine.Parent = card
+			local friendsPadding = Instance.new("UIPadding")
+			friendsPadding.PaddingTop = UDim.new(0, 5)
+			friendsPadding.PaddingBottom = UDim.new(0, 7)
+			friendsPadding.PaddingLeft = UDim.new(0, 10)
+			friendsPadding.PaddingRight = UDim.new(0, 10)
+			friendsPadding.Parent = friendsLine
+			local friendsLayout = Instance.new("UIListLayout")
+			friendsLayout.Padding = UDim.new(0, 2)
+			friendsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			friendsLayout.Parent = friendsLine
+			local friendsCaption = makeLabel(friendsLine, "FRIENDS IN THIS SERVER", Enum.Font.GothamBold, 9, "Muted", UDim2.new(), UDim2.new(1, 0, 0, 11))
+			friendsCaption.LayoutOrder = 1
+			local friendsValue = makeLabel(friendsLine, "--", Enum.Font.GothamMedium, 12, "Text", UDim2.new(), UDim2.fromScale(1, 0))
+			friendsValue.LayoutOrder = 2
+			friendsValue.AutomaticSize = Enum.AutomaticSize.Y
+			friendsValue.TextWrapped = true
+			friendsValue.TextTruncate = Enum.TextTruncate.None
+
+			-- Quick actions.
+			local actions = Instance.new("Frame")
+			actions.LayoutOrder = 4
+			actions.Size = UDim2.new(1, 0, 0, 28)
+			actions.BackgroundTransparency = 1
+			actions.Parent = card
+			local actionsLayout = Instance.new("UIListLayout")
+			actionsLayout.FillDirection = Enum.FillDirection.Horizontal
+			actionsLayout.Padding = UDim.new(0, 6)
+			actionsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			actionsLayout.Parent = actions
+			local function makeAction(text, order, primary)
+				local button = Instance.new("TextButton")
+				button.LayoutOrder = order
+				button.AutomaticSize = Enum.AutomaticSize.X
+				button.Size = UDim2.fromOffset(0, 28)
+				button.AutoButtonColor = false
+				button.BorderSizePixel = 0
+				button.Font = Enum.Font.GothamMedium
+				button.Text = text
+				button.TextSize = 12
+				bindAuxiliaryUiColor(button, "BackgroundColor3", primary and "Accent" or "Inset")
+				bindAuxiliaryUiColor(button, "TextColor3", primary and "OnAccent" or "Text")
+				addCorner(button, UDim.new(0, 8))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 12)
+				padding.PaddingRight = UDim.new(0, 12)
+				padding.Parent = button
+				button.Parent = actions
+				return button
+			end
+			local gotoButton = makeAction("Go to", 1, true)
+			local spectateButton = makeAction("Spectate", 2)
+			local copyNameButton = makeAction("Copy name", 3)
+			local copyIdButton = makeAction("Copy ID", 4)
+
+			local function formatAge(days)
+				days = tonumber(days) or 0
+				if days < 1 then return "New today" end
+				if days < 31 then return days .. (days == 1 and " day" or " days") end
+				if days < 365 then return math.floor(days / 30) .. " months" end
+				return string.format("%.1f years", days / 365)
+			end
+			-- The selected player, if they're in the server (by username or display name).
+			local function selectedPlayer()
+				local name = tostring(selectedPlayerName or ""):lower()
+				for _, player in ipairs(Players:GetPlayers()) do
+					if player.Name:lower() == name or player.DisplayName:lower() == name then return player end
+				end
+				return nil
+			end
+
+			-- Friendships take web requests, so they're looked up in the background and remembered
+			-- for a minute.
+			local friendsCache = {}
+			local refresh
+			local function lookUpFriends(player)
+				local cached = friendsCache[player.UserId]
+				if cached and os.clock() - cached.at < 60 then return end
+				local entry = { at = os.clock() }
+				friendsCache[player.UserId] = entry
+				task.spawn(function()
+					if player ~= localPlayer then
+						local checked, isFriend = pcall(function() return localPlayer:IsFriendsWith(player.UserId) end)
+						entry.you = checked and (isFriend and "Yes" or "No") or "Can't check"
+					else
+						entry.you = "That's you"
+					end
+					local here, failed = {}, false
+					for _, other in ipairs(Players:GetPlayers()) do
+						if other ~= player then
+							local checked, friends = pcall(function() return player:IsFriendsWith(other.UserId) end)
+							if not checked then
+								failed = true
+								break
+							end
+							if friends then table.insert(here, other.DisplayName) end
+						end
+					end
+					entry.here = failed and "Can't check from here" or (#here > 0 and table.concat(here, ", ") or "No one")
+					if refresh then pcall(refresh) end
+				end)
+			end
+
+			local spectating = false
+			refresh = function()
+				local player = selectedPlayer()
+				local theme = auxiliaryUiTheme
+				if not player then
+					local typed = tostring(selectedPlayerName or "")
+					avatar.Image = ""
+					nameLabel.Text = typed ~= "" and typed or "No one selected"
+					userLabel.Text = "Pick a player above to see their info"
+					status.Text = "NOT HERE"
+					status.TextColor3 = theme.Muted
+					for _, label in pairs(facts) do label.Text = "--" end
+					friendsValue.Text = "--"
+					return
+				end
+				avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=150&h=150"
+				nameLabel.Text = player.DisplayName
+				userLabel.Text = "@" .. player.Name .. "  ·  ID " .. player.UserId
+				status.Text = player == localPlayer and "YOU" or "IN THIS SERVER"
+				status.TextColor3 = player == localPlayer and theme.AccentText or theme.Good
+				facts["Account age"].Text = formatAge(player.AccountAge)
+				local joined = os.date("*t", os.time() - (tonumber(player.AccountAge) or 0) * 86400)
+				local months = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+				facts["Joined Roblox"].Text = (months[joined.month] or "?") .. " " .. joined.year
+				facts["Team"].Text = player.Team and player.Team.Name or "No team"
+				facts["Membership"].Text = player.MembershipType == Enum.MembershipType.Premium and "Premium" or "Standard"
+				local character = player.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				facts["Health"].Text = humanoid and (math.floor(humanoid.Health + 0.5) .. " / " .. math.floor(humanoid.MaxHealth + 0.5)) or "No character"
+				local root = character and getRoot(character)
+				local myRoot = localPlayer.Character and getRoot(localPlayer.Character)
+				facts["Distance"].Text = (root and myRoot and player ~= localPlayer) and (math.floor((root.Position - myRoot.Position).Magnitude) .. " studs") or "--"
+				local tool = character and character:FindFirstChildOfClass("Tool")
+				facts["Holding"].Text = tool and tool.Name or "Nothing"
+				lookUpFriends(player)
+				local cached = friendsCache[player.UserId]
+				facts["Your friend"].Text = cached and cached.you or "Checking..."
+				friendsValue.Text = cached and cached.here or "Checking..."
+			end
+
+			gotoButton.Activated:Connect(function() runForSelectedPlayer("goto") end)
+			spectateButton.Activated:Connect(function()
+				spectating = not spectating
+				if spectating then
+					runForSelectedPlayer("view")
+				else
+					execCmd("unview", Players.LocalPlayer, true)
+				end
+				spectateButton.Text = spectating and "Stop spectating" or "Spectate"
+			end)
+			copyNameButton.Activated:Connect(function()
+				local player = selectedPlayer()
+				toClipboard(player and player.Name or tostring(selectedPlayerName or ""))
+			end)
+			copyIdButton.Activated:Connect(function()
+				local player = selectedPlayer()
+				if player then
+					toClipboard(tostring(player.UserId))
+				else
+					notify("Player info", "They're not in this server, so their ID isn't known here.")
+				end
+			end)
+
+			menuModules.onPlayerSelected = function()
+				if spectating then
+					spectating = false
+					spectateButton.Text = "Spectate"
+				end
+				refresh()
+			end
+			-- Status colours depend on the player, so they're set again after a theme change.
+			table.insert(auxiliaryUiThemeListeners, function() pcall(refresh) end)
+			pcall(refresh)
+			-- Health and distance change all the time, so the card keeps up while the tab is open.
+			task.spawn(function()
+				while card.Parent do
+					task.wait(0.5)
+					if page.Visible then pcall(refresh) end
+				end
+			end)
+		end)
+
+		-- Commands for everything this menu adds, so it all works from the ; bar, the Command Bar
+		-- tab, chat and IY keybinds like any other command. Each also gets a line in IY's command
+		-- list (CMDs), which is where the usage and description shown while typing come from.
+		local function registerMenuCommands()
+			local function describe(name, description)
+				CMDs[#CMDs + 1] = { NAME = name, DESC = description }
+			end
+			-- Turns a Quick Controls switch on or off (or over, with on left out), moving the switch.
+			local function setSwitch(name, on)
+				local entry = quickToggleByName[name]
+				if not entry then return end
+				if on == nil then on = not entry.state end
+				setQuickToggle(entry, on)
+			end
+			local function addSwitchCommands(switchName, names, onDescription, offDescription)
+				local on, off, toggle = names[1], names[2], names[3]
+				describe(on[1] .. (on[2] and (" / " .. on[2]) or ""), onDescription)
+				describe(off[1] .. (off[2] and (" / " .. off[2]) or ""), offDescription)
+				describe(toggle, "Turns " .. switchName .. " on or off")
+				addcmd(on[1], { on[2] }, function() setSwitch(switchName, true) end)
+				addcmd(off[1], { off[2] }, function() setSwitch(switchName, false) end)
+				addcmd(toggle, {}, function() setSwitch(switchName, nil) end)
+			end
+			-- Opens the menu on one of its tabs.
+			local function openTab(tab)
+				pcall(function() window:Show() end)
+				pcall(function() window:Navigate(tab) end)
+			end
+			local function firstArgument(args)
+				return tostring(args[1] or ""):lower()
+			end
+
+			-- Aimbot.
+			local function setAimbot(on)
+				applyAimbot(on)
+				pcall(function() aimbotToggle:Set(aimbotState.enabled, true) end)
+			end
+			describe("aimbot / aim", "Turns the aimbot on. Hold the aim key (right mouse by default) to aim")
+			describe("unaimbot / unaim", "Turns the aimbot off")
+			describe("toggleaimbot", "Turns the aimbot on or off")
+			addcmd("aimbot", { "aim" }, function() setAimbot(true) end)
+			addcmd("unaimbot", { "unaim" }, function() setAimbot(false) end)
+			addcmd("toggleaimbot", {}, function() setAimbot(not aimbotState.enabled) end)
+			describe("aimbotfov [size]", "Sets the size of the aimbot's circle, 20 to 600 (150 to start with)")
+			addcmd("aimbotfov", {}, function(args)
+				local size = tonumber(args[1])
+				if not size then return notify("Aimbot", "Give a size, like aimbotfov 200") end
+				featureSettings.aimbotFov = math.clamp(math.floor(size + 0.5), 20, 600)
+				saveFeatureSettings()
+				notify("Aimbot", "Circle size " .. featureSettings.aimbotFov, 2)
+			end)
+			describe("aimbotsmooth / aimbotsmoothness [1-10]", "How gently the aimbot turns: 1 snaps straight on, 10 is slowest")
+			addcmd("aimbotsmooth", { "aimbotsmoothness" }, function(args)
+				local value = tonumber(args[1])
+				if not value then return notify("Aimbot", "Give a number from 1 to 10, like aimbotsmooth 3") end
+				featureSettings.aimbotSmoothness = math.clamp(math.floor(value * 2 + 0.5) / 2, 1, 10)
+				saveFeatureSettings()
+				notify("Aimbot", "Smoothness " .. featureSettings.aimbotSmoothness, 2)
+			end)
+			describe("aimbotpart [head/torso/random]", "What the aimbot aims at")
+			addcmd("aimbotpart", {}, function(args)
+				local choice = firstArgument(args)
+				if choice == "random" then
+					featureSettings.aimbotRandomPart = true
+				elseif choice == "head" or choice == "torso" then
+					featureSettings.aimbotPart = choice == "head" and "Head" or "Torso"
+					featureSettings.aimbotRandomPart = false
+				else
+					return notify("Aimbot", "Choose head, torso or random, like aimbotpart head")
+				end
+				saveFeatureSettings()
+				notify("Aimbot", "Aiming at " .. (featureSettings.aimbotRandomPart and "random body parts" or ("the " .. choice)), 2)
+			end)
+			describe("aimbotmethod [camera/mouse/freeaim]", "How the aimbot aims: turning the camera, moving the cursor, or Free aim for games with their own camera")
+			addcmd("aimbotmethod", {}, function(args)
+				local methods = { camera = "Camera", mouse = "Mouse", freeaim = "Free aim", free = "Free aim" }
+				local method = methods[firstArgument(args)]
+				if not method then return notify("Aimbot", "Choose camera, mouse or freeaim, like aimbotmethod freeaim") end
+				featureSettings.aimbotMethod = method
+				saveFeatureSettings()
+				notify("Aimbot", "Aiming with " .. method, 2)
+			end)
+			describe("aimbotkey [key]", "The key to hold to aim: a key like e or leftshift, or rmb / lmb for the mouse buttons")
+			addcmd("aimbotkey", {}, function(args)
+				local typed = firstArgument(args)
+				local key = nil
+				if typed == "rmb" or typed == "rightclick" or typed == "mouse2" then
+					key = "RightClick"
+				elseif typed == "lmb" or typed == "leftclick" or typed == "mouse1" then
+					key = "LeftClick"
+				else
+					for _, keyCode in ipairs(Enum.KeyCode:GetEnumItems()) do
+						if keyCode.Name:lower() == typed and not reservedKeys[keyCode] and not isMenuToggleKey(keyCode) then
+							key = keyCode.Name
+							break
+						end
+					end
+				end
+				if not key then return notify("Aimbot", "Give a key, like aimbotkey e, or rmb / lmb for the mouse buttons") end
+				featureSettings.aimbotKey = key
+				saveFeatureSettings()
+				if aimbotState.refreshKey then aimbotState.refreshKey() end
+				notify("Aimbot", "Hold " .. aimbotKeyText() .. " to aim", 2.5)
+			end)
+
+			-- Trigger bot.
+			addSwitchCommands("the trigger bot", { { "triggerbot", "tbot" }, { "untriggerbot", "untbot" }, "toggletriggerbot" },
+				"Turns the trigger bot on: it fires while your crosshair is on a player", "Turns the trigger bot off")
+			describe("triggermode [tap/hold]", "Tap clicks once per shot delay; Hold keeps the button down, for automatic guns")
+			addcmd("triggermode", {}, function(args)
+				local choice = firstArgument(args)
+				if choice ~= "tap" and choice ~= "hold" then return notify("Trigger Bot", "Choose tap or hold, like triggermode hold") end
+				featureSettings.triggerMode = choice == "tap" and "Tap" or "Hold"
+				saveFeatureSettings()
+				notify("Trigger Bot", featureSettings.triggerMode .. " mode", 2)
+			end)
+			describe("triggerdelay [ms]", "How long the crosshair stays on someone before the first shot, 0 to 500 ms")
+			addcmd("triggerdelay", {}, function(args)
+				local delayMs = tonumber(args[1])
+				if not delayMs then return notify("Trigger Bot", "Give a time in milliseconds, like triggerdelay 80") end
+				featureSettings.triggerDelay = math.clamp(math.floor(delayMs / 10 + 0.5) * 10, 0, 500)
+				saveFeatureSettings()
+				notify("Trigger Bot", "Reaction time " .. featureSettings.triggerDelay .. " ms", 2)
+			end)
+
+			-- Cheater detector.
+			addSwitchCommands("the cheater detector", { { "cheatdetector", "detectcheaters" }, { "uncheatdetector", "undetectcheaters" }, "togglecheatdetector" },
+				"Warns you when someone moves like a cheater: flying, speed, teleporting, noclip or flinging", "Turns the cheater detector off")
+			describe("cheatsensitivity [relaxed/normal/strict]", "How sure the cheater detector has to be before it warns you")
+			addcmd("cheatsensitivity", {}, function(args)
+				local levels = { relaxed = "Relaxed", normal = "Normal", strict = "Strict" }
+				local level = levels[firstArgument(args)]
+				if not level then return notify("Cheater Detector", "Choose relaxed, normal or strict") end
+				featureSettings.cheatSensitivity = level
+				saveFeatureSettings()
+				notify("Cheater Detector", level .. " sensitivity", 2)
+			end)
+
+			-- Windows on screen.
+			addSwitchCommands("Performance Stats", { { "perfstats", "performancestats" }, { "unperfstats", "unperformancestats" }, "toggleperfstats" },
+				"Shows the Performance Stats window: FPS, ping, memory and more", "Hides the Performance Stats window")
+			local function setKeybindList(on)
+				showKeybindList(on)
+				pcall(function() keybindListToggle:Set(featureSettings.keybindList, true) end)
+			end
+			describe("keybindlist / showkeybinds", "Shows the on-screen list of your keybinds")
+			describe("unkeybindlist / hidekeybinds", "Hides the keybind list")
+			describe("togglekeybindlist", "Shows or hides the keybind list")
+			addcmd("keybindlist", { "showkeybinds" }, function() setKeybindList(true) end)
+			addcmd("unkeybindlist", { "hidekeybinds" }, function() setKeybindList(false) end)
+			addcmd("togglekeybindlist", {}, function() setKeybindList(not featureSettings.keybindList) end)
+
+			-- Protection and ESP.
+			describe("nofalldamage / nofall", "Prevents fall damage in Natural Disaster Survival")
+			describe("unnofalldamage / unnofall", "Turns No Fall Damage off")
+			addcmd("nofalldamage", { "nofall" }, function() setSwitch("No Fall Damage", true) end)
+			addcmd("unnofalldamage", { "unnofall" }, function() setSwitch("No Fall Damage", false) end)
+			describe("espenemies", "ESP only shows players on the other team")
+			describe("unespenemies", "ESP shows everyone again")
+			addcmd("espenemies", {}, function()
+				espSettings.enemiesOnly = true
+				saveEspSettings()
+				notify("ESP", "Only showing enemies", 2)
+			end)
+			addcmd("unespenemies", {}, function()
+				espSettings.enemiesOnly = false
+				saveEspSettings()
+				notify("ESP", "Showing everyone", 2)
+			end)
+
+			-- The menu: its theme, its tabs, and joining servers.
+			describe("theme [name]", "Changes the menu's theme: " .. table.concat(themeNames, ", "))
+			addcmd("theme", {}, function(args)
+				local palette = nil
+				for _, each in ipairs(themePalettes) do
+					if each.name:lower() == firstArgument(args) then palette = each end
+				end
+				if not palette then return notify("Theme", "Pick one of: " .. table.concat(themeNames, ", "), 6) end
+				applyTheme(palette)
+				pcall(function() themeDropdown:Set(palette.name, true) end)
+				notify("Theme", palette.name, 2)
+			end)
+			describe("menu / togglemenu", "Shows or hides this menu")
+			addcmd("menu", { "togglemenu" }, function()
+				pcall(function() window:ToggleHide() end)
+			end)
+			describe("home / dashboard", "Opens the menu on the Home tab")
+			addcmd("home", { "dashboard" }, function() openTab(homeTab) end)
+			describe("commandbar", "Opens the menu on the Command Bar tab")
+			addcmd("commandbar", {}, function() openTab(runTab) end)
+			describe("servers / serverbrowser", "Opens the menu on the Servers tab, to browse and join this game's servers")
+			addcmd("servers", { "serverbrowser" }, function() openTab(serversTab) end)
+			describe("iysettings", "Opens the menu on IY Settings: keybinds, prefix, aliases, waypoints and plugins")
+			addcmd("iysettings", {}, function() openTab(iySettingsTab) end)
+			-- Windows and alerts added with the radar and logs.
+			addSwitchCommands("the radar", { { "radar", "minimap" }, { "unradar", "unminimap" }, "toggleradar" },
+				"Shows the radar: a minimap of the players around you", "Hides the radar")
+			addSwitchCommands("the Logs window", { { "logswindow" }, { "unlogswindow" }, "togglelogswindow" },
+				"Shows the Logs window: chat, joins and recent notifications", "Hides the Logs window")
+			addSwitchCommands("Join Alerts", { { "joinalerts" }, { "unjoinalerts" }, "togglejoinalerts" },
+				"Tells you when friends or watched players join or leave", "Turns Join Alerts off")
+			describe("watch [username]", "Adds a player to your watch list, so Join Alerts tells you when they come and go")
+			addcmd("watch", {}, function(args)
+				local name = getstring(1, args)
+				if not menuModules.joinAlerts or not menuModules.joinAlerts.watch(name) then
+					return notify("Join Alerts", "Give a username, like watch builderman")
+				end
+				notify("Join Alerts", "Watching " .. name .. (featureSettings.joinAlerts and "" or ". Turn on Join Alerts to be told when they come and go"), 4)
+			end)
+			describe("unwatch [username]", "Takes a player off your watch list")
+			addcmd("unwatch", {}, function(args)
+				local name = getstring(1, args)
+				if menuModules.joinAlerts and menuModules.joinAlerts.unwatch(name) then
+					notify("Join Alerts", "Stopped watching " .. name, 3)
+				else
+					notify("Join Alerts", name .. " isn't on your watch list")
+				end
+			end)
+
+			describe("configs", "Opens the menu on Configs, to save and load your setups")
+			addcmd("configs", {}, function() openTab(configsTab) end)
+			describe("saveconfig [name]", "Saves how everything is set right now as a config, replacing one with the same name")
+			addcmd("saveconfig", {}, function(args)
+				if not configsApi then return notify("Configs", "Configs aren't available right now.") end
+				configsApi.save(getstring(1, args))
+			end)
+			describe("loadconfig [name]", "Loads a saved config")
+			addcmd("loadconfig", {}, function(args)
+				if not configsApi then return notify("Configs", "Configs aren't available right now.") end
+				local name = getstring(1, args)
+				if tostring(name or ""):gsub("%s", "") == "" then
+					local names = configsApi.names()
+					return notify("Configs", #names > 0 and ("Your configs: " .. table.concat(names, ", ")) or "You haven't saved any configs yet.", 6)
+				end
+				configsApi.load(name)
+			end)
+			describe("joinserver / joinjob [server id]", "Joins one of this game's servers by its ID (the job ID shown on the Servers tab)")
+			addcmd("joinserver", { "joinjob" }, function(args)
+				local id = tostring(args[1] or "")
+				if not id:match("^%x+%-%x+%-%x+%-%x+%-%x+$") then
+					return notify("Join server", "Give a server ID, like the ones on the Servers tab")
+				end
+				if id == game.JobId then return notify("Join server", "You're already in that server") end
+				notify("Join server", "Joining that server...", 3)
+				local started, problem = pcall(function()
+					TeleportService:TeleportToPlaceInstance(game.PlaceId, id, Players.LocalPlayer)
+				end)
+				if not started then notify("Join server", "Couldn't join: " .. tostring(problem), 5) end
+			end)
+		end
+		-- Kept separate so a problem here can't stop the rest of the menu loading.
+		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
+		if not menuCommandsOk then
+			warn("[SpreadCheeksGUI] The menu's commands couldn't be added: " .. tostring(menuCommandsError))
 		end
 
 		-- Home: a dashboard of this session, drawn with our own cards inside the tab's page and
