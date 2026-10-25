@@ -6146,81 +6146,222 @@ function Locate(plr)
 			ESPholder.Name = plr.Name..'_LC'
 			ESPholder.Parent = COREGUI
 			repeat wait(1) until plr.Character and getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid")
-			for b,n in pairs (plr.Character:GetChildren()) do
-				if (n:IsA("BasePart")) then
-					local a = Instance.new("BoxHandleAdornment")
-					a.Name = plr.Name
-					a.Parent = ESPholder
-					a.Adornee = n
-					a.AlwaysOnTop = true
-					a.ZIndex = 10
-					a.Size = n.Size
-					a.Transparency = espTransparency
-					a.Color = plr.TeamColor
-				end
+			local character = plr.Character
+			-- In the menu's accent colour (espAccentColor follows the theme), so it stands apart
+			-- from ESP and chams, which go by team.
+			local accent = espAccentColor
+
+			-- Their whole body, through walls: a soft fill with a solid rim, breathing gently so
+			-- they're easy to pick out in a crowd.
+			local highlight = Instance.new("Highlight")
+			highlight.Name = "LocateHighlight"
+			highlight.Adornee = character
+			highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			highlight.FillColor = accent
+			highlight.FillTransparency = 0.6
+			highlight.OutlineColor = accent
+			highlight.OutlineTransparency = 0
+			highlight.Parent = ESPholder
+
+			-- Above their head: a tag with their name, how far away they are and their health.
+			local head = character:FindFirstChild("Head") or getRoot(character)
+			local tagGui = Instance.new("BillboardGui")
+			tagGui.Name = "LocateTag"
+			tagGui.Adornee = head
+			tagGui.Size = UDim2.fromOffset(220, 56)
+			tagGui.StudsOffsetWorldSpace = Vector3.new(0, 2.4, 0)
+			tagGui.AlwaysOnTop = true
+			tagGui.LightInfluence = 0
+			tagGui.MaxDistance = math.huge
+			tagGui.Parent = ESPholder
+			local tag = Instance.new("Frame")
+			tag.AnchorPoint = Vector2.new(0.5, 1)
+			tag.Position = UDim2.fromScale(0.5, 1)
+			tag.AutomaticSize = Enum.AutomaticSize.X
+			tag.Size = UDim2.fromOffset(0, 44)
+			tag.BackgroundColor3 = Color3.fromRGB(14, 16, 22)
+			tag.BackgroundTransparency = 0.12
+			tag.BorderSizePixel = 0
+			tag.Parent = tagGui
+			local tagWidth = Instance.new("UISizeConstraint")
+			tagWidth.MinSize = Vector2.new(96, 44)
+			tagWidth.MaxSize = Vector2.new(210, 44)
+			tagWidth.Parent = tag
+			local tagCorner = Instance.new("UICorner")
+			tagCorner.CornerRadius = UDim.new(0, 10)
+			tagCorner.Parent = tag
+			local tagStroke = Instance.new("UIStroke")
+			tagStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			tagStroke.Color = accent
+			tagStroke.Transparency = 0.35
+			tagStroke.Parent = tag
+			local tagPadding = Instance.new("UIPadding")
+			tagPadding.PaddingTop = UDim.new(0, 6)
+			tagPadding.PaddingLeft = UDim.new(0, 12)
+			tagPadding.PaddingRight = UDim.new(0, 12)
+			tagPadding.Parent = tag
+			local tagLayout = Instance.new("UIListLayout")
+			tagLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			tagLayout.Padding = UDim.new(0, 1)
+			tagLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			tagLayout.Parent = tag
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.LayoutOrder = 1
+			nameLabel.AutomaticSize = Enum.AutomaticSize.X
+			nameLabel.Size = UDim2.fromOffset(0, 15)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.Text = plr.DisplayName
+			nameLabel.TextColor3 = Color3.fromRGB(245, 247, 255)
+			nameLabel.TextSize = 13
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			nameLabel.Parent = tag
+			local detailLabel = Instance.new("TextLabel")
+			detailLabel.LayoutOrder = 2
+			detailLabel.AutomaticSize = Enum.AutomaticSize.X
+			detailLabel.Size = UDim2.fromOffset(0, 13)
+			detailLabel.BackgroundTransparency = 1
+			detailLabel.Font = Enum.Font.Gotham
+			detailLabel.Text = "@" .. plr.Name
+			detailLabel.TextColor3 = Color3.fromRGB(169, 177, 194)
+			detailLabel.TextSize = 11
+			detailLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			detailLabel.Parent = tag
+			local healthBack = Instance.new("Frame")
+			healthBack.LayoutOrder = 3
+			healthBack.Size = UDim2.new(1, 0, 0, 3)
+			healthBack.BackgroundColor3 = Color3.fromRGB(40, 44, 56)
+			healthBack.BorderSizePixel = 0
+			healthBack.Parent = tag
+			local healthBackCorner = Instance.new("UICorner")
+			healthBackCorner.CornerRadius = UDim.new(1, 0)
+			healthBackCorner.Parent = healthBack
+			local healthFill = Instance.new("Frame")
+			healthFill.Size = UDim2.fromScale(1, 1)
+			healthFill.BorderSizePixel = 0
+			healthFill.Parent = healthBack
+			local healthFillCorner = Instance.new("UICorner")
+			healthFillCorner.CornerRadius = UDim.new(1, 0)
+			healthFillCorner.Parent = healthFill
+
+			-- When they're off screen (or behind you), an arrow at the edge of the screen points the
+			-- way, with the distance under it.
+			local arrowGui = Instance.new("ScreenGui")
+			arrowGui.Name = "LocateArrow"
+			arrowGui.IgnoreGuiInset = true
+			arrowGui.ResetOnSpawn = false
+			arrowGui.Parent = ESPholder
+			local arrow = Instance.new("Frame")
+			arrow.AnchorPoint = Vector2.new(0.5, 0.5)
+			arrow.Size = UDim2.fromOffset(36, 36)
+			arrow.BackgroundColor3 = Color3.fromRGB(14, 16, 22)
+			arrow.BackgroundTransparency = 0.12
+			arrow.BorderSizePixel = 0
+			arrow.Visible = false
+			arrow.Parent = arrowGui
+			local arrowCorner = Instance.new("UICorner")
+			arrowCorner.CornerRadius = UDim.new(1, 0)
+			arrowCorner.Parent = arrow
+			local arrowStroke = Instance.new("UIStroke")
+			arrowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			arrowStroke.Color = accent
+			arrowStroke.Transparency = 0.2
+			arrowStroke.Parent = arrow
+			local arrowIcon = Instance.new("ImageLabel")
+			arrowIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+			arrowIcon.Position = UDim2.fromScale(0.5, 0.5)
+			arrowIcon.Size = UDim2.fromOffset(18, 18)
+			arrowIcon.BackgroundTransparency = 1
+			-- Rayfield's dropdown arrow, which points up; it's turned to face them.
+			arrowIcon.Image = "rbxassetid://88479147175134"
+			arrowIcon.ImageColor3 = accent
+			arrowIcon.Parent = arrow
+			local arrowDistance = Instance.new("TextLabel")
+			arrowDistance.AnchorPoint = Vector2.new(0.5, 0)
+			arrowDistance.Position = UDim2.new(0.5, 0, 1, 4)
+			arrowDistance.Size = UDim2.fromOffset(90, 14)
+			arrowDistance.BackgroundTransparency = 1
+			arrowDistance.Font = Enum.Font.GothamBold
+			arrowDistance.TextColor3 = Color3.fromRGB(245, 247, 255)
+			arrowDistance.TextSize = 11
+			arrowDistance.TextStrokeTransparency = 0.5
+			arrowDistance.Parent = arrow
+
+			local function applyAccent(color)
+				accent = color
+				highlight.FillColor = color
+				highlight.OutlineColor = color
+				tagStroke.Color = color
+				arrowStroke.Color = color
+				arrowIcon.ImageColor3 = color
 			end
-			if plr.Character and plr.Character:FindFirstChild('Head') then
-				local BillboardGui = Instance.new("BillboardGui")
-				local TextLabel = Instance.new("TextLabel")
-				BillboardGui.Adornee = plr.Character.Head
-				BillboardGui.Name = plr.Name
-				BillboardGui.Parent = ESPholder
-				BillboardGui.Size = UDim2.new(0, 100, 0, 150)
-				BillboardGui.StudsOffset = Vector3.new(0, 1, 0)
-				BillboardGui.AlwaysOnTop = true
-				TextLabel.Parent = BillboardGui
-				TextLabel.BackgroundTransparency = 1
-				TextLabel.Position = UDim2.new(0, 0, 0, -50)
-				TextLabel.Size = UDim2.new(0, 100, 0, 100)
-				TextLabel.Font = Enum.Font.SourceSansSemibold
-				TextLabel.TextSize = 20
-				TextLabel.TextColor3 = Color3.new(1, 1, 1)
-				TextLabel.TextStrokeTransparency = 0
-				TextLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-				TextLabel.Text = 'Name: '..plr.Name
-				TextLabel.ZIndex = 10
-				local lcLoopFunc
-				local addedFunc
-				local teamChange
-				addedFunc = plr.CharacterAdded:Connect(function()
-					if ESPholder ~= nil and ESPholder.Parent ~= nil then
-						lcLoopFunc:Disconnect()
-						teamChange:Disconnect()
-						ESPholder:Destroy()
-						repeat wait(1) until getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid")
-						Locate(plr)
-						addedFunc:Disconnect()
-					else
-						teamChange:Disconnect()
-						addedFunc:Disconnect()
-					end
-				end)
-				teamChange = plr:GetPropertyChangedSignal("TeamColor"):Connect(function()
-					if ESPholder ~= nil and ESPholder.Parent ~= nil then
-						lcLoopFunc:Disconnect()
-						addedFunc:Disconnect()
-						ESPholder:Destroy()
-						repeat wait(1) until getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid")
-						Locate(plr)
-						teamChange:Disconnect()
-					else
-						teamChange:Disconnect()
-					end
-				end)
-				local function lcLoop()
-					if COREGUI:FindFirstChild(plr.Name..'_LC') then
-						if plr.Character and getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid") and Players.LocalPlayer.Character and getRoot(Players.LocalPlayer.Character) and Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-							local pos = math.floor((getRoot(Players.LocalPlayer.Character).Position - getRoot(plr.Character).Position).magnitude)
-							TextLabel.Text = 'Name: '..plr.Name..' | Health: '..round(plr.Character:FindFirstChildOfClass('Humanoid').Health, 1)..' | Studs: '..pos
-						end
-					else
-						teamChange:Disconnect()
-						addedFunc:Disconnect()
-						lcLoopFunc:Disconnect()
-					end
+
+			local lcLoopFunc
+			local addedFunc
+			-- A new character (they respawned): start again on it.
+			addedFunc = plr.CharacterAdded:Connect(function()
+				if ESPholder ~= nil and ESPholder.Parent ~= nil then
+					lcLoopFunc:Disconnect()
+					ESPholder:Destroy()
+					repeat wait(1) until getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid")
+					Locate(plr)
+					addedFunc:Disconnect()
+				else
+					addedFunc:Disconnect()
 				end
-				lcLoopFunc = RunService.RenderStepped:Connect(lcLoop)
+			end)
+			local lastDistance, lastHealth = nil, nil
+			local function lcLoop()
+				if not ESPholder.Parent then
+					addedFunc:Disconnect()
+					lcLoopFunc:Disconnect()
+					return
+				end
+				if espAccentColor ~= accent then
+					applyAccent(espAccentColor)
+				end
+				highlight.FillTransparency = 0.6 + 0.14 * math.sin(os.clock() * 3)
+				local targetRoot = plr.Character and getRoot(plr.Character)
+				local targetHumanoid = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+				local myRoot = Players.LocalPlayer.Character and getRoot(Players.LocalPlayer.Character)
+				if not targetRoot or not targetHumanoid then
+					arrow.Visible = false
+					return
+				end
+				local distance = myRoot and math.floor((myRoot.Position - targetRoot.Position).Magnitude) or nil
+				if distance ~= lastDistance then
+					lastDistance = distance
+					detailLabel.Text = "@" .. plr.Name .. (distance and ("  ·  " .. distance .. " studs") or "")
+					arrowDistance.Text = distance and (distance .. " studs") or ""
+				end
+				local health = math.clamp(targetHumanoid.Health / math.max(targetHumanoid.MaxHealth, 1), 0, 1)
+				if health ~= lastHealth then
+					lastHealth = health
+					healthFill.Size = UDim2.fromScale(health, 1)
+					healthFill.BackgroundColor3 = Color3.fromHSV(health * 0.33, 0.7, 0.95)
+				end
+
+				-- On screen, the outline and tag are enough; otherwise point to them from the edge.
+				local camera = workspace.CurrentCamera
+				local viewport = camera.ViewportSize
+				local point = camera:WorldToViewportPoint(targetRoot.Position)
+				local margin = 48
+				local onScreen = point.Z > 0 and point.X >= margin and point.X <= viewport.X - margin
+					and point.Y >= margin and point.Y <= viewport.Y - margin
+				arrow.Visible = not onScreen
+				if onScreen then return end
+				local center = viewport / 2
+				local direction = Vector2.new(point.X, point.Y) - center
+				-- Behind the camera the projection comes out mirrored, so it's turned back around.
+				if point.Z < 0 then direction = -direction end
+				if direction.Magnitude < 1 then direction = Vector2.new(0, 1) end
+				local halfX, halfY = center.X - margin, center.Y - margin
+				local scale = math.min(halfX / math.max(math.abs(direction.X), 0.001), halfY / math.max(math.abs(direction.Y), 0.001))
+				local edge = center + direction * scale
+				arrow.Position = UDim2.fromOffset(edge.X, edge.Y)
+				arrowIcon.Rotation = math.deg(math.atan2(direction.Y, direction.X)) + 90
 			end
+			lcLoopFunc = RunService.RenderStepped:Connect(lcLoop)
 		end
 	end)
 end
@@ -13689,10 +13830,15 @@ local auxiliaryUiTheme = {
 	Stroke = Color3.fromRGB(45, 52, 66),
 	Accent = Color3.fromRGB(137, 122, 239),
 	AccentText = Color3.fromRGB(177, 164, 255),
+	OnAccent = Color3.new(1, 1, 1),
 	Text = Color3.fromRGB(237, 240, 246),
 	SubText = Color3.fromRGB(161, 171, 188),
 	Muted = Color3.fromRGB(104, 113, 130),
 	SelectedCard = Color3.fromRGB(42, 37, 66),
+	-- Status colours for numbers like FPS and ping: good, so-so and bad.
+	Good = Color3.fromRGB(74, 222, 128),
+	Fair = Color3.fromRGB(255, 212, 59),
+	Bad = Color3.fromRGB(255, 90, 90),
 }
 local auxiliaryUiColorBindings = {}
 -- Called after every theme change, for UI whose colours depend on state rather than a fixed role.
@@ -13702,7 +13848,9 @@ local function bindAuxiliaryUiColor(object, property, role)
 	table.insert(auxiliaryUiColorBindings, binding)
 	object[property] = auxiliaryUiTheme[role]
 end
-local function updateAuxiliaryUiTheme(theme)
+-- palette, when given, is the menu theme's palette (themePalettes): light themes get deeper
+-- wells, and its accentText is the accent for text and icons.
+local function updateAuxiliaryUiTheme(theme, palette)
 	local function color(value, fallback)
 		if typeof(value) == "ColorSequence" then return value.Keypoints[1].Value end
 		if typeof(value) == "Color3" then return value end
@@ -13711,23 +13859,36 @@ local function updateAuxiliaryUiTheme(theme)
 	local accent = color(theme.AccentColor, auxiliaryUiTheme.Accent)
 	local card = color(theme.ElementGradient, auxiliaryUiTheme.Card)
 	local background = color(theme.WindowColor, auxiliaryUiTheme.Background)
+	-- ElementStroke is the row border colour; SurfaceStroke is white in most themes.
+	local stroke = color(theme.ElementStroke, color(theme.SurfaceStroke, auxiliaryUiTheme.Stroke))
+	local light = palette ~= nil and palette.light == true
+	-- How bright the accent looks (relative luminance), to pick text that reads on top of it.
+	local function linear(channel)
+		return channel <= 0.04045 and channel / 12.92 or ((channel + 0.055) / 1.055) ^ 2.4
+	end
+	local accentLuminance = 0.2126 * linear(accent.R) + 0.7152 * linear(accent.G) + 0.0722 * linear(accent.B)
 	auxiliaryUiTheme = {
 		Background = background,
 		Card = card,
-		-- Rayfield's built-in themes use a white FieldBackground that is meant to be 90%
-		-- see-through, so anything drawn solid uses Inset instead: the row colour pulled
-		-- toward the window colour, which the theme's text is always readable on.
+		-- Rayfield's own themes use a white FieldBackground that is meant to be 90% see-through,
+		-- so anything drawn solid uses Inset instead: the row colour pulled toward the window
+		-- colour (on light themes, the window colour pulled toward the borders).
 		Field = color(theme.FieldBackground, card),
 		FieldTransparency = type(theme.FieldTransparency) == "number" and theme.FieldTransparency or 0,
-		Inset = card:Lerp(background, 0.6),
-		-- ElementStroke is the row border colour; SurfaceStroke is white in most themes.
-		Stroke = color(theme.ElementStroke, color(theme.SurfaceStroke, auxiliaryUiTheme.Stroke)),
+		Inset = light and background:Lerp(stroke, 0.35) or card:Lerp(background, 0.6),
+		Stroke = stroke,
 		Accent = accent,
-		AccentText = color(theme.AccentStroke, accent),
+		AccentText = (palette and palette.accentText) or color(theme.AccentStroke, accent),
+		-- Text on the accent colour: dark on bright accents (gold, teal), white on the rest.
+		OnAccent = accentLuminance > 0.32 and Color3.fromRGB(16, 18, 24) or Color3.new(1, 1, 1),
 		Text = color(theme.ContentColor, auxiliaryUiTheme.Text),
 		SubText = color(theme.TabColor, auxiliaryUiTheme.SubText),
 		Muted = color(theme.PlaceholderColor, auxiliaryUiTheme.Muted),
 		SelectedCard = accent:Lerp(card, 0.72),
+		-- Deeper on light themes, so they read on white.
+		Good = light and Color3.fromRGB(22, 163, 74) or Color3.fromRGB(74, 222, 128),
+		Fair = light and Color3.fromRGB(202, 138, 4) or Color3.fromRGB(255, 212, 59),
+		Bad = light and Color3.fromRGB(220, 38, 38) or Color3.fromRGB(255, 90, 90),
 	}
 	setEspAccentColor(auxiliaryUiTheme.AccentText)
 	for index = #auxiliaryUiColorBindings, 1, -1 do
@@ -14440,33 +14601,227 @@ if rayfieldLoaded and Rayfield then
 		if not spreadLogoLoaded then
 			warn("[SpreadCheeksGUI] Logo image not loaded. Put SpreadCheeksLogo.png in the executor workspace or use an uploaded Roblox image asset ID.")
 		end
-		local bespokeTheme = {
-			CornerRoundness = UDim.new(0, 14),
-			PillCornerRadius = UDim.new(0, 10),
-			ElementCornerRadius = UDim.new(0, 9),
-			WindowColor = ColorSequence.new(Color3.fromRGB(12, 14, 19), Color3.fromRGB(18, 21, 28)),
-			ShadowColor = Color3.fromRGB(0, 0, 0),
-			SurfaceStroke = Color3.fromRGB(45, 52, 66),
-			LiveAnimation = false,
-			ContentColor = Color3.fromRGB(237, 240, 246),
-			TitlingColor = Color3.fromRGB(246, 247, 251),
-			ActionColor = Color3.fromRGB(177, 164, 255),
-			TabColor = Color3.fromRGB(161, 171, 188),
-			TabBackground = ColorSequence.new(Color3.fromRGB(34, 39, 51), Color3.fromRGB(27, 31, 41)),
-			TabStroke = ColorSequence.new(Color3.fromRGB(67, 74, 92), Color3.fromRGB(52, 59, 75)),
-			ElementGradient = ColorSequence.new(Color3.fromRGB(24, 28, 37), Color3.fromRGB(24, 28, 37)),
-			ElementStroke = Color3.fromRGB(45, 52, 66),
-			ElementStrokeHover = Color3.fromRGB(137, 122, 239),
-			ElementStrokeTransparency = 0.3,
-			AccentColor = Color3.fromRGB(137, 122, 239),
-			AccentStroke = Color3.fromRGB(177, 164, 255),
-			AccentGlow = 0.64,
-			SliderProgress = ColorSequence.new(Color3.fromRGB(137, 122, 239), Color3.fromRGB(177, 164, 255)),
-			SliderHandle = Color3.fromRGB(246, 244, 255),
-			FieldBackground = Color3.fromRGB(18, 21, 28),
-			FieldGlow = Color3.fromRGB(137, 122, 239),
-			PlaceholderColor = Color3.fromRGB(104, 113, 130),
+		-- Feature settings (fly speeds and so on) are kept between sessions in this file and
+		-- changed from the settings cards further down.
+		local featureSettingsFile = "SpreadCheeksGUI_Features.json"
+		-- keybindListX/Y place the on-screen keybind list as a share of the screen (-1 until it's dragged).
+		local featureSettings = {
+			-- The menu's colour theme, by name (see themePalettes).
+			theme = "SpreadCheeks",
+			flySpeed = 1, vehicleFlySpeed = 1, freecamSpeed = 1, flyUpDownKeys = true,
+			keybindList = true, keybindListX = -1, keybindListY = -1,
+			-- Aimbot (under ESP). The key is "RightClick", "LeftClick" or a KeyCode name.
+			aimbotKey = "RightClick", aimbotPart = "Head", aimbotMethod = "Camera",
+			aimbotFov = 150, aimbotSmoothness = 3, aimbotShowFov = true, aimbotTeamCheck = true, aimbotWallCheck = true,
+			-- FOV circle colour: "Theme", "Rainbow" or "Custom" (aimbotFovColor, a hex code).
+			aimbotFovColorMode = "Theme", aimbotFovColor = "B1A4FF",
+			-- How far Free aim moves the mouse, as a multiple of what Roblox's own camera needs.
+			aimbotFreeAimSpeed = 1,
+			-- The Target choice "Random": aim at a random body part instead of always aimbotPart.
+			aimbotRandomPart = false,
+			-- Trigger bot: "Tap" or "Hold", the wait before the first shot and between taps (in
+			-- milliseconds), and when it may fire.
+			triggerMode = "Tap", triggerDelay = 60, triggerInterval = 150,
+			triggerTeamCheck = true, triggerWhileAiming = false, triggerIndicator = true,
+			-- Cheater Detector: on or off, what it watches for, how sure it has to be ("Relaxed",
+			-- "Normal" or "Strict"), and whether flagged players get outlined.
+			cheatDetector = false, cheatFly = true, cheatSpeed = true, cheatTeleport = true,
+			cheatNoclip = true, cheatFling = true, cheatSensitivity = "Normal", cheatOutline = true,
+			-- The Performance Stats window, and where it was dragged to (like keybindListX/Y).
+			performanceStats = false, performanceStatsX = -1, performanceStatsY = -1,
 		}
+		local featureLimits = {
+			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
+			aimbotFov = { 20, 600 }, aimbotSmoothness = { 1, 10 }, aimbotFreeAimSpeed = { 0.1, 3 },
+			triggerDelay = { 0, 500 }, triggerInterval = { 50, 1000 },
+		}
+		if readfile then
+			local readOk, contents = readfile(featureSettingsFile, true)
+			if readOk and type(contents) == "string" and contents ~= "" then
+				local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+				if decodeOk and type(data) == "table" then
+					for key, default in pairs(featureSettings) do
+						if type(data[key]) == type(default) then
+							featureSettings[key] = data[key]
+						end
+					end
+				end
+			end
+		end
+		for key, limits in pairs(featureLimits) do
+			featureSettings[key] = math.clamp(featureSettings[key], limits[1], limits[2])
+		end
+		iyflyspeed = featureSettings.flySpeed
+		vehicleflyspeed = featureSettings.vehicleFlySpeed
+		NAV_KEYBOARD_SPEED = Vector3.new(featureSettings.freecamSpeed, featureSettings.freecamSpeed, featureSettings.freecamSpeed)
+		QEfly = featureSettings.flyUpDownKeys
+		local function saveFeatureSettings()
+			if writefile then
+				writefile(featureSettingsFile, HttpService:JSONEncode(featureSettings), true)
+			end
+		end
+
+		-- Themes. Each is built from a small palette, so they all share one clean look: flat colours
+		-- with no gradients or glow, soft borders, and the accent kept for what's on or selected.
+		-- window is the window's background, element a row's, stroke their borders; accentText is
+		-- the accent for text and icons (lighter on dark themes, deeper on light ones); subText is
+		-- for tab names and secondary text, muted for placeholders.
+		local themePalettes = {
+			{
+				name = "SpreadCheeks",
+				window = Color3.fromRGB(14, 16, 22), element = Color3.fromRGB(23, 26, 35), stroke = Color3.fromRGB(42, 48, 62),
+				accent = Color3.fromRGB(137, 122, 239), accentText = Color3.fromRGB(177, 164, 255),
+				text = Color3.fromRGB(237, 240, 246), subText = Color3.fromRGB(156, 165, 184), muted = Color3.fromRGB(104, 113, 130),
+			},
+			{
+				name = "Default",
+				window = Color3.fromRGB(16, 16, 18), element = Color3.fromRGB(26, 26, 29), stroke = Color3.fromRGB(44, 44, 50),
+				accent = Color3.fromRGB(34, 197, 140), accentText = Color3.fromRGB(110, 231, 183),
+				text = Color3.fromRGB(240, 240, 243), subText = Color3.fromRGB(160, 160, 170), muted = Color3.fromRGB(108, 108, 118),
+			},
+			{
+				name = "Midnight",
+				window = Color3.fromRGB(7, 7, 11), element = Color3.fromRGB(15, 15, 22), stroke = Color3.fromRGB(32, 32, 46),
+				accent = Color3.fromRGB(129, 140, 248), accentText = Color3.fromRGB(165, 180, 252),
+				text = Color3.fromRGB(236, 237, 250), subText = Color3.fromRGB(150, 152, 180), muted = Color3.fromRGB(98, 100, 128),
+			},
+			{
+				name = "Cobalt",
+				window = Color3.fromRGB(13, 18, 26), element = Color3.fromRGB(21, 28, 40), stroke = Color3.fromRGB(38, 50, 70),
+				accent = Color3.fromRGB(59, 130, 246), accentText = Color3.fromRGB(125, 180, 255),
+				text = Color3.fromRGB(234, 240, 250), subText = Color3.fromRGB(150, 166, 190), muted = Color3.fromRGB(98, 114, 138),
+			},
+			{
+				name = "Ocean",
+				window = Color3.fromRGB(9, 19, 23), element = Color3.fromRGB(15, 30, 35), stroke = Color3.fromRGB(29, 52, 59),
+				accent = Color3.fromRGB(20, 184, 166), accentText = Color3.fromRGB(94, 234, 212),
+				text = Color3.fromRGB(229, 246, 245), subText = Color3.fromRGB(146, 180, 182), muted = Color3.fromRGB(94, 126, 130),
+			},
+			{
+				name = "Emerald",
+				window = Color3.fromRGB(9, 19, 14), element = Color3.fromRGB(15, 30, 22), stroke = Color3.fromRGB(28, 53, 39),
+				accent = Color3.fromRGB(16, 185, 129), accentText = Color3.fromRGB(110, 231, 183),
+				text = Color3.fromRGB(231, 246, 237), subText = Color3.fromRGB(148, 182, 162), muted = Color3.fromRGB(96, 128, 108),
+			},
+			{
+				name = "Amethyst",
+				window = Color3.fromRGB(17, 12, 25), element = Color3.fromRGB(27, 19, 39), stroke = Color3.fromRGB(50, 37, 70),
+				accent = Color3.fromRGB(168, 85, 247), accentText = Color3.fromRGB(216, 180, 254),
+				text = Color3.fromRGB(243, 236, 252), subText = Color3.fromRGB(180, 162, 204), muted = Color3.fromRGB(124, 108, 148),
+			},
+			{
+				name = "Rose",
+				window = Color3.fromRGB(23, 12, 18), element = Color3.fromRGB(35, 18, 27), stroke = Color3.fromRGB(62, 35, 49),
+				accent = Color3.fromRGB(236, 72, 153), accentText = Color3.fromRGB(249, 168, 212),
+				text = Color3.fromRGB(252, 236, 244), subText = Color3.fromRGB(204, 164, 184), muted = Color3.fromRGB(146, 110, 128),
+			},
+			{
+				name = "Crimson",
+				window = Color3.fromRGB(19, 10, 12), element = Color3.fromRGB(31, 16, 19), stroke = Color3.fromRGB(58, 30, 35),
+				accent = Color3.fromRGB(239, 68, 68), accentText = Color3.fromRGB(252, 165, 165),
+				text = Color3.fromRGB(250, 236, 236), subText = Color3.fromRGB(196, 160, 162), muted = Color3.fromRGB(140, 106, 108),
+			},
+			{
+				name = "Ember",
+				window = Color3.fromRGB(21, 14, 10), element = Color3.fromRGB(33, 22, 16), stroke = Color3.fromRGB(60, 41, 30),
+				accent = Color3.fromRGB(249, 115, 22), accentText = Color3.fromRGB(253, 186, 116),
+				text = Color3.fromRGB(252, 240, 232), subText = Color3.fromRGB(200, 172, 152), muted = Color3.fromRGB(144, 118, 100),
+			},
+			{
+				name = "Gold",
+				window = Color3.fromRGB(16, 14, 10), element = Color3.fromRGB(27, 24, 17), stroke = Color3.fromRGB(52, 46, 32),
+				accent = Color3.fromRGB(234, 179, 8), accentText = Color3.fromRGB(253, 224, 71),
+				text = Color3.fromRGB(250, 246, 232), subText = Color3.fromRGB(192, 180, 150), muted = Color3.fromRGB(136, 126, 100),
+			},
+			{
+				name = "Frost", light = true,
+				window = Color3.fromRGB(240, 245, 249), element = Color3.fromRGB(255, 255, 255), stroke = Color3.fromRGB(218, 226, 233),
+				accent = Color3.fromRGB(14, 165, 233), accentText = Color3.fromRGB(3, 105, 161),
+				text = Color3.fromRGB(22, 30, 40), subText = Color3.fromRGB(84, 98, 116), muted = Color3.fromRGB(140, 152, 168),
+			},
+			{
+				name = "Daylight", light = true,
+				window = Color3.fromRGB(243, 243, 246), element = Color3.fromRGB(255, 255, 255), stroke = Color3.fromRGB(224, 224, 230),
+				accent = Color3.fromRGB(37, 99, 235), accentText = Color3.fromRGB(29, 78, 216),
+				text = Color3.fromRGB(20, 20, 26), subText = Color3.fromRGB(96, 96, 110), muted = Color3.fromRGB(148, 148, 160),
+			},
+			{
+				name = "Sakura", light = true,
+				window = Color3.fromRGB(251, 242, 246), element = Color3.fromRGB(255, 255, 255), stroke = Color3.fromRGB(241, 216, 227),
+				accent = Color3.fromRGB(219, 39, 119), accentText = Color3.fromRGB(190, 24, 93),
+				text = Color3.fromRGB(40, 20, 30), subText = Color3.fromRGB(120, 88, 104), muted = Color3.fromRGB(172, 140, 156),
+			},
+		}
+		local function paletteNamed(name)
+			for _, palette in ipairs(themePalettes) do
+				if palette.name == name then return palette end
+			end
+			return nil
+		end
+		-- A full Rayfield theme from a palette. ChangeTheme only replaces the keys it's given, so
+		-- this sets every colour Rayfield uses (fonts are left alone). Dark themes follow Rayfield's
+		-- default and light ones its Frost theme, in how they use each key.
+		local function makeTheme(palette)
+			local dark = not palette.light
+			local window, element, stroke, accent = palette.window, palette.element, palette.stroke, palette.accent
+			-- Hovered surfaces get lighter on dark themes and darker on light ones.
+			local shade = dark and Color3.new(1, 1, 1) or Color3.new(0, 0, 0)
+			-- Wells for text boxes, slider tracks and switches, set into the rows.
+			local inset = dark and element:Lerp(window, 0.6) or window:Lerp(stroke, 0.35)
+			local function flat(color)
+				return ColorSequence.new(color)
+			end
+			return {
+				CornerRoundness = UDim.new(0, 14),
+				ElementCornerRadius = UDim.new(0, 10),
+				PillCornerRadius = UDim.new(0, 10),
+				LiveAnimation = false,
+				DarkToggleOverlay = dark,
+				WindowColor = flat(window),
+				ShadowColor = dark and Color3.new(0, 0, 0) or stroke:Lerp(Color3.new(0, 0, 0), 0.4),
+				SurfaceStroke = stroke,
+				ContentColor = palette.text,
+				TitlingColor = palette.text,
+				ElementTextHoverColor = palette.text,
+				ActionColor = palette.subText,
+				TabColor = palette.subText,
+				-- The selected tab: a soft tint of the accent on dark themes, the accent itself on light.
+				TabBackground = flat(dark and accent:Lerp(element, 0.8) or accent),
+				TabStroke = flat(dark and accent:Lerp(element, 0.55) or accent:Lerp(Color3.new(1, 1, 1), 0.3)),
+				ElementGradient = flat(element),
+				ElementTransparency = 0,
+				ElementStroke = stroke,
+				ElementStrokeGradient = flat(stroke),
+				ElementStrokeTransparency = dark and 0.35 or 0.1,
+				ElementStrokeHover = accent,
+				ElementStrokeHoverTransparency = 0.25,
+				AccentColor = accent,
+				AccentStroke = dark and palette.accentText or accent:Lerp(Color3.new(1, 1, 1), 0.3),
+				AccentGlow = dark and 0.8 or 0.9,
+				DropdownHighlight = accent,
+				StatBackground = inset,
+				SliderBackground = inset,
+				SliderBackgroundHover = inset:Lerp(shade, 0.05),
+				SliderProgress = flat(accent),
+				SliderStroke = stroke,
+				SliderHandle = dark and Color3.fromRGB(250, 250, 252) or palette.text,
+				ToggleTrack = dark and inset or stroke:Lerp(Color3.new(0, 0, 0), 0.08),
+				ToggleTrackTransparency = 0,
+				ToggleKnobOff = dark and palette.muted or Color3.new(1, 1, 1),
+				ToggleKnobOffTransparency = 0,
+				FieldBackground = inset,
+				FieldTransparency = 0,
+				FieldGlow = accent,
+				PlaceholderColor = palette.muted,
+				NeutralButton = element:Lerp(shade, 0.05),
+				NeutralButtonHover = element:Lerp(shade, 0.09),
+				NeutralButtonStroke = stroke,
+				ErrorColor = Color3.fromRGB(220, 60, 60),
+				ErrorStrokeColor = Color3.fromRGB(248, 113, 113),
+			}
+		end
+		-- The theme picked last time, or SpreadCheeks.
+		local currentPalette = paletteNamed(featureSettings.theme) or themePalettes[1]
 
 		local window = Rayfield:CreateWindow({
 			name = "SpreadCheeksGUI",
@@ -14474,7 +14829,7 @@ if rayfieldLoaded and Rayfield then
 			subtitle = "COMMAND CENTER",
 			sidebarLayout = true,
 			profile = tostring(#cmds) .. " commands loaded",
-			theme = bespokeTheme,
+			theme = makeTheme(currentPalette),
 			showName = "SpreadCheeksGUI",
 			showIcon = spreadLogo,
 		})
@@ -14520,7 +14875,7 @@ if rayfieldLoaded and Rayfield then
 			end
 		end
 		restoreLogoPresentation()
-		updateAuxiliaryUiTheme(window.theme)
+		updateAuxiliaryUiTheme(window.theme, currentPalette)
 
 		-- Creates a Rayfield element (or tab) with a Lucide icon: pass an icon, or icon names to
 		-- try in order. Rayfield draws the icon's whole sprite sheet, so the element's icon label
@@ -14812,75 +15167,29 @@ if rayfieldLoaded and Rayfield then
 		local interfaceTab = withIcon(window, "CreateTab", { name = "Interface" }, "layout-dashboard", "app-window")
 		-- Rayfield's gear button opens this built-in tab; keep appearance options there.
 		withIcon(window.rfSettings, "CreateSection", { name = "Appearance" }, "palette")
+		local themeNames = {}
+		for _, palette in ipairs(themePalettes) do
+			table.insert(themeNames, palette.name)
+		end
 		withIcon(window.rfSettings, "CreateDropdown", {
 			name = "Theme",
-			description = "Choose the colour theme for this menu.",
-			options = { "SpreadCheeks", "Default", "Cobalt", "Ember", "Amethyst", "Frost", "Rose" },
-			value = "SpreadCheeks",
+			description = "The colours for this menu and its windows. Frost, Daylight and Sakura are light. Remembered between sessions.",
+			options = themeNames,
+			value = currentPalette.name,
 			callback = function(value)
-				if value == "SpreadCheeks" then
-					window:ChangeTheme(bespokeTheme)
-				else
-					window:ChangeTheme(tostring(value):lower())
-				end
+				if type(value) == "table" then value = value[1] end
+				local palette = paletteNamed(tostring(value))
+				if not palette then return end
+				currentPalette = palette
+				window:ChangeTheme(makeTheme(palette))
 				restoreLogoPresentation()
-				updateAuxiliaryUiTheme(window.theme)
+				updateAuxiliaryUiTheme(window.theme, palette)
+				if featureSettings.theme ~= palette.name then
+					featureSettings.theme = palette.name
+					saveFeatureSettings()
+				end
 			end,
 		}, "palette")
-		-- Feature settings (fly speeds and so on) are kept between sessions in this file and
-		-- changed from the settings cards further down.
-		local featureSettingsFile = "SpreadCheeksGUI_Features.json"
-		-- keybindListX/Y place the on-screen keybind list as a share of the screen (-1 until it's dragged).
-		local featureSettings = {
-			flySpeed = 1, vehicleFlySpeed = 1, freecamSpeed = 1, flyUpDownKeys = true,
-			keybindList = true, keybindListX = -1, keybindListY = -1,
-			-- Aimbot (under ESP). The key is "RightClick", "LeftClick" or a KeyCode name.
-			aimbotKey = "RightClick", aimbotPart = "Head", aimbotMethod = "Camera",
-			aimbotFov = 150, aimbotSmoothness = 3, aimbotShowFov = true, aimbotTeamCheck = true, aimbotWallCheck = true,
-			-- FOV circle colour: "Theme", "Rainbow" or "Custom" (aimbotFovColor, a hex code).
-			aimbotFovColorMode = "Theme", aimbotFovColor = "B1A4FF",
-			-- How far Free aim moves the mouse, as a multiple of what Roblox's own camera needs.
-			aimbotFreeAimSpeed = 1,
-			-- The Target choice "Random": aim at a random body part instead of always aimbotPart.
-			aimbotRandomPart = false,
-			-- Trigger bot: "Tap" or "Hold", the wait before the first shot and between taps (in
-			-- milliseconds), and when it may fire.
-			triggerMode = "Tap", triggerDelay = 60, triggerInterval = 150,
-			triggerTeamCheck = true, triggerWhileAiming = false, triggerIndicator = true,
-			-- The Performance Stats window, and where it was dragged to (like keybindListX/Y).
-			performanceStats = false, performanceStatsX = -1, performanceStatsY = -1,
-		}
-		local featureLimits = {
-			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
-			aimbotFov = { 20, 600 }, aimbotSmoothness = { 1, 10 }, aimbotFreeAimSpeed = { 0.1, 3 },
-			triggerDelay = { 0, 500 }, triggerInterval = { 50, 1000 },
-		}
-		if readfile then
-			local readOk, contents = readfile(featureSettingsFile, true)
-			if readOk and type(contents) == "string" and contents ~= "" then
-				local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
-				if decodeOk and type(data) == "table" then
-					for key, default in pairs(featureSettings) do
-						if type(data[key]) == type(default) then
-							featureSettings[key] = data[key]
-						end
-					end
-				end
-			end
-		end
-		for key, limits in pairs(featureLimits) do
-			featureSettings[key] = math.clamp(featureSettings[key], limits[1], limits[2])
-		end
-		iyflyspeed = featureSettings.flySpeed
-		vehicleflyspeed = featureSettings.vehicleFlySpeed
-		NAV_KEYBOARD_SPEED = Vector3.new(featureSettings.freecamSpeed, featureSettings.freecamSpeed, featureSettings.freecamSpeed)
-		QEfly = featureSettings.flyUpDownKeys
-		local function saveFeatureSettings()
-			if writefile then
-				writefile(featureSettingsFile, HttpService:JSONEncode(featureSettings), true)
-			end
-		end
-
 		-- Quick toggles register here so a keybind can flip them and keep the
 		-- switch in the menu showing the right state.
 		local quickToggles = {}
@@ -15082,6 +15391,18 @@ if rayfieldLoaded and Rayfield then
 		addQuickToggle(protectionTab, "No Fall Damage", "Prevents fall damage in Natural Disaster Survival", setNoFall, "feather")
 		withIcon(protectionTab, "CreateSection", { name = "Stealth" }, "eye-off")
 		addCommandToggle(protectionTab, "Invisible", "invisible", "visible", nil, "eye-off")
+		-- Cheater Detector warns you about players who move like cheaters. Its switch is made here,
+		-- with the others, so it gets a key box; the watching is built further down
+		-- (buildCheaterDetector), and it's remembered between sessions.
+		withIcon(protectionTab, "CreateSection", { name = "Awareness" }, "radar", "scan-eye")
+		local cheaterDetector = nil
+		addQuickToggle(protectionTab, "Cheater Detector", "Warns you when someone moves like a cheater. Right-click for settings", function(enabled)
+			if featureSettings.cheatDetector ~= enabled then
+				featureSettings.cheatDetector = enabled
+				saveFeatureSettings()
+			end
+			if cheaterDetector then cheaterDetector.setEnabled(enabled) end
+		end, "radar", "siren", "shield-alert")
 
 		-- Interface: windows on screen, keybinds and extras. Performance Stats is made here, with the
 		-- other switches, so it gets a key box; its window is built further down (buildPerformanceStats).
@@ -15566,7 +15887,7 @@ if rayfieldLoaded and Rayfield then
 			local function flash(view)
 				local theme = auxiliaryUiTheme
 				view.keyBadge.BackgroundColor3 = theme.Accent
-				view.keyBadge.TextColor3 = Color3.new(1, 1, 1)
+				view.keyBadge.TextColor3 = theme.OnAccent
 				view.rowStroke.Color = theme.Accent
 				TweenService:Create(view.keyBadge, flashInfo, { BackgroundColor3 = theme.Inset, TextColor3 = theme.Text }):Play()
 				TweenService:Create(view.rowStroke, flashInfo, { Color = theme.Stroke }):Play()
@@ -15872,18 +16193,16 @@ if rayfieldLoaded and Rayfield then
 			sharedEnv.SpreadCheeksPerformanceConnections = connections
 
 			local panelWidth, headerHeight, heroHeight, rowHeight, padding = 236, 36, 62, 22, 12
-			local goodColor = Color3.fromRGB(74, 222, 128)
-			local fairColor = Color3.fromRGB(255, 212, 59)
-			local badColor = Color3.fromRGB(255, 90, 90)
+			-- Green, amber or red from the theme, which deepens them on light themes.
 			local function fpsColor(fps)
-				if fps >= 50 then return goodColor end
-				if fps >= 30 then return fairColor end
-				return badColor
+				if fps >= 50 then return auxiliaryUiTheme.Good end
+				if fps >= 30 then return auxiliaryUiTheme.Fair end
+				return auxiliaryUiTheme.Bad
 			end
 			local function pingColor(ping)
-				if ping < 100 then return goodColor end
-				if ping < 200 then return fairColor end
-				return badColor
+				if ping < 100 then return auxiliaryUiTheme.Good end
+				if ping < 200 then return auxiliaryUiTheme.Fair end
+				return auxiliaryUiTheme.Bad
 			end
 
 			local gui = Instance.new("ScreenGui")
@@ -15957,7 +16276,7 @@ if rayfieldLoaded and Rayfield then
 			verdict.Font = Enum.Font.GothamBold
 			verdict.Text = "..."
 			verdict.TextSize = 10
-			verdict.TextColor3 = goodColor
+			verdict.TextColor3 = auxiliaryUiTheme.Good
 			bindAuxiliaryUiColor(verdict, "BackgroundColor3", "Inset")
 			verdict.Parent = panel
 			local verdictCorner = Instance.new("UICorner")
@@ -15966,7 +16285,7 @@ if rayfieldLoaded and Rayfield then
 			local verdictStroke = Instance.new("UIStroke")
 			verdictStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			verdictStroke.Transparency = 0.5
-			verdictStroke.Color = goodColor
+			verdictStroke.Color = auxiliaryUiTheme.Good
 			verdictStroke.Parent = verdict
 
 			-- The frame rate, large, with its average and low point, beside a graph of the last
@@ -16006,7 +16325,7 @@ if rayfieldLoaded and Rayfield then
 				bar.Position = UDim2.new(0, 5 + (index - 1) * (barWidth + barGap), 1, -5)
 				bar.Size = UDim2.fromOffset(barWidth, 0)
 				bar.BorderSizePixel = 0
-				bar.BackgroundColor3 = goodColor
+				bar.BackgroundColor3 = auxiliaryUiTheme.Good
 				bar.Parent = graph
 				local barCorner = Instance.new("UICorner")
 				barCorner.CornerRadius = UDim.new(0, 1)
@@ -16173,7 +16492,7 @@ if rayfieldLoaded and Rayfield then
 					-- A hitch in the last half second shows beside the average.
 					frameText ..= string.format("  (max %d)", math.floor(latest.slowestMs + 0.5))
 				end
-				setRow("frame", frameText, latest.slowestMs >= 50 and fairColor or nil)
+				setRow("frame", frameText, latest.slowestMs >= 50 and auxiliaryUiTheme.Fair or nil)
 				local ping = readPing()
 				setRow("ping", ping and (math.floor(ping + 0.5) .. " ms"), ping and pingColor(ping))
 				local memory = readNumber(function() return StatsService:GetTotalMemoryUsageMb() end)
@@ -16190,12 +16509,13 @@ if rayfieldLoaded and Rayfield then
 
 				-- The verdict goes by the frame rate and ping together.
 				local pingValue = ping or 0
+				local theme = auxiliaryUiTheme
 				if fps >= 50 and pingValue < 150 then
-					verdict.Text, verdict.TextColor3, verdictStroke.Color = "SMOOTH", goodColor, goodColor
+					verdict.Text, verdict.TextColor3, verdictStroke.Color = "SMOOTH", theme.Good, theme.Good
 				elseif fps >= 30 and pingValue < 300 then
-					verdict.Text, verdict.TextColor3, verdictStroke.Color = "OKAY", fairColor, fairColor
+					verdict.Text, verdict.TextColor3, verdictStroke.Color = "OKAY", theme.Fair, theme.Fair
 				else
-					verdict.Text, verdict.TextColor3, verdictStroke.Color = "LAGGY", badColor, badColor
+					verdict.Text, verdict.TextColor3, verdictStroke.Color = "LAGGY", theme.Bad, theme.Bad
 				end
 				resize()
 			end
@@ -16646,7 +16966,7 @@ if rayfieldLoaded and Rayfield then
 					for option, button in pairs(buttons) do
 						local selected = current == option
 						button.BackgroundColor3 = selected and theme.Accent or theme.Inset
-						button.TextColor3 = selected and Color3.new(1, 1, 1) or theme.SubText
+						button.TextColor3 = selected and theme.OnAccent or theme.SubText
 					end
 				end)
 			end
@@ -17196,7 +17516,7 @@ if rayfieldLoaded and Rayfield then
 				for mode, button in pairs(modeButtons) do
 					local selected = espSettings.colorMode == mode
 					button.BackgroundColor3 = selected and theme.Accent or theme.Inset
-					button.TextColor3 = selected and Color3.new(1, 1, 1) or theme.SubText
+					button.TextColor3 = selected and theme.OnAccent or theme.SubText
 				end
 				modeHint.Text = modeHints[espSettings.colorMode] or ""
 				local customHex = string.upper(espSettings.customColor)
@@ -18297,6 +18617,360 @@ if rayfieldLoaded and Rayfield then
 			warn("[SpreadCheeksGUI] The trigger bot couldn't be added: " .. tostring(triggerBotError))
 		end
 
+		-- Cheater Detector: watches how other players move, ten times a second, and warns you when
+		-- someone looks like they're flying, speed hacking, teleporting, walking through walls or
+		-- flinging. It only has what your game sees to go on, so it says "possible": lag, jump pads
+		-- and some game features can set it off. Its switch is in Protection.
+		local function buildCheaterDetector()
+			local localPlayer = Players.LocalPlayer
+			if not table.find({ "Relaxed", "Normal", "Strict" }, featureSettings.cheatSensitivity) then
+				featureSettings.cheatSensitivity = "Normal"
+			end
+			-- How far out of the ordinary something has to be before it says anything. flyTime is
+			-- seconds off the ground; fallSpeed is how fast (studs/s, downwards) counts as falling;
+			-- speedFactor multiplies their walk speed; teleport is studs in a tenth of a second;
+			-- wallPasses is walls gone through in six seconds; flingSpeed and flingSpin are the
+			-- velocity (studs/s) and spin (radians/s) that count as flinging.
+			local sensitivities = {
+				Relaxed = { flyTime = 4, fallSpeed = -3, speedFactor = 3, teleport = 120, wallPasses = 3, flingSpeed = 800, flingSpin = 120 },
+				Normal = { flyTime = 2.5, fallSpeed = -6, speedFactor = 2.2, teleport = 80, wallPasses = 2, flingSpeed = 400, flingSpin = 60 },
+				Strict = { flyTime = 1.6, fallSpeed = -10, speedFactor = 1.7, teleport = 50, wallPasses = 1, flingSpeed = 250, flingSpin = 40 },
+			}
+			local running, monitorSerial = false, 0
+			local card = nil
+
+			-- A red outline on a flagged player, gone after ten seconds.
+			local previousMarks = COREGUI:FindFirstChild("SpreadCheeksCheaterMarks")
+			if previousMarks then previousMarks:Destroy() end
+			local markFolder = Instance.new("Folder")
+			markFolder.Name = "SpreadCheeksCheaterMarks"
+			markFolder.Parent = COREGUI
+			local marks = setmetatable({}, { __mode = "k" })
+			local function outline(player)
+				local character = player.Character
+				if not character then return end
+				local mark = marks[player]
+				if not mark or not mark.Parent then
+					mark = Instance.new("Highlight")
+					mark.Name = player.Name
+					mark.FillTransparency = 1
+					mark.OutlineColor = Color3.fromRGB(255, 90, 90)
+					mark.OutlineTransparency = 0
+					mark.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					mark.Parent = markFolder
+					marks[player] = mark
+				end
+				mark.Adornee = character
+				-- Flagged again before it fades: the ten seconds start over.
+				local serial = (mark:GetAttribute("Serial") or 0) + 1
+				mark:SetAttribute("Serial", serial)
+				task.delay(10, function()
+					if mark.Parent and mark:GetAttribute("Serial") == serial then
+						mark:Destroy()
+					end
+				end)
+			end
+
+			-- The last few flags, newest first, listed in the settings card.
+			local recentFlags = {}
+			local lastFlagged = setmetatable({}, { __mode = "k" })
+			local function flag(player, kind, short, message)
+				local now = os.clock()
+				local times = lastFlagged[player]
+				if not times then
+					times = {}
+					lastFlagged[player] = times
+				end
+				-- At most once every 30 seconds for each player and kind of thing, so it doesn't nag.
+				if times[kind] and now - times[kind] < 30 then return end
+				times[kind] = now
+				local who = player.DisplayName ~= player.Name and (player.DisplayName .. " (@" .. player.Name .. ")") or player.Name
+				notify("Possible cheater", who .. " " .. message, 6)
+				table.insert(recentFlags, 1, { name = player.DisplayName, short = short, at = os.time() })
+				if #recentFlags > 6 then table.remove(recentFlags) end
+				if featureSettings.cheatOutline then outline(player) end
+				if card and card.expanded then card.refresh() end
+			end
+
+			-- When the game moves lots of players at once (a new round, say), that isn't cheating, so a
+			-- big jump is only flagged if few others jumped at the same moment.
+			local recentJumps = {}
+			local function noteTeleport(player, distance)
+				local at = os.clock()
+				table.insert(recentJumps, { player = player, at = at })
+				task.delay(1.2, function()
+					local jumpers = {}
+					for index = #recentJumps, 1, -1 do
+						local jump = recentJumps[index]
+						if os.clock() - jump.at > 5 then
+							table.remove(recentJumps, index)
+						elseif math.abs(jump.at - at) <= 1.5 then
+							jumpers[jump.player] = true
+						end
+					end
+					local count = 0
+					for _ in pairs(jumpers) do count += 1 end
+					if count < 3 and running and featureSettings.cheatTeleport and player.Parent then
+						flag(player, "teleport", "teleporting", string.format("jumped %d studs in an instant. They may be teleporting.", math.floor(distance + 0.5)))
+					end
+				end)
+			end
+
+			local groundParams = RaycastParams.new()
+			groundParams.FilterType = Enum.RaycastFilterType.Exclude
+			local nearbyParams = OverlapParams.new()
+			nearbyParams.FilterType = Enum.RaycastFilterType.Exclude
+			nearbyParams.MaxParts = 20
+			local wallParams = RaycastParams.new()
+			wallParams.FilterType = Enum.RaycastFilterType.Exclude
+			wallParams.IgnoreWater = true
+			-- On something (or someone), in water, sitting, or right up against something solid, as
+			-- when climbing a ladder or hugging a wall.
+			local function isSupported(character, root, humanoid)
+				if humanoid.SeatPart or humanoid.Sit then return true end
+				groundParams.FilterDescendantsInstances = { character }
+				if workspace:Raycast(root.Position, Vector3.new(0, -9, 0), groundParams) then return true end
+				nearbyParams.FilterDescendantsInstances = { character }
+				for _, part in ipairs(workspace:GetPartBoundsInBox(root.CFrame, Vector3.new(6, 8, 6), nearbyParams)) do
+					if part.CanCollide then return true end
+				end
+				return false
+			end
+
+			-- What's known about each player's movement: where they've been over the last second
+			-- and a half, and how long each odd thing has been going on.
+			local trackers = setmetatable({}, { __mode = "k" })
+			local function watch(player, now, limits, characters)
+				local character = player.Character
+				local root = character and character:FindFirstChild("HumanoidRootPart")
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if not root or not humanoid or humanoid.Health <= 0 then
+					trackers[player] = nil
+					return
+				end
+				local tracker = trackers[player]
+				-- A new character, or one not seen for a moment (it may have been too far away to load,
+				-- or this game lagged): start again from here rather than call the gap a teleport.
+				if not tracker or tracker.root ~= root or now - tracker.lastTime > 0.6 then
+					local spawnedAt = (tracker and tracker.root == root) and tracker.spawnedAt or now
+					tracker = { root = root, spawnedAt = spawnedAt, history = {}, wallPasses = {}, flingHits = {} }
+					trackers[player] = tracker
+					tracker.lastPosition, tracker.lastTime = root.Position, now
+					table.insert(tracker.history, { now, root.Position })
+					return
+				end
+
+				local position = root.Position
+				local elapsed = now - tracker.lastTime
+				local moved = position - tracker.lastPosition
+				tracker.lastPosition, tracker.lastTime = position, now
+				table.insert(tracker.history, { now, position })
+				while now - tracker.history[1][1] > 1.6 do
+					table.remove(tracker.history, 1)
+				end
+				-- Where they were about a second ago, for speeds over a whole second.
+				local past, span = nil, 0
+				for _, entry in ipairs(tracker.history) do
+					if now - entry[1] <= 1.05 then
+						past, span = entry, now - entry[1]
+						break
+					end
+				end
+				-- Nothing counts for a few seconds after spawning, while the game places them.
+				local settled = now - tracker.spawnedAt > 4
+				local seated = humanoid.SeatPart ~= nil or humanoid.Sit
+				local supported = isSupported(character, root, humanoid)
+				-- Low gravity makes jumps longer and falls slower, so the flying check allows for it.
+				local gravityScale = math.max(workspace.Gravity, 1) / 196.2
+
+				-- Teleporting: a big jump between two looks a tenth of a second apart.
+				if featureSettings.cheatTeleport and settled and not seated and moved.Magnitude > limits.teleport then
+					tracker.teleportedAt = now
+					noteTeleport(player, moved.Magnitude)
+				end
+				local justTeleported = tracker.teleportedAt ~= nil and now - tracker.teleportedAt < 1.5
+
+				-- Flying: off the ground for a while without falling.
+				if supported then
+					tracker.airborneSince = nil
+				else
+					tracker.airborneSince = tracker.airborneSince or now
+					local airTime = now - tracker.airborneSince
+					local climb = span >= 0.8 and (position.Y - past[2].Y) / span or nil
+					if featureSettings.cheatFly and settled and not justTeleported and climb
+						and airTime >= limits.flyTime / math.sqrt(gravityScale)
+						and climb > limits.fallSpeed * gravityScale then
+						flag(player, "fly", "flying", string.format("has been in the air for %ds without falling. They may be flying.", math.floor(airTime + 0.5)))
+					end
+				end
+
+				-- Speed: on the ground and covering far more of it than their walk speed allows.
+				if featureSettings.cheatSpeed and settled and supported and not seated and not justTeleported and span >= 0.8 then
+					local flat = Vector3.new(position.X - past[2].X, 0, position.Z - past[2].Z)
+					local speed = flat.Magnitude / span
+					if speed > math.max(humanoid.WalkSpeed, 16) * limits.speedFactor + 6 then
+						tracker.fastSince = tracker.fastSince or now
+						if now - tracker.fastSince >= 1 then
+							flag(player, "speed", "speed hacking", string.format("is moving at %d studs/s (their walk speed is %d). They may be speed hacking.", math.floor(speed + 0.5), math.floor(humanoid.WalkSpeed + 0.5)))
+						end
+					else
+						tracker.fastSince = nil
+					end
+				else
+					tracker.fastSince = nil
+				end
+
+				-- Noclip: going straight through something solid between two looks. Glass, invisible
+				-- walls and parts you can walk through don't count, and neither do other players.
+				if featureSettings.cheatNoclip and settled and not seated and not justTeleported then
+					local flatMove = Vector3.new(moved.X, 0, moved.Z).Magnitude
+					if flatMove > 0.5 and moved.Magnitude < 25 then
+						wallParams.FilterDescendantsInstances = characters
+						local hit = workspace:Raycast(position - moved, moved, wallParams)
+						local wall = hit and hit.Instance
+						if wall and wall.CanCollide and wall.Transparency < 0.95 and not wall:IsA("TrussPart") then
+							table.insert(tracker.wallPasses, now)
+						end
+					end
+					while #tracker.wallPasses > 0 and now - tracker.wallPasses[1] > 6 do
+						table.remove(tracker.wallPasses, 1)
+					end
+					if #tracker.wallPasses >= limits.wallPasses then
+						tracker.wallPasses = {}
+						flag(player, "noclip", "noclip", "went straight through a wall. They may be using noclip.")
+					end
+				end
+
+				-- Flinging: huge speed or spin that doesn't actually carry them anywhere. (Someone
+				-- being flung moves a long way, so they aren't flagged.)
+				if featureSettings.cheatFling and settled then
+					local velocity = root.AssemblyLinearVelocity.Magnitude
+					local spin = root.AssemblyAngularVelocity.Magnitude
+					local staysPut = moved.Magnitude < 10
+					if staysPut and (spin > limits.flingSpin or (velocity > limits.flingSpeed and moved.Magnitude < velocity * elapsed * 0.2)) then
+						table.insert(tracker.flingHits, now)
+					end
+					while #tracker.flingHits > 0 and now - tracker.flingHits[1] > 2 do
+						table.remove(tracker.flingHits, 1)
+					end
+					if #tracker.flingHits >= 3 then
+						tracker.flingHits = {}
+						flag(player, "fling", "flinging", "is spinning or moving with huge, sudden force. They may be flinging people.")
+					end
+				end
+			end
+
+			local warnedOnce = false
+			local function monitor(serial)
+				while running and serial == monitorSerial do
+					local now = os.clock()
+					local limits = sensitivities[featureSettings.cheatSensitivity] or sensitivities.Normal
+					-- Everyone's characters, so players walking through each other isn't noclip.
+					local players = Players:GetPlayers()
+					local characters = {}
+					for _, player in ipairs(players) do
+						if player.Character then table.insert(characters, player.Character) end
+					end
+					for _, player in ipairs(players) do
+						if player ~= localPlayer then
+							local watchOk, problem = pcall(watch, player, now, limits, characters)
+							if not watchOk then
+								trackers[player] = nil
+								if not warnedOnce then
+									warnedOnce = true
+									warn("[SpreadCheeksGUI] Cheater Detector couldn't check " .. player.Name .. ": " .. tostring(problem))
+								end
+							end
+						end
+					end
+					task.wait(0.1)
+				end
+			end
+			local function setEnabled(enabled)
+				enabled = enabled == true
+				if enabled == running then return end
+				running = enabled
+				monitorSerial += 1
+				if enabled then
+					task.spawn(monitor, monitorSerial)
+				else
+					table.clear(trackers)
+				end
+			end
+
+			-- Settings, opened by right-clicking the switch.
+			local entry = quickToggleByName["Cheater Detector"]
+			card = entry and createSettingsCard(entry)
+			if card then
+				local function setting(text, key)
+					return {
+						text = text,
+						get = function() return featureSettings[key] == true end,
+						set = function(on)
+							featureSettings[key] = on
+							saveFeatureSettings()
+						end,
+					}
+				end
+				local function timeAgo(seconds)
+					if seconds < 10 then return "just now" end
+					if seconds < 60 then return seconds .. "s ago" end
+					if seconds < 3600 then return math.floor(seconds / 60) .. "m ago" end
+					return math.floor(seconds / 3600) .. "h ago"
+				end
+
+				card.addSectionLabel("WATCH FOR", "scan-eye", "eye")
+				card.addSwitchGrid({
+					setting("Flying", "cheatFly"),
+					setting("Speed", "cheatSpeed"),
+					setting("Teleporting", "cheatTeleport"),
+					setting("Noclip", "cheatNoclip"),
+					setting("Flinging", "cheatFling"),
+				})
+				card.addSectionLabel("SENSITIVITY", "gauge")
+				card.addChoice({ "Relaxed", "Normal", "Strict" }, function() return featureSettings.cheatSensitivity end, function(level)
+					featureSettings.cheatSensitivity = level
+					saveFeatureSettings()
+				end)
+				card.addHint(function()
+					local level = featureSettings.cheatSensitivity
+					if level == "Relaxed" then
+						return "Only clear-cut cases, like hovering for seconds or jumping across the map."
+					elseif level == "Strict" then
+						return "Catches more, but lag and game features like jump pads are more likely to set it off."
+					end
+					return "Catches most cheats with few false alarms."
+				end)
+				card.addSectionLabel("ALERTS", "bell")
+				card.addSwitchGrid({ setting("Outline flagged players", "cheatOutline") }, 1)
+				card.addHint("You get a notification naming the player and what they did, at most every 30 seconds for each player and kind of thing. The outline shows where they are, through walls, for 10 seconds.")
+				card.addSectionLabel("RECENT", "history", "clock")
+				card.addHint(function()
+					if #recentFlags == 0 then return "Nothing flagged yet." end
+					local lines = {}
+					for _, recent in ipairs(recentFlags) do
+						table.insert(lines, recent.name .. "  ·  " .. recent.short .. "  ·  " .. timeAgo(os.time() - recent.at))
+					end
+					return table.concat(lines, "\n")
+				end)
+				card.refresh()
+			end
+
+			return { setEnabled = setEnabled }
+		end
+
+		-- Kept separate so a problem in the detector can't stop the rest of the menu loading.
+		local cheaterDetectorOk, builtCheaterDetector = pcall(buildCheaterDetector)
+		if cheaterDetectorOk then
+			cheaterDetector = builtCheaterDetector
+		else
+			warn("[SpreadCheeksGUI] Cheater Detector couldn't be added: " .. tostring(builtCheaterDetector))
+		end
+		-- Starts watching again if it was on last time.
+		if featureSettings.cheatDetector and quickToggleByName["Cheater Detector"] then
+			setQuickToggle(quickToggleByName["Cheater Detector"], true)
+		end
+
 		window:CreateSection({ name = "PLAYER TOOLS" })
 		local playerTab = withIcon(window, "CreateTab", { name = "Players" }, "users-round", "users")
 		withIcon(playerTab, "CreateSection", { name = "Select a player" }, "contact")
@@ -18748,6 +19422,467 @@ if rayfieldLoaded and Rayfield then
 				end
 			end,
 		}, "chevron-right")
+
+		-- Servers: every public server of this game, from Roblox's server list (the same one
+		-- ;serverhop uses), each with a button to join it. Drawn with our own cards inside the tab's
+		-- page, like Home.
+		local serversTab = withIcon(window, "CreateTab", { name = "Servers" }, "server", "globe")
+		local function buildServerBrowser()
+			local page = serversTab and serversTab.tabPage
+			if typeof(page) ~= "Instance" then
+				warn("[SpreadCheeksGUI] Couldn't build the Servers page; Rayfield's tab layout may have changed.")
+				return
+			end
+
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius or UDim.new(0, 12)
+				corner.Parent = object
+			end
+			-- A card in the menu's row colours (role is the background's theme role, Card by default).
+			local function makeCard(parent, className, role)
+				local card = Instance.new(className or "Frame")
+				card.BorderSizePixel = 0
+				bindAuxiliaryUiColor(card, "BackgroundColor3", role or "Card")
+				addCorner(card)
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.3
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = card
+				card.Parent = parent
+				return card, stroke
+			end
+			local function makeLabel(parent, options)
+				local label = Instance.new("TextLabel")
+				label.BackgroundTransparency = 1
+				label.Font = options.font or Enum.Font.Gotham
+				label.TextSize = options.size or 12
+				label.Text = options.text or ""
+				label.TextXAlignment = options.alignX or Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.Position = options.position or UDim2.new()
+				label.Size = options.frameSize or UDim2.new(1, 0, 0, (options.size or 12) + 4)
+				bindAuxiliaryUiColor(label, "TextColor3", options.role or "Text")
+				label.Parent = parent
+				return label
+			end
+			local function makeIcon(parent, size, role, ...)
+				local icon = menuIcons.get(...)
+				local image = Instance.new("ImageLabel")
+				image.BackgroundTransparency = 1
+				image.Size = UDim2.fromOffset(size, size)
+				image.Visible = icon ~= nil
+				if icon then menuIcons.apply(image, icon) end
+				bindAuxiliaryUiColor(image, "ImageColor3", role)
+				image.Parent = parent
+				return image
+			end
+			-- A small rounded button that's as wide as its text.
+			local function makePill(parent, text, order)
+				local pill = Instance.new("TextButton")
+				pill.LayoutOrder = order or 0
+				pill.AutomaticSize = Enum.AutomaticSize.X
+				pill.Size = UDim2.fromOffset(0, 26)
+				pill.AutoButtonColor = false
+				pill.BorderSizePixel = 0
+				pill.Font = Enum.Font.GothamMedium
+				pill.Text = text
+				pill.TextSize = 12
+				addCorner(pill, UDim.new(0, 8))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 11)
+				padding.PaddingRight = UDim.new(0, 11)
+				padding.Parent = pill
+				pill.Parent = parent
+				return pill
+			end
+			local function commas(number)
+				local text = tostring(math.floor(number))
+				local grouped = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+				return (grouped:gsub("^,", ""))
+			end
+
+			local root = Instance.new("Frame")
+			root.Name = "ServerBrowser"
+			root.LayoutOrder = 1
+			root.Size = UDim2.new(1, -20, 0, 0)
+			root.AutomaticSize = Enum.AutomaticSize.Y
+			root.BackgroundTransparency = 1
+			root.Parent = page
+			local rootLayout = Instance.new("UIListLayout")
+			rootLayout.Padding = UDim.new(0, 8)
+			rootLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			rootLayout.Parent = root
+
+			-- Header: what's loaded, Refresh, and how the list is sorted and filtered.
+			local header = makeCard(root)
+			header.LayoutOrder = 1
+			header.Size = UDim2.fromScale(1, 0)
+			header.AutomaticSize = Enum.AutomaticSize.Y
+			local headerPadding = Instance.new("UIPadding")
+			headerPadding.PaddingTop = UDim.new(0, 14)
+			headerPadding.PaddingBottom = UDim.new(0, 14)
+			headerPadding.PaddingLeft = UDim.new(0, 14)
+			headerPadding.PaddingRight = UDim.new(0, 14)
+			headerPadding.Parent = header
+			-- Stacked, so the sort buttons can wrap onto a second line on a narrow menu.
+			local headerLayout = Instance.new("UIListLayout")
+			headerLayout.Padding = UDim.new(0, 8)
+			headerLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			headerLayout.Parent = header
+			local titleRow = Instance.new("Frame")
+			titleRow.LayoutOrder = 1
+			titleRow.Size = UDim2.new(1, 0, 0, 26)
+			titleRow.BackgroundTransparency = 1
+			titleRow.Parent = header
+			local headerIcon = makeIcon(titleRow, 18, "AccentText", "server", "globe")
+			headerIcon.Position = UDim2.fromOffset(0, 4)
+			makeLabel(titleRow, {
+				text = "Servers", font = Enum.Font.GothamBold, size = 15,
+				position = UDim2.fromOffset(26, 3), frameSize = UDim2.new(1, -130, 0, 20),
+			})
+			local refresh = makePill(titleRow, "Refresh")
+			refresh.AnchorPoint = Vector2.new(1, 0)
+			refresh.Position = UDim2.fromScale(1, 0)
+			local summary = makeLabel(header, {
+				text = "Press Refresh to load this game's servers.", size = 12, role = "SubText",
+				frameSize = UDim2.new(1, 0, 0, 16),
+			})
+			summary.LayoutOrder = 2
+			local controls = Instance.new("Frame")
+			controls.LayoutOrder = 3
+			controls.Size = UDim2.fromScale(1, 0)
+			controls.AutomaticSize = Enum.AutomaticSize.Y
+			controls.BackgroundTransparency = 1
+			controls.Parent = header
+			local controlsLayout = Instance.new("UIListLayout")
+			controlsLayout.FillDirection = Enum.FillDirection.Horizontal
+			controlsLayout.Padding = UDim.new(0, 6)
+			controlsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			pcall(function() controlsLayout.Wraps = true end)
+			controlsLayout.Parent = controls
+			local footnote = makeLabel(header, {
+				text = "Ping and FPS are what each server reports for its players.", size = 10, role = "Muted",
+				frameSize = UDim2.new(1, 0, 0, 13),
+			})
+			footnote.LayoutOrder = 4
+
+			-- Shown instead of the list when there's nothing to list, or something went wrong.
+			local statusCard = makeCard(root)
+			statusCard.LayoutOrder = 2
+			statusCard.Size = UDim2.fromScale(1, 0)
+			statusCard.AutomaticSize = Enum.AutomaticSize.Y
+			local statusPadding = Instance.new("UIPadding")
+			statusPadding.PaddingTop = UDim.new(0, 14)
+			statusPadding.PaddingBottom = UDim.new(0, 14)
+			statusPadding.PaddingLeft = UDim.new(0, 14)
+			statusPadding.PaddingRight = UDim.new(0, 14)
+			statusPadding.Parent = statusCard
+			local statusText = makeLabel(statusCard, {
+				text = "The server list loads when you open this tab, or press Refresh.", size = 12, role = "SubText",
+			})
+			statusText.Size = UDim2.fromScale(1, 0)
+			statusText.AutomaticSize = Enum.AutomaticSize.Y
+			statusText.TextWrapped = true
+			statusText.TextTruncate = Enum.TextTruncate.None
+
+			local list = Instance.new("Frame")
+			list.LayoutOrder = 3
+			list.Size = UDim2.fromScale(1, 0)
+			list.AutomaticSize = Enum.AutomaticSize.Y
+			list.BackgroundTransparency = 1
+			list.Parent = root
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 6)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+
+			local loadMore, loadMoreStroke = makeCard(root, "TextButton")
+			loadMore.LayoutOrder = 4
+			loadMore.Size = UDim2.new(1, 0, 0, 40)
+			loadMore.AutoButtonColor = false
+			loadMore.Font = Enum.Font.GothamMedium
+			loadMore.Text = "Load more servers"
+			loadMore.TextSize = 13
+			loadMore.Visible = false
+			bindAuxiliaryUiColor(loadMore, "TextColor3", "Text")
+			loadMore.MouseEnter:Connect(function() loadMoreStroke.Color = auxiliaryUiTheme.Accent end)
+			loadMore.MouseLeave:Connect(function() loadMoreStroke.Color = auxiliaryUiTheme.Stroke end)
+
+			-- Joining. Roblox says why a teleport fails (the server filled up or closed, say).
+			local joining = false
+			local function join(serverId)
+				if joining then return end
+				joining = true
+				notify("Servers", "Joining that server...", 3)
+				local started, problem = pcall(function()
+					TeleportService:TeleportToPlaceInstance(game.PlaceId, serverId, Players.LocalPlayer)
+				end)
+				if not started then
+					joining = false
+					notify("Servers", "Couldn't join: " .. tostring(problem), 5)
+					return
+				end
+				task.delay(10, function() joining = false end)
+			end
+			if sharedEnv.SpreadCheeksServerJoinFailed then
+				pcall(function() sharedEnv.SpreadCheeksServerJoinFailed:Disconnect() end)
+			end
+			sharedEnv.SpreadCheeksServerJoinFailed = TeleportService.TeleportInitFailed:Connect(function(player, result, message)
+				if player ~= Players.LocalPlayer then return end
+				joining = false
+				local reason = tostring(message or "")
+				notify("Servers", "Couldn't join: " .. (reason ~= "" and reason or tostring(result)), 5)
+			end)
+
+			-- One server: how full it is, its ping and frame rate, and Join (or why not).
+			local function makeServerRow(server, order)
+				local playing = tonumber(server.playing) or 0
+				local maxPlayers = tonumber(server.maxPlayers) or 0
+				local isHere = server.id == game.JobId
+				local isFull = maxPlayers > 0 and playing >= maxPlayers
+				local row, rowStroke = makeCard(list, "Frame", isHere and "SelectedCard" or "Card")
+				row.LayoutOrder = order
+				row.Size = UDim2.new(1, 0, 0, 54)
+
+				makeLabel(row, {
+					text = playing .. " / " .. maxPlayers, font = Enum.Font.GothamBold, size = 14,
+					position = UDim2.fromOffset(14, 9), frameSize = UDim2.fromOffset(78, 18),
+				})
+				local capacity = Instance.new("Frame")
+				capacity.Position = UDim2.fromOffset(14, 33)
+				capacity.Size = UDim2.fromOffset(70, 4)
+				capacity.BorderSizePixel = 0
+				bindAuxiliaryUiColor(capacity, "BackgroundColor3", "Inset")
+				capacity.Parent = row
+				addCorner(capacity, UDim.new(1, 0))
+				local capacityFill = Instance.new("Frame")
+				capacityFill.Size = UDim2.fromScale(maxPlayers > 0 and math.clamp(playing / maxPlayers, 0, 1) or 0, 1)
+				capacityFill.BorderSizePixel = 0
+				bindAuxiliaryUiColor(capacityFill, "BackgroundColor3", "Accent")
+				capacityFill.Parent = capacity
+				addCorner(capacityFill, UDim.new(1, 0))
+
+				local ping, fps = tonumber(server.ping), tonumber(server.fps)
+				local stats = {}
+				if ping then table.insert(stats, math.floor(ping + 0.5) .. " ms ping") end
+				if fps then table.insert(stats, math.floor(fps + 0.5) .. " fps") end
+				local dot = Instance.new("Frame")
+				dot.AnchorPoint = Vector2.new(0, 0.5)
+				dot.Position = UDim2.fromOffset(104, 18)
+				dot.Size = UDim2.fromOffset(7, 7)
+				dot.BorderSizePixel = 0
+				bindAuxiliaryUiColor(dot, "BackgroundColor3", not ping and "Muted" or (ping < 100 and "Good" or (ping < 200 and "Fair" or "Bad")))
+				dot.Parent = row
+				addCorner(dot, UDim.new(1, 0))
+				makeLabel(row, {
+					text = #stats > 0 and table.concat(stats, "  ·  ") or "No ping reported", font = Enum.Font.GothamMedium, size = 12,
+					position = UDim2.fromOffset(117, 10), frameSize = UDim2.new(1, -221, 0, 16),
+				})
+				makeLabel(row, {
+					text = (isHere and "Your server  ·  " or "Server ") .. string.sub(server.id, 1, 8), size = 10, role = isHere and "AccentText" or "Muted",
+					position = UDim2.fromOffset(104, 30), frameSize = UDim2.new(1, -208, 0, 14),
+				})
+
+				local action = Instance.new("TextButton")
+				action.AnchorPoint = Vector2.new(1, 0.5)
+				action.Position = UDim2.new(1, -12, 0.5, 0)
+				action.Size = UDim2.fromOffset(78, 30)
+				action.AutoButtonColor = false
+				action.BorderSizePixel = 0
+				action.Font = Enum.Font.GothamBold
+				action.TextSize = 12
+				action.Parent = row
+				addCorner(action, UDim.new(0, 8))
+				if isHere then
+					action.Text = "You're here"
+					bindAuxiliaryUiColor(action, "BackgroundColor3", "Inset")
+					bindAuxiliaryUiColor(action, "TextColor3", "AccentText")
+				elseif isFull then
+					action.Text = "Full"
+					bindAuxiliaryUiColor(action, "BackgroundColor3", "Inset")
+					bindAuxiliaryUiColor(action, "TextColor3", "Muted")
+				else
+					action.Text = "Join"
+					bindAuxiliaryUiColor(action, "BackgroundColor3", "Accent")
+					bindAuxiliaryUiColor(action, "TextColor3", "OnAccent")
+					action.Activated:Connect(function() join(server.id) end)
+				end
+				row.MouseEnter:Connect(function() rowStroke.Color = auxiliaryUiTheme.Accent end)
+				row.MouseLeave:Connect(function() rowStroke.Color = auxiliaryUiTheme.Stroke end)
+			end
+
+			-- What's loaded, and how it's shown. Most and Fewest players come sorted from Roblox;
+			-- Best ping sorts whatever is loaded.
+			local servers, nextCursor, fetchedOrder = {}, nil, nil
+			local sortMode, hideFull, loading, loadSerial = "Most players", false, false, 0
+
+			local sortChips = {}
+			for index, mode in ipairs({ "Most players", "Fewest players", "Best ping" }) do
+				sortChips[mode] = makePill(controls, mode, index)
+			end
+			local hideFullChip = makePill(controls, "Hide full", 10)
+			local function paintChips()
+				local theme = auxiliaryUiTheme
+				for mode, chip in pairs(sortChips) do
+					local selected = mode == sortMode
+					chip.BackgroundColor3 = selected and theme.Accent or theme.Inset
+					chip.TextColor3 = selected and theme.OnAccent or theme.SubText
+				end
+				hideFullChip.BackgroundColor3 = hideFull and theme.Accent or theme.Inset
+				hideFullChip.TextColor3 = hideFull and theme.OnAccent or theme.SubText
+				refresh.BackgroundColor3 = theme.Inset
+				refresh.TextColor3 = loading and theme.Muted or theme.Text
+			end
+			table.insert(auxiliaryUiThemeListeners, paintChips)
+
+			-- Rows are rebuilt on every load, so their old theme bindings are cleared out as they go.
+			local function pruneDeadThemeBindings()
+				for index = #auxiliaryUiColorBindings, 1, -1 do
+					if not auxiliaryUiColorBindings[index][1].Parent then
+						table.remove(auxiliaryUiColorBindings, index)
+					end
+				end
+			end
+			local function render()
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				pruneDeadThemeBindings()
+				local shown = {}
+				for _, server in ipairs(servers) do
+					local full = (tonumber(server.playing) or 0) >= (tonumber(server.maxPlayers) or math.huge)
+					if not (hideFull and full and server.id ~= game.JobId) then
+						table.insert(shown, server)
+					end
+				end
+				if sortMode == "Best ping" then
+					table.sort(shown, function(left, right)
+						return (tonumber(left.ping) or math.huge) < (tonumber(right.ping) or math.huge)
+					end)
+				end
+				for index, server in ipairs(shown) do
+					makeServerRow(server, index)
+				end
+				local totalPlayers = 0
+				for _, server in ipairs(servers) do
+					totalPlayers += tonumber(server.playing) or 0
+				end
+				summary.Text = commas(#servers) .. (#servers == 1 and " server" or " servers") .. "  ·  "
+					.. commas(totalPlayers) .. " players" .. (nextCursor and "  ·  more to load" or "")
+				statusCard.Visible = #shown == 0
+				if #shown == 0 then
+					statusText.Text = #servers == 0 and "No public servers are running right now."
+						or "Every server loaded so far is full. Turn off Hide full, or load more."
+				end
+				loadMore.Visible = nextCursor ~= nil
+			end
+
+			local function friendlyError(problem)
+				problem = tostring(problem or "")
+				if problem:find("429") or problem:lower():find("too many") then
+					return "Roblox is limiting how often the server list can load. Wait a few seconds, then press Refresh."
+				end
+				return "Couldn't load the server list. Your executor may not allow web requests to Roblox. (" .. problem .. ")"
+			end
+			-- One page (up to 100 servers) from Roblox's list, after the given cursor.
+			local function requestPage(order, cursor)
+				local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?limit=100&sortOrder=" .. order
+				if cursor then
+					url ..= "&cursor=" .. HttpService:UrlEncode(cursor)
+				end
+				local fetched, body = pcall(function() return game:HttpGet(url) end)
+				if not fetched then return nil, body end
+				local decoded, data = pcall(function() return HttpService:JSONDecode(body) end)
+				if not decoded or type(data) ~= "table" then return nil, "Roblox sent back something unreadable." end
+				if type(data.errors) == "table" and data.errors[1] then
+					return nil, tostring(data.errors[1].message or "Roblox refused the request.")
+				end
+				return data
+			end
+			-- Loads the list from the start, or (append) the next page onto what's there.
+			local function load(append)
+				if loading or (append and not nextCursor) then return end
+				loading = true
+				loadSerial += 1
+				local serial = loadSerial
+				local order = append and fetchedOrder or (sortMode == "Fewest players" and "Asc" or "Desc")
+				refresh.Text = "Loading..."
+				loadMore.Text = append and "Loading..." or "Load more servers"
+				if not append then summary.Text = "Loading this game's servers..." end
+				paintChips()
+				task.spawn(function()
+					local data, problem = requestPage(order, append and nextCursor or nil)
+					if serial ~= loadSerial or not root.Parent then return end
+					loading = false
+					refresh.Text = "Refresh"
+					loadMore.Text = "Load more servers"
+					paintChips()
+					if not data then
+						if append then
+							notify("Servers", friendlyError(problem), 6)
+						else
+							servers, nextCursor = {}, nil
+							render()
+							statusCard.Visible = true
+							statusText.Text = friendlyError(problem)
+							summary.Text = "The server list didn't load."
+						end
+						return
+					end
+					if not append then
+						servers = {}
+						fetchedOrder = order
+					end
+					for _, server in ipairs(type(data.data) == "table" and data.data or {}) do
+						if type(server) == "table" and type(server.id) == "string" then
+							table.insert(servers, server)
+						end
+					end
+					nextCursor = type(data.nextPageCursor) == "string" and data.nextPageCursor ~= "" and data.nextPageCursor or nil
+					render()
+				end)
+			end
+
+			refresh.Activated:Connect(function() load(false) end)
+			loadMore.Activated:Connect(function() load(true) end)
+			for mode, chip in pairs(sortChips) do
+				chip.Activated:Connect(function()
+					if mode == sortMode then return end
+					sortMode = mode
+					paintChips()
+					-- Players sorts come from Roblox, so a different one means loading again.
+					local wanted = mode == "Fewest players" and "Asc" or (mode == "Most players" and "Desc" or nil)
+					if wanted and wanted ~= fetchedOrder then
+						load(false)
+					else
+						render()
+					end
+				end)
+			end
+			hideFullChip.Activated:Connect(function()
+				hideFull = not hideFull
+				paintChips()
+				render()
+			end)
+			paintChips()
+
+			-- Loads by itself the first time the tab is opened (Refresh does it otherwise).
+			local loadedOnce = false
+			local function loadOnFirstView()
+				if loadedOnce or not page.Visible then return end
+				loadedOnce = true
+				load(false)
+			end
+			page:GetPropertyChangedSignal("Visible"):Connect(loadOnFirstView)
+			refresh.Activated:Connect(function() loadedOnce = true end)
+		end
+		-- Kept separate so a problem on the Servers page can't stop the rest of the menu loading.
+		local serversOk, serversError = pcall(buildServerBrowser)
+		if not serversOk then
+			warn("[SpreadCheeksGUI] The Servers page couldn't be built: " .. tostring(serversError))
+		end
 
 		window:CreateSection({ name = "ADMIN COMMANDS" })
 		for _, category in ipairs(categories) do
@@ -19219,9 +20354,9 @@ if rayfieldLoaded and Rayfield then
 				return statOk and tonumber(statPing) or 0
 			end
 			local function pingColor(ping)
-				if ping < 100 then return Color3.fromRGB(74, 222, 128) end
-				if ping < 200 then return Color3.fromRGB(255, 212, 59) end
-				return Color3.fromRGB(255, 90, 90)
+				if ping < 100 then return auxiliaryUiTheme.Good end
+				if ping < 200 then return auxiliaryUiTheme.Fair end
+				return auxiliaryUiTheme.Bad
 			end
 			local jobId = tostring(game.JobId)
 			jobText.Text = #jobId > 10 and (jobId:sub(1, 4) .. "..." .. jobId:sub(-4)) or (jobId ~= "" and jobId or "No job id")
