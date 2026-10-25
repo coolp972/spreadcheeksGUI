@@ -14643,12 +14643,24 @@ if rayfieldLoaded and Rayfield then
 			joinAlerts = false, joinAlertFriends = true, joinAlertEveryone = false, watchList = {},
 			-- The FPS cap set with the Interface slider (0 until it's moved).
 			fpsCap = 0,
+			-- Trolling: the animation pack ("Default" or a pack's name), the emote the Emote switch
+			-- plays, Fake Lag's style ("Stutter", "Rubber-band" or "Glitch"), Spin's speed, Orbit's
+			-- speed and distance (studs), Big Heads' size, and the Trail ("Rainbow", "Sparkles", "Fire").
+			trollAnimPack = "Default", trollEmote = "Dance 1", trollLagStyle = "Stutter", trollSpinSpeed = 20,
+			trollOrbitSpeed = 4, trollOrbitDistance = 6, trollHeadSize = 3, trollTrail = "Rainbow",
+			-- Fake Dead's pose ("On your back" or "Face down"), where Headsit sits ("Head" or "Back"),
+			-- Orbit's height (studs), whether Copycat follows ("Off", "Behind" or "Beside"), Crawl's
+			-- style ("Worm", "Belly Slide" or "Log Roll") and Helicopter's hover height (studs).
+			trollDeadPose = "On your back", trollSitSpot = "Head", trollOrbitHeight = 0, trollCopyFollow = "Off",
+			trollCrawlStyle = "Worm", trollHeliHeight = 8,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
 			aimbotFov = { 20, 600 }, aimbotSmoothness = { 1, 10 }, aimbotFreeAimSpeed = { 0.1, 3 },
 			triggerDelay = { 0, 500 }, triggerInterval = { 50, 1000 },
 			radarRange = { 50, 500 }, fpsCap = { 0, 360 },
+			trollSpinSpeed = { 1, 100 }, trollOrbitSpeed = { 1, 10 }, trollOrbitDistance = { 3, 25 }, trollHeadSize = { 2, 5 },
+			trollOrbitHeight = { -5, 15 }, trollHeliHeight = { 3, 30 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -14917,8 +14929,9 @@ if rayfieldLoaded and Rayfield then
 
 		-- Shared between the later parts of the menu (the radar, logs window, join alerts and so on),
 		-- so each doesn't need its own variable here. notificationLog keeps recent notifications for
-		-- the Logs window.
-		local menuModules = { notificationLog = {} }
+		-- the Logs window; selectionListeners are called when the Players tab's selected player
+		-- changes (the Trolling tab uses that selection too).
+		local menuModules = { notificationLog = {}, selectionListeners = {} }
 
 		task.spawn(function()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -15189,6 +15202,7 @@ if rayfieldLoaded and Rayfield then
 		local combatTab = withIcon(window, "CreateTab", { name = "Combat" }, "swords", "crosshair")
 		local viewTab = withIcon(window, "CreateTab", { name = "View" }, "aperture", "eye")
 		local protectionTab = withIcon(window, "CreateTab", { name = "Protection" }, "shield")
+		local trollTab = withIcon(window, "CreateTab", { name = "Trolling" }, "drama", "laugh", "party-popper", "smile")
 		local interfaceTab = withIcon(window, "CreateTab", { name = "Interface" }, "layout-dashboard", "app-window")
 		-- Rayfield's gear button opens this built-in tab; keep appearance options there.
 		withIcon(window.rfSettings, "CreateSection", { name = "Appearance" }, "palette")
@@ -15537,6 +15551,2007 @@ if rayfieldLoaded and Rayfield then
 			end
 			if enabled and menuModules.joinAlerts then menuModules.joinAlerts.announceHere() end
 		end, "bell-ring", "bell")
+
+		-- Trolling: harmless fun, in a tab of its own. Animations, walks, tricks, moves and the player
+		-- tricks play on your own character, so everyone in the server sees them; the effects under
+		-- "Only you can see" are drawn on your screen alone. The switches are made here, with the others,
+		-- so they get key boxes; their settings cards come from trolling.buildSettings further down, once
+		-- createSettingsCard exists, and their commands from registerMenuCommands.
+		local trolling = { animSpeed = 1, reverse = false, statue = false }
+		do
+			local built, problem = pcall(function()
+				local localPlayer = Players.LocalPlayer
+
+				-- Your character, humanoid and root part, or nothing while you're dead or loading in.
+				local function myCharacter()
+					local character = localPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local root = character and getRoot(character)
+					if not humanoid or not root or humanoid.Health <= 0 then return nil end
+					return character, humanoid, root
+				end
+				local function animatorOf(humanoid)
+					return humanoid and humanoid:FindFirstChildOfClass("Animator")
+				end
+				local function isR15(humanoid)
+					return humanoid.RigType == Enum.HumanoidRigType.R15
+				end
+				local function flat(vector)
+					return Vector3.new(vector.X, 0, vector.Z)
+				end
+				-- The turn about the up axis that faces along a direction.
+				local function yawOf(direction)
+					return math.atan2(-direction.X, -direction.Z)
+				end
+				-- The height of the ground under a point, or nil over a drop. ignore lists the characters
+				-- the ray goes through.
+				local groundParams = RaycastParams.new()
+				groundParams.FilterType = Enum.RaycastFilterType.Exclude
+				local function groundBelow(position, ignore)
+					groundParams.FilterDescendantsInstances = ignore
+					local hit = workspace:Raycast(position + Vector3.new(0, 4, 0), Vector3.new(0, -60, 0), groundParams)
+					return hit and hit.Position.Y
+				end
+				local function switchOff(name)
+					local entry = quickToggleByName[name]
+					if entry and entry.state then setQuickToggle(entry, false) end
+				end
+
+				-- Switches that move your character in ways that fight each other. Takeovers place your
+				-- character themselves every frame and steering switches change how you walk, so each
+				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
+				-- Turning one on turns off the ones it clashes with.
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Headsit", "Orbit", "Bow Down" }
+				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball" }
+				local clashes = {}
+				local function clash(first, second)
+					clashes[first] = clashes[first] or {}
+					clashes[second] = clashes[second] or {}
+					clashes[first][second] = true
+					clashes[second][first] = true
+				end
+				for index, first in ipairs(takeoverSwitches) do
+					for later = index + 1, #takeoverSwitches do
+						clash(first, takeoverSwitches[later])
+					end
+					for _, steering in ipairs(steeringSwitches) do
+						clash(first, steering)
+					end
+				end
+				clash("Moonwalk", "Crab Walk")
+				clash("Drunk Walk", "Zoomies")
+				-- Fake Lag's stutter unanchors you, which would let a statue wander off.
+				clash("Fake Lag", "Statue")
+				local function claimMovement(name)
+					for other in pairs(clashes[name] or {}) do
+						switchOff(other)
+					end
+				end
+				-- The takeover that's running (Handstand, Crawl, Superman, Helicopter or Bow Down), if any.
+				local takeoverState = { name = nil, loop = nil, track = nil, yaw = 0 }
+
+				-- Things to set up again on each new character, such as the animation pack and the spin.
+				local respawnHandlers = {}
+				localPlayer.CharacterAdded:Connect(function(character)
+					character:WaitForChild("Humanoid", 10)
+					-- Games often set up their own animations just after spawning.
+					task.wait(0.5)
+					if character ~= localPlayer.Character then return end
+					for _, handler in ipairs(respawnHandlers) do
+						task.spawn(handler, character)
+					end
+				end)
+
+				-- Fake Dead, Copycat, Mannequin and the takeovers switch Roblox's Animate script off while
+				-- they're on, so your own walking and standing animations don't play over them. It starts
+				-- again, with whichever animation pack is chosen, once nothing needs it off. heldAnimate is
+				-- the script switched off here, so a script the game itself keeps off is never switched on.
+				local animateHolds = {}
+				local heldAnimate = nil
+				local function stopAllTracks(humanoid, fade)
+					local animator = animatorOf(humanoid)
+					if not animator then return end
+					for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+						track:Stop(fade)
+					end
+				end
+				local function refreshAnimateHold()
+					local character = localPlayer.Character
+					local animate = character and character:FindFirstChild("Animate")
+					if next(animateHolds) ~= nil then
+						if animate and animate:IsA("BaseScript") and animate ~= heldAnimate and not animate.Disabled then
+							heldAnimate = animate
+							animate.Disabled = true
+							stopAllTracks(character:FindFirstChildOfClass("Humanoid"), 0.1)
+						end
+					elseif heldAnimate then
+						if heldAnimate.Parent then heldAnimate.Disabled = false end
+						heldAnimate = nil
+					end
+				end
+				local function holdAnimate(reason, on)
+					animateHolds[reason] = on or nil
+					refreshAnimateHold()
+				end
+				table.insert(respawnHandlers, refreshAnimateHold)
+
+				-- Emotes and animations played from here go over everything else.
+				local topPriority = Enum.AnimationPriority.Action
+				pcall(function() topPriority = Enum.AnimationPriority.Action4 end)
+				-- Loads an animation onto you and plays it over everything else. Returns its track.
+				local function playOnMe(animationId)
+					local _, humanoid = myCharacter()
+					local animator = animatorOf(humanoid)
+					if not animator then return nil end
+					local animation = Instance.new("Animation")
+					animation.AnimationId = animationId
+					local loaded, track = pcall(animator.LoadAnimation, animator, animation)
+					if not loaded or not track then return nil end
+					track.Priority = topPriority
+					track:Play(0.2)
+					return track
+				end
+
+				-- Flips: a jump with full turns forwards, backwards, sideways or round on the spot. Sitting
+				-- through it stops your character standing itself back up halfway. skipJump is for a jump
+				-- that's already happening (Flip Every Jump).
+				local flipping = false
+				local flipKinds = {
+					front = { axis = Vector3.new(1, 0, 0), direction = -1, turns = 1, duration = 0.5 },
+					back = { axis = Vector3.new(1, 0, 0), direction = 1, turns = 1, duration = 0.5 },
+					side = { axis = Vector3.new(0, 0, 1), direction = -1, turns = 1, duration = 0.5 },
+					spin = { axis = Vector3.new(0, 1, 0), direction = 1, turns = 3, duration = 0.8 },
+				}
+				function trolling.flip(kind, skipJump)
+					local flip = flipKinds[kind]
+					if flipping or not flip then return end
+					local _, humanoid, root = myCharacter()
+					if not humanoid then return end
+					flipping = true
+					task.spawn(function()
+						if not skipJump then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
+						RunService.Heartbeat:Wait()
+						local total, turned = math.pi * 2 * flip.turns, 0
+						while turned < total and root.Parent do
+							local step = math.min(total - turned, total * RunService.Heartbeat:Wait() / flip.duration)
+							turned += step
+							humanoid.Sit = true
+							root.CFrame = root.CFrame * CFrame.fromAxisAngle(flip.axis, step * flip.direction)
+						end
+						humanoid.Sit = false
+						flipping = false
+					end)
+				end
+				function trolling.launch()
+					local _, humanoid, root = myCharacter()
+					if not humanoid then return end
+					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+					root.AssemblyLinearVelocity = Vector3.new(0, 200, 0) + root.CFrame.LookVector * 15
+				end
+				-- Yeet throws you forwards in a big tumbling arc and Tumble knocks you over in a heap. You
+				-- go limp for a moment (PlatformStand), so you really do tumble, then get back up.
+				local tumbleSerial = 0
+				local function tumble(velocity, spin, seconds)
+					local _, humanoid, root = myCharacter()
+					if not humanoid then return end
+					tumbleSerial += 1
+					local serial = tumbleSerial
+					humanoid.PlatformStand = true
+					root.AssemblyLinearVelocity = velocity
+					root.AssemblyAngularVelocity = spin
+					task.delay(seconds, function()
+						-- A takeover started since needs PlatformStand left on.
+						if tumbleSerial ~= serial or not humanoid.Parent or takeoverState.name then return end
+						humanoid.PlatformStand = false
+						humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+					end)
+				end
+				function trolling.yeet()
+					local _, _, root = myCharacter()
+					if not root then return end
+					tumble(flat(root.CFrame.LookVector) * 80 + Vector3.new(0, 60, 0), root.CFrame.RightVector * -12, 2)
+				end
+				function trolling.tumble()
+					local _, _, root = myCharacter()
+					if not root then return end
+					local spin = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
+					tumble(Vector3.new(0, 18, 0) + flat(root.CFrame.LookVector) * 6, (spin.Magnitude > 0.01 and spin.Unit or Vector3.xAxis) * 14, 1.6)
+				end
+
+				trollTab:CreateText({
+					text = "Harmless fun. Everything here shows for everyone in the server, apart from the last section, which only changes your screen.",
+				})
+
+				-- Animations.
+				withIcon(trollTab, "CreateSection", { name = "Animations" }, "person-standing")
+				-- Roblox's animation packs, for R15 avatars. Each gives animation ids for the Animate
+				-- script's slots; a slot a pack leaves out keeps the game's own animation.
+				local animationPacks = {
+					{ name = "Astronaut", idle = { 891621366, 891633237 }, walk = 891667138, run = 891636393, jump = 891627522, climb = 891609353, fall = 891617961 },
+					{ name = "Bubbly", idle = { 910004836, 910009958 }, walk = 910034870, run = 910025107, jump = 910016857, fall = 910001910, swimidle = 910030921, swim = 910028158 },
+					{ name = "Cartoony", idle = { 742637544, 742638445 }, walk = 742640026, run = 742638842, jump = 742637942, climb = 742636889, fall = 742637151 },
+					{ name = "Confident", idle = { 1069977950, 1069987858 }, walk = 1070017263, run = 1070001516, jump = 1069984524, climb = 1069946257, fall = 1069973677 },
+					{ name = "Cowboy", idle = { 1014390418, 1014398616 }, walk = 1014421541, run = 1014401683, jump = 1014394726, climb = 1014380606, fall = 1014384571 },
+					{ name = "Elder", idle = { 845397899, 845400520 }, walk = 845403856, run = 845386501, jump = 845398858, climb = 845392038, fall = 845396048 },
+					{ name = "Knight", idle = { 657595757, 657568135 }, walk = 657552124, run = 657564596, jump = 658409194, climb = 658360781, fall = 657600338 },
+					{ name = "Levitation", idle = { 616006778, 616008087 }, walk = 616013216, run = 616010382, jump = 616008936, climb = 616003713, fall = 616005863 },
+					{ name = "Mage", idle = { 707742142, 707855907 }, walk = 707897309, run = 707861613, jump = 707853694, climb = 707826056, fall = 707829716 },
+					{ name = "Ninja", idle = { 656117400, 656118341 }, walk = 656121766, run = 656118852, jump = 656117878, climb = 656114359, fall = 656115606 },
+					{ name = "Oldschool", idle = { 5319828216, 5319831086 }, walk = 5319847204, run = 5319844329, jump = 5319841935, climb = 5319816685, fall = 5319839762 },
+					{ name = "Patrol", idle = { 1149612882, 1150842221 }, walk = 1151231493, run = 1150967949, jump = 1150944216, climb = 1148811837, fall = 1148863382 },
+					{ name = "Pirate", idle = { 750781874, 750782770 }, walk = 750785693, run = 750783738, jump = 750782230, climb = 750779899, fall = 750780242 },
+					{ name = "Princess", idle = { 941003647, 941013098 }, walk = 941028902, run = 941015281, jump = 941008832, climb = 940996062, fall = 941000007 },
+					{ name = "Robot", idle = { 616088211, 616089559 }, walk = 616095330, run = 616091570, jump = 616090535, climb = 616086039, fall = 616087089 },
+					{ name = "Rthro", idle = { 2510196951, 2510197257 }, walk = 2510202577, run = 2510198475, jump = 2510197830, climb = 2510192778, fall = 2510195892 },
+					{ name = "Sneaky", idle = { 1132473842, 1132477671 }, walk = 1132510133, run = 1132494274, jump = 1132489853, climb = 1132461372, fall = 1132469004 },
+					{ name = "Stylish", idle = { 616136790, 616138447 }, walk = 616146177, run = 616140816, jump = 616139451, climb = 616133594, fall = 616134815 },
+					{ name = "Superhero", idle = { 616111295, 616113536 }, walk = 616122287, run = 616117076, jump = 616115533, climb = 616104706, fall = 616108001 },
+					{ name = "Toy", idle = { 782841498, 782845736 }, walk = 782843345, run = 782842708, jump = 782847020, climb = 782843869, fall = 782846423 },
+					{ name = "Vampire", idle = { 1083445855, 1083450166 }, walk = 1083473930, run = 1083462077, jump = 1083455352, climb = 1083439238, fall = 1083443587 },
+					{ name = "Werewolf", idle = { 1083195517, 1083214717 }, walk = 1083178339, run = 1083216690, jump = 1083218792, climb = 1083182000, fall = 1083189019 },
+					{ name = "Zombie", idle = { 616158929, 616160636 }, walk = 616168032, run = 616163682, jump = 616161997, climb = 616156119, fall = 616157476 },
+				}
+				local packSlots = { "idle", "walk", "run", "jump", "climb", "fall", "swim", "swimidle" }
+				local packNames, packByName = { "Default" }, {}
+				for _, pack in ipairs(animationPacks) do
+					table.insert(packNames, pack.name)
+					packByName[pack.name] = pack
+				end
+				trolling.packNames = packNames
+				if not packByName[featureSettings.trollAnimPack] then featureSettings.trollAnimPack = "Default" end
+				-- The game's own animation ids, noted the first time a pack changes them so Default can put
+				-- them back, keyed by the Animate script they came from. A new character starts fresh.
+				local originalAnimationIds = {}
+				local function setPackSlot(animate, slot, ids)
+					local holder = animate:FindFirstChild(slot)
+					if not holder then return end
+					local animations = {}
+					for _, child in ipairs(holder:GetChildren()) do
+						if child:IsA("Animation") then table.insert(animations, child) end
+					end
+					table.sort(animations, function(left, right) return left.Name < right.Name end)
+					local originals = originalAnimationIds[animate]
+					originals[slot] = originals[slot] or {}
+					for index, animation in ipairs(animations) do
+						if originals[slot][index] == nil then originals[slot][index] = animation.AnimationId end
+						local id = ids and (ids[index] or ids[#ids])
+						local wanted = id and ("rbxassetid://" .. tostring(id)) or originals[slot][index]
+						if animation.AnimationId ~= wanted then animation.AnimationId = wanted end
+					end
+				end
+				-- Puts the chosen pack on your character, or the game's own animations back for Default.
+				-- quiet leaves out the messages, for respawns.
+				local function applyAnimationPack(quiet)
+					local character, humanoid = myCharacter()
+					local animate = character and character:FindFirstChild("Animate")
+					local pack = packByName[featureSettings.trollAnimPack]
+					local function tell(message)
+						if not quiet then notify("Animation Pack", message) end
+					end
+					if not humanoid then
+						if pack then tell("It'll go on once your character has loaded.") end
+						return
+					end
+					if not pack and not (animate and originalAnimationIds[animate]) then return end
+					if pack and not isR15(humanoid) then
+						return tell("Animation packs need an R15 avatar, and this game has you as R6.")
+					end
+					-- Only Roblox's standard Animate script has these slots; some games use their own.
+					if not animate or not animate:IsA("BaseScript") or not animate:FindFirstChild("walk") then
+						return tell("This game uses its own animations, so packs can't change them here.")
+					end
+					-- Forget the scripts of characters that are gone.
+					for oldAnimate in pairs(originalAnimationIds) do
+						if not oldAnimate.Parent then originalAnimationIds[oldAnimate] = nil end
+					end
+					originalAnimationIds[animate] = originalAnimationIds[animate] or {}
+					for _, slot in ipairs(packSlots) do
+						local ids = pack and pack[slot]
+						setPackSlot(animate, slot, type(ids) == "number" and { ids } or ids)
+					end
+					-- Back to the game's own, so there's nothing left to put back.
+					if not pack then originalAnimationIds[animate] = nil end
+					-- Starts the script again so it uses them now, after stopping the animations it was
+					-- playing (an emote from this tab carries on). While something here has it off, it picks
+					-- them up when it starts again; one the game keeps off is left off.
+					if next(animateHolds) == nil and not animate.Disabled then
+						local animator = animatorOf(humanoid)
+						if animator then
+							for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+								if track.Animation and track.Animation:IsDescendantOf(animate) then track:Stop(0) end
+							end
+						end
+						animate.Disabled = true
+						animate.Disabled = false
+					end
+				end
+				table.insert(respawnHandlers, function() applyAnimationPack(true) end)
+				if featureSettings.trollAnimPack ~= "Default" then task.defer(applyAnimationPack, true) end
+				-- fromDropdown: the dropdown already shows it.
+				function trolling.setAnimationPack(name, fromDropdown)
+					local wanted = tostring(name or ""):lower()
+					for _, packName in ipairs(packNames) do
+						if packName:lower() == wanted then
+							featureSettings.trollAnimPack = packName
+							saveFeatureSettings()
+							applyAnimationPack(false)
+							if not fromDropdown then pcall(function() trolling.packDropdown:Set(packName, true) end) end
+							return true
+						end
+					end
+					return false
+				end
+				trolling.packDropdown = withIcon(trollTab, "CreateDropdown", {
+					name = "Animation Pack",
+					description = "How you walk, run, jump and stand. Needs an R15 avatar; remembered between sessions",
+					options = packNames,
+					value = featureSettings.trollAnimPack,
+					callback = function(value)
+						if type(value) == "table" then value = value[1] end
+						if tostring(value) ~= featureSettings.trollAnimPack then trolling.setAnimationPack(value, true) end
+					end,
+				}, "person-standing", "footprints")
+
+				-- How fast your animations play overall: the Animation Speed slider, backwards with Reverse
+				-- Animations, and not at all for Statue.
+				local function animationMultiplier()
+					if trolling.statue then return 0 end
+					return trolling.animSpeed * (trolling.reverse and -1 or 1)
+				end
+				-- Unless that's 1, every animation on you is scaled to it each frame. Roblox's Animate script
+				-- keeps setting walking speeds itself, so each track's own speed is noted as it changes. The
+				-- tables hold the tracks playing right now, so they use strong keys and are pruned each frame.
+				local speedState = { base = {}, applied = {}, loop = nil }
+				local function updateSpeedLoop()
+					local wanted = math.abs(animationMultiplier() - 1) > 0.001
+					if wanted and not speedState.loop then
+						speedState.loop = RunService.Heartbeat:Connect(function()
+							local _, humanoid = myCharacter()
+							local animator = animatorOf(humanoid)
+							local multiplier = animationMultiplier()
+							local playing = {}
+							if animator then
+								for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+									playing[track] = true
+									local current = track.Speed
+									local applied = speedState.applied[track]
+									-- A new track, or something else changed its speed: that's its own speed now.
+									if applied == nil or math.abs(current - applied) > 0.001 then
+										speedState.base[track] = current
+									end
+									local target = speedState.base[track] * multiplier
+									if math.abs(current - target) > 0.001 then track:AdjustSpeed(target) end
+									speedState.applied[track] = target
+									-- Played backwards, an animation starts from its end, and a looping one goes
+									-- round again from the end.
+									if target < 0 and track.Length > 0 and track.TimePosition <= 0.03 and (applied == nil or track.Looped) then
+										track.TimePosition = track.Length - 0.03
+									end
+								end
+							end
+							for track in pairs(speedState.base) do
+								if not playing[track] then
+									speedState.base[track] = nil
+									speedState.applied[track] = nil
+								end
+							end
+						end)
+					elseif not wanted and speedState.loop then
+						speedState.loop:Disconnect()
+						speedState.loop = nil
+						-- Each track goes back to its own speed.
+						for track, base in pairs(speedState.base) do
+							local applied = speedState.applied[track]
+							if applied and math.abs(track.Speed - applied) <= 0.001 then
+								pcall(track.AdjustSpeed, track, base)
+							end
+						end
+						table.clear(speedState.base)
+						table.clear(speedState.applied)
+					end
+				end
+				-- fromSlider: the slider already shows it.
+				function trolling.setAnimationSpeed(value, fromSlider)
+					trolling.animSpeed = math.clamp(math.floor((tonumber(value) or 1) * 10 + 0.5) / 10, 0, 5)
+					updateSpeedLoop()
+					if not fromSlider then pcall(function() trolling.speedSlider:Set(trolling.animSpeed, true) end) end
+				end
+				trolling.speedSlider = withIcon(trollTab, "CreateSlider", {
+					name = "Animation Speed",
+					range = { 0, 5 },
+					value = 1,
+					increment = 0.1,
+					suffix = "×",
+					callback = function(value) trolling.setAnimationSpeed(value, true) end,
+				}, "gauge", "fast-forward")
+
+				-- What the Emote switch loops: Roblox's own emotes (the /e ones), the dances Infinite Yield's
+				-- dance command uses, and silly ones made from Roblox's movement animations. Ones with no r6
+				-- id need an R15 avatar. group is the heading each sits under in the settings card.
+				local emotes = {
+					{ name = "Wave", group = "EMOTES", r15 = 507770239, r6 = 128777973 },
+					{ name = "Point", group = "EMOTES", r15 = 507770453, r6 = 128853357 },
+					{ name = "Cheer", group = "EMOTES", r15 = 507770677, r6 = 129423030 },
+					{ name = "Laugh", group = "EMOTES", r15 = 507770818, r6 = 129423131 },
+					{ name = "Dance 1", group = "DANCES", r15 = 507771019, r6 = 182435998 },
+					{ name = "Dance 2", group = "DANCES", r15 = 507776043, r6 = 182436842 },
+					{ name = "Dance 3", group = "DANCES", r15 = 507777268, r6 = 182436935 },
+					{ name = "Party 1", group = "DANCES", r15 = 3333432454, r6 = 27789359 },
+					{ name = "Party 2", group = "DANCES", r15 = 4555808220, r6 = 30196114 },
+					{ name = "Party 3", group = "DANCES", r15 = 4049037604, r6 = 248263260 },
+					{ name = "Party 4", group = "DANCES", r15 = 4555782893, r6 = 45834924 },
+					{ name = "Party 5", group = "DANCES", r15 = 10214311282, r6 = 33796059 },
+					{ name = "Party 6", group = "DANCES", r15 = 10714010337, r6 = 28488254 },
+					{ name = "Party 7", group = "DANCES", r15 = 10713981723, r6 = 52155728 },
+					{ name = "Party 8", group = "DANCES", r15 = 10714372526 },
+					{ name = "Party 9", group = "DANCES", r15 = 10714076981 },
+					{ name = "Party 10", group = "DANCES", r15 = 10714392151 },
+					{ name = "Party 11", group = "DANCES", r15 = 11444443576 },
+					{ name = "Swim on Land", group = "SILLY", r15 = 507784897 },
+					{ name = "Climb the Air", group = "SILLY", r15 = 507765644, r6 = 180436334 },
+					{ name = "Flail", group = "SILLY", r15 = 507767968, r6 = 180436148 },
+					{ name = "Sit Slide", group = "SILLY", r15 = 2506281703, r6 = 178130996 },
+					{ name = "Run in Place", group = "SILLY", r15 = 507767714, r6 = 180426354 },
+					{ name = "Jump Loop", group = "SILLY", r15 = 507765000, r6 = 125750702 },
+					{ name = "Zombie Arms", group = "SILLY", r15 = 616158929 },
+					{ name = "Levitate", group = "SILLY", r15 = 616006778 },
+					{ name = "Grandpa", group = "SILLY", r15 = 845397899 },
+					{ name = "Robot", group = "SILLY", r15 = 616088211 },
+					{ name = "Zombie Shuffle", group = "RUNNING ON THE SPOT", r15 = 616168032 },
+					{ name = "Cartoon Run", group = "RUNNING ON THE SPOT", r15 = 742638842 },
+					{ name = "Robot Walk", group = "RUNNING ON THE SPOT", r15 = 616095330 },
+					{ name = "Ninja Run", group = "RUNNING ON THE SPOT", r15 = 656118852 },
+					{ name = "Toy Walk", group = "RUNNING ON THE SPOT", r15 = 782843345 },
+					{ name = "Mage Float", group = "RUNNING ON THE SPOT", r15 = 707897309 },
+					{ name = "Werewolf Run", group = "RUNNING ON THE SPOT", r15 = 1083216690 },
+					{ name = "Superhero Fall", group = "RUNNING ON THE SPOT", r15 = 616108001 },
+				}
+				local emoteNames, emoteByName, emoteGroups = {}, {}, {}
+				for _, emote in ipairs(emotes) do
+					table.insert(emoteNames, emote.name)
+					emoteByName[emote.name] = emote
+					local group = emoteGroups[#emoteGroups]
+					if not group or group.name ~= emote.group then
+						group = { name = emote.group, names = {} }
+						table.insert(emoteGroups, group)
+					end
+					table.insert(group.names, emote.name)
+				end
+				trolling.emoteNames = emoteNames
+				if not emoteByName[featureSettings.trollEmote] then featureSettings.trollEmote = "Dance 1" end
+				local emoteState = { track = nil }
+				local function stopEmoteTrack()
+					if emoteState.track then
+						pcall(function() emoteState.track:Stop(0.2) end)
+						emoteState.track = nil
+					end
+				end
+				-- Plays the chosen emote on a loop. Says why not when it can't.
+				local function playChosenEmote()
+					stopEmoteTrack()
+					local _, humanoid = myCharacter()
+					if not humanoid then return false, "Your character isn't ready yet." end
+					local emote = emoteByName[featureSettings.trollEmote] or emotes[1]
+					local id = isR15(humanoid) and emote.r15 or emote.r6
+					if not id then return false, emote.name .. " needs an R15 avatar, and this game has you as R6." end
+					local track = playOnMe("rbxassetid://" .. tostring(id))
+					if not track then return false, "Your character isn't ready yet." end
+					track.Looped = true
+					emoteState.track = track
+					return true
+				end
+				function trolling.chooseEmote(name)
+					local wanted = tostring(name or ""):lower():gsub("%s", "")
+					for _, emote in ipairs(emotes) do
+						if emote.name:lower():gsub("%s", "") == wanted then
+							featureSettings.trollEmote = emote.name
+							saveFeatureSettings()
+							local entry = quickToggleByName["Emote"]
+							if entry and entry.state then
+								local played, why = playChosenEmote()
+								if not played then notify("Emote", why) end
+							end
+							return true
+						end
+					end
+					return false
+				end
+				addQuickToggle(trollTab, "Emote", "Loops an emote, a dance or something silly. Right-click to choose", function(enabled)
+					if not enabled then return stopEmoteTrack() end
+					local played, why = playChosenEmote()
+					if not played then
+						notify("Emote", why)
+						return false
+					end
+				end, "music", "smile")
+				table.insert(respawnHandlers, function()
+					local entry = quickToggleByName["Emote"]
+					if entry and entry.state then playChosenEmote() end
+				end)
+
+				addQuickToggle(trollTab, "Reverse Animations", "Everything you do plays backwards", function(enabled)
+					trolling.reverse = enabled
+					updateSpeedLoop()
+				end, "rewind", "undo-2")
+				addQuickToggle(trollTab, "Mannequin", "Your arms and legs stop moving, so you glide about stiff as a board", function(enabled)
+					holdAnimate("Mannequin", enabled)
+				end, "accessibility", "person-standing")
+				-- Statue: frozen mid-pose and rooted to the spot (anchored) until it's switched off.
+				local statueState = { root = nil }
+				local function setStatue(enabled)
+					if statueState.root then
+						pcall(function() statueState.root.Anchored = false end)
+						statueState.root = nil
+					end
+					trolling.statue = false
+					if enabled then
+						local _, _, root = myCharacter()
+						if not root then
+							notify("Statue", "Your character isn't ready yet.")
+							updateSpeedLoop()
+							return false
+						end
+						claimMovement("Statue")
+						root.Anchored = true
+						statueState.root = root
+						trolling.statue = true
+					end
+					updateSpeedLoop()
+				end
+				addQuickToggle(trollTab, "Statue", "Freeze mid-pose and stay rooted to the spot", setStatue, "pause", "snowflake")
+				table.insert(respawnHandlers, function() switchOff("Statue") end)
+
+				-- Play Animation ID: any animation Roblox lets this game load, played over everything else.
+				local customState = { track = nil, serial = 0 }
+				local function stopCustomTrack()
+					customState.serial += 1
+					if customState.track then
+						pcall(function() customState.track:Stop(0.2) end)
+						customState.track = nil
+					end
+				end
+				function trolling.playAnimationId(text)
+					local id = tostring(text or ""):match("%d+")
+					if not id then
+						return notify("Play Animation", "Type an animation's ID number, like 507771019.")
+					end
+					stopCustomTrack()
+					local serial = customState.serial
+					task.spawn(function()
+						local animationId = "rbxassetid://" .. id
+						-- A catalog emote wraps its animation; this finds the animation inside, the way
+						-- Infinite Yield's animation command does.
+						local unwrapped, inner = pcall(anim2track, animationId)
+						if unwrapped and type(inner) == "string" and inner ~= "" then animationId = inner end
+						if customState.serial ~= serial then return end
+						local track = playOnMe(animationId)
+						if not track then
+							return notify("Play Animation", "Your character isn't ready yet.")
+						end
+						customState.track = track
+						-- An animation Roblox won't let this game use never gets a length.
+						local started = os.clock()
+						while track.Length == 0 and os.clock() - started < 4 and customState.serial == serial do
+							task.wait(0.1)
+						end
+						if track.Length == 0 and customState.serial == serial then
+							stopCustomTrack()
+							notify("Play Animation", "That one didn't load. Roblox only lets a game play animations made by Roblox or by the game's creator.", 6)
+						end
+					end)
+				end
+				function trolling.stopAnimations()
+					stopCustomTrack()
+					switchOff("Emote")
+					stopEmoteTrack()
+				end
+				trolling.animationInput = withIcon(trollTab, "CreateInput", {
+					name = "Play Animation ID",
+					description = "Plays an animation or emote by its ID. Roblox only allows ones made by Roblox or by this game's creator",
+					placeholder = "Animation ID",
+					numeric = true,
+					callback = function(value)
+						if tostring(value or "") == "" then return end
+						trolling.playAnimationId(value)
+						-- Emptied again, so the same ID can be played twice in a row.
+						task.defer(function()
+							pcall(function() trolling.animationInput:Set("", true) end)
+						end)
+					end,
+				}, "clapperboard", "film", "play")
+				withIcon(trollTab, "CreateButton", {
+					name = "Stop Animations",
+					description = "Stops the emote and anything played by ID",
+					callback = function() trolling.stopAnimations() end,
+				}, "circle-stop", "square")
+
+				-- Silly walks.
+				withIcon(trollTab, "CreateSection", { name = "Silly walks" }, "footprints")
+				-- Moonwalk and Crab Walk turn you away from where you're walking: right round, so you glide
+				-- the wrong way, or sideways like a crab.
+				local facingState = { loop = nil, humanoid = nil, autoRotate = true }
+				local function setWalkFacing(angle)
+					if facingState.loop then
+						facingState.loop:Disconnect()
+						facingState.loop = nil
+					end
+					if facingState.humanoid and facingState.humanoid.Parent then
+						facingState.humanoid.AutoRotate = facingState.autoRotate
+					end
+					facingState.humanoid = nil
+					if not angle then return end
+					local turn = CFrame.Angles(0, angle, 0)
+					facingState.loop = RunService.Heartbeat:Connect(function()
+						local _, humanoid, root = myCharacter()
+						if not humanoid then return end
+						if facingState.humanoid ~= humanoid then
+							facingState.humanoid = humanoid
+							facingState.autoRotate = humanoid.AutoRotate
+						end
+						humanoid.AutoRotate = false
+						local direction = flat(humanoid.MoveDirection)
+						if direction.Magnitude > 0.1 then
+							root.CFrame = CFrame.lookAt(root.Position, root.Position + turn:VectorToWorldSpace(direction.Unit))
+						end
+					end)
+				end
+				local function walkFacingSwitch(name, angle)
+					return function(enabled)
+						if enabled then claimMovement(name) end
+						setWalkFacing(enabled and angle or nil)
+					end
+				end
+				addQuickToggle(trollTab, "Moonwalk", "You face backwards as you walk, so you glide the wrong way", walkFacingSwitch("Moonwalk", math.pi), "footprints")
+				addQuickToggle(trollTab, "Crab Walk", "You walk sideways, like a crab", walkFacingSwitch("Crab Walk", math.pi / 2), "shell", "bug")
+
+				-- Drunk Walk: your steering wobbles from side to side, and every so often you trip over. It
+				-- runs just before the physics step, after the game has read your keys.
+				local drunkWalkState = { loop = nil, nextTrip = 0 }
+				addQuickToggle(trollTab, "Drunk Walk", "You stagger about and trip over now and then", function(enabled)
+					if drunkWalkState.loop then
+						drunkWalkState.loop:Disconnect()
+						drunkWalkState.loop = nil
+					end
+					if not enabled then return end
+					claimMovement("Drunk Walk")
+					drunkWalkState.nextTrip = os.clock() + 5
+					drunkWalkState.loop = RunService.Stepped:Connect(function()
+						local _, humanoid = myCharacter()
+						if not humanoid then return end
+						local move = flat(humanoid.MoveDirection)
+						if move.Magnitude < 0.1 then return end
+						local now = os.clock()
+						local wobble = math.sin(now * 2.2) * math.rad(45) + math.sin(now * 5.3) * math.rad(15)
+						humanoid:Move(CFrame.Angles(0, wobble, 0):VectorToWorldSpace(move), false)
+						if now > drunkWalkState.nextTrip then
+							drunkWalkState.nextTrip = now + 6 + math.random() * 8
+							humanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
+						end
+					end)
+				end, "beer", "wine")
+
+				-- Zoomies: you run round and round in circles by yourself, whatever keys you press.
+				local zoomiesState = { loop = nil, angle = 0 }
+				addQuickToggle(trollTab, "Zoomies", "You run round and round in circles all by yourself", function(enabled)
+					if zoomiesState.loop then
+						zoomiesState.loop:Disconnect()
+						zoomiesState.loop = nil
+					end
+					if not enabled then return end
+					claimMovement("Zoomies")
+					zoomiesState.loop = RunService.Stepped:Connect(function(_, deltaTime)
+						local _, humanoid = myCharacter()
+						if not humanoid then return end
+						zoomiesState.angle = (zoomiesState.angle + deltaTime * 2.5) % (math.pi * 2)
+						humanoid:Move(Vector3.new(math.cos(zoomiesState.angle), 0, math.sin(zoomiesState.angle)), false)
+					end)
+				end, "dog", "paw-print")
+
+				-- Ice Skates: your keys push you along instead of walking you, and you keep gliding and slow
+				-- down gradually, like on ice. You glide standing up, facing where you're going.
+				local skateState = { loop = nil, velocity = Vector3.zero }
+				addQuickToggle(trollTab, "Ice Skates", "Glide around like you're on ice", function(enabled)
+					if skateState.loop then
+						skateState.loop:Disconnect()
+						skateState.loop = nil
+					end
+					if not enabled then return end
+					claimMovement("Ice Skates")
+					skateState.velocity = Vector3.zero
+					skateState.loop = RunService.Stepped:Connect(function(_, deltaTime)
+						local _, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local push = flat(humanoid.MoveDirection)
+						local velocity = skateState.velocity * math.max(0, 1 - 0.5 * deltaTime) + push * humanoid.WalkSpeed * 2 * deltaTime
+						local topSpeed = humanoid.WalkSpeed * 1.6
+						if velocity.Magnitude > topSpeed then velocity = velocity.Unit * topSpeed end
+						skateState.velocity = velocity
+						-- As far as the humanoid knows you're standing still; the glide moves you instead.
+						humanoid:Move(Vector3.zero, false)
+						if velocity.Magnitude > 0.05 then
+							local position = root.Position + velocity * deltaTime
+							root.CFrame = CFrame.lookAt(position, position + velocity)
+						end
+					end)
+				end, "snowflake", "wind")
+
+				local bunnyHopState = { loop = nil }
+				addQuickToggle(trollTab, "Bunny Hop", "Keeps you hopping nonstop", function(enabled)
+					if bunnyHopState.loop then
+						bunnyHopState.loop:Disconnect()
+						bunnyHopState.loop = nil
+					end
+					if not enabled then return end
+					claimMovement("Bunny Hop")
+					bunnyHopState.loop = RunService.Heartbeat:Connect(function()
+						local _, humanoid = myCharacter()
+						if humanoid and not humanoid.Sit and humanoid.FloorMaterial ~= Enum.Material.Air then
+							humanoid.Jump = true
+						end
+					end)
+				end, "rabbit", "chevrons-up")
+
+				-- Bouncy Ball: every landing bounces you back up, nearly as high as you came down from.
+				local bouncyState = { loop = nil, fallSpeed = 0 }
+				addQuickToggle(trollTab, "Bouncy Ball", "Every time you land, you bounce back up", function(enabled)
+					if bouncyState.loop then
+						bouncyState.loop:Disconnect()
+						bouncyState.loop = nil
+					end
+					if not enabled then return end
+					claimMovement("Bouncy Ball")
+					bouncyState.fallSpeed = 0
+					bouncyState.loop = RunService.Heartbeat:Connect(function()
+						local _, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local velocity = root.AssemblyLinearVelocity
+						if humanoid.FloorMaterial == Enum.Material.Air then
+							bouncyState.fallSpeed = math.max(bouncyState.fallSpeed, -velocity.Y)
+						else
+							if bouncyState.fallSpeed > 15 then
+								root.AssemblyLinearVelocity = Vector3.new(velocity.X, bouncyState.fallSpeed * 0.85 + 8, velocity.Z)
+								humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+							end
+							bouncyState.fallSpeed = 0
+						end
+					end)
+				end, "circle-dot", "disc")
+
+				-- Flip Every Jump: each jump comes with a random flip. Hooked to the humanoid, so it's hooked
+				-- again on each new character.
+				local flipJumpState = { enabled = false, connection = nil }
+				local function hookFlipJumps()
+					if flipJumpState.connection then
+						flipJumpState.connection:Disconnect()
+						flipJumpState.connection = nil
+					end
+					if not flipJumpState.enabled then return end
+					local _, humanoid = myCharacter()
+					if not humanoid then return end
+					local kinds = { "front", "back", "side", "spin" }
+					flipJumpState.connection = humanoid.StateChanged:Connect(function(_, newState)
+						if newState == Enum.HumanoidStateType.Jumping then
+							trolling.flip(kinds[math.random(#kinds)], true)
+						end
+					end)
+				end
+				table.insert(respawnHandlers, hookFlipJumps)
+				addQuickToggle(trollTab, "Flip Every Jump", "Every jump comes with a random flip. Try it with Bunny Hop", function(enabled)
+					flipJumpState.enabled = enabled
+					hookFlipJumps()
+				end, "rotate-3d", "refresh-cw")
+
+				-- Body tricks.
+				withIcon(trollTab, "CreateSection", { name = "Body tricks" }, "smile", "user-round")
+				-- Fake Dead: you drop flat (on your back, or face down) and lie still, seated so you don't
+				-- stand back up, until it's switched off or you jump.
+				local fakeDeadState = { loop = nil, upright = nil, serial = 0 }
+				local function setFakeDead(enabled)
+					fakeDeadState.serial += 1
+					local serial = fakeDeadState.serial
+					if fakeDeadState.loop then
+						fakeDeadState.loop:Disconnect()
+						fakeDeadState.loop = nil
+					end
+					local _, humanoid, root = myCharacter()
+					if not enabled then
+						holdAnimate("Fake Dead", false)
+						if humanoid and fakeDeadState.upright then
+							humanoid.Sit = false
+							root.CFrame = fakeDeadState.upright.Rotation + (root.Position + Vector3.new(0, 2, 0))
+							humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+						end
+						fakeDeadState.upright = nil
+						return
+					end
+					if not humanoid then
+						notify("Fake Dead", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Fake Dead")
+					switchOff("Emote")
+					local flatLook = flat(root.CFrame.LookVector)
+					if flatLook.Magnitude < 0.1 then flatLook = Vector3.new(0, 0, -1) end
+					fakeDeadState.upright = CFrame.lookAt(root.Position, root.Position + flatLook.Unit)
+					holdAnimate("Fake Dead", true)
+					humanoid.Sit = true
+					-- A moment to sit down, then over you go.
+					task.delay(0.1, function()
+						if fakeDeadState.serial ~= serial or not root.Parent then return end
+						if not humanoid.Sit then
+							notify("Fake Dead", "This game doesn't let you lie down.")
+							return switchOff("Fake Dead")
+						end
+						local faceDown = featureSettings.trollDeadPose == "Face down"
+						root.CFrame = fakeDeadState.upright * CFrame.Angles(faceDown and -math.pi / 2 or math.pi / 2, 0, 0)
+						stopAllTracks(humanoid, 0)
+						fakeDeadState.loop = RunService.Heartbeat:Connect(function()
+							-- Jumping gets you up, and so does dying for real.
+							if not humanoid.Parent or humanoid.Health <= 0 or not humanoid.Sit then
+								switchOff("Fake Dead")
+							end
+						end)
+					end)
+				end
+				addQuickToggle(trollTab, "Fake Dead", "Drop down and lie still as if you died. Jump to get back up. Right-click for the pose", setFakeDead, "skull")
+
+				-- Fake Lag: makes you look laggy to everyone. Stutter freezes you for moments at a time,
+				-- Rubber-band snaps you back to where you just were, and Glitch twitches you about.
+				local fakeLagState = { serial = 0, anchoredRoot = nil }
+				local function releaseLagAnchor()
+					if fakeLagState.anchoredRoot then
+						pcall(function() fakeLagState.anchoredRoot.Anchored = false end)
+						fakeLagState.anchoredRoot = nil
+					end
+				end
+				local function setFakeLag(enabled)
+					fakeLagState.serial += 1
+					local serial = fakeLagState.serial
+					releaseLagAnchor()
+					if not enabled then return end
+					claimMovement("Fake Lag")
+					task.spawn(function()
+						while fakeLagState.serial == serial do
+							local _, _, root = myCharacter()
+							local style = featureSettings.trollLagStyle
+							if not root then
+								task.wait(0.3)
+							elseif style == "Rubber-band" then
+								local from = root.Position
+								task.wait(0.25 + math.random() * 0.2)
+								if fakeLagState.serial ~= serial then break end
+								if root.Parent and (root.Position - from).Magnitude > 1.5 then
+									root.CFrame = root.CFrame.Rotation + from
+								end
+								task.wait(0.2 + math.random() * 0.45)
+							elseif style == "Glitch" then
+								if math.random() < 0.35 then
+									root.CFrame = root.CFrame * CFrame.new((math.random() - 0.5) * 1.2, 0, (math.random() - 0.5) * 1.2)
+										* CFrame.Angles(0, math.rad(math.random(-30, 30)), 0)
+								end
+								RunService.Heartbeat:Wait()
+							else
+								root.Anchored = true
+								fakeLagState.anchoredRoot = root
+								task.wait(0.08 + math.random() * 0.17)
+								releaseLagAnchor()
+								task.wait(0.1 + math.random() * 0.3)
+							end
+						end
+					end)
+				end
+				addQuickToggle(trollTab, "Fake Lag", "Makes you look like you're lagging. Right-click for the style", setFakeLag, "wifi-off", "wifi")
+
+				-- Spin: turns you round and round like a top. The speed is in its settings card. During
+				-- Handstand it's a headspin.
+				local spinState = { enabled = false, mover = nil }
+				local function attachSpin()
+					if spinState.mover then
+						spinState.mover:Destroy()
+						spinState.mover = nil
+					end
+					if not spinState.enabled then return end
+					local _, _, root = myCharacter()
+					if not root then return end
+					local mover = Instance.new("BodyAngularVelocity")
+					mover.Name = "SpreadCheeksSpin"
+					mover.MaxTorque = Vector3.new(0, math.huge, 0)
+					mover.AngularVelocity = Vector3.new(0, featureSettings.trollSpinSpeed, 0)
+					mover.Parent = root
+					spinState.mover = mover
+				end
+				table.insert(respawnHandlers, attachSpin)
+				function trolling.setSpinSpeed(value)
+					featureSettings.trollSpinSpeed = math.clamp(tonumber(value) or 20, 1, 100)
+					if spinState.mover then
+						spinState.mover.AngularVelocity = Vector3.new(0, featureSettings.trollSpinSpeed, 0)
+					end
+				end
+				addQuickToggle(trollTab, "Spin", "Spin like a top. Right-click for the speed", function(enabled)
+					spinState.enabled = enabled
+					attachSpin()
+				end, "refresh-cw", "rotate-cw")
+
+				-- Vibrate: you shake on the spot like a phone going off. Each frame takes back the last nudge,
+				-- so you don't drift.
+				local vibrateState = { loop = nil, offset = nil }
+				addQuickToggle(trollTab, "Vibrate", "Shake on the spot like a phone going off", function(enabled)
+					if vibrateState.loop then
+						vibrateState.loop:Disconnect()
+						vibrateState.loop = nil
+					end
+					vibrateState.offset = nil
+					if not enabled then return end
+					vibrateState.loop = RunService.Heartbeat:Connect(function()
+						local _, _, root = myCharacter()
+						if not root then return end
+						local offset = Vector3.new((math.random() - 0.5) * 0.35, (math.random() - 0.5) * 0.2, (math.random() - 0.5) * 0.35)
+						root.CFrame = root.CFrame + offset - (vibrateState.offset or Vector3.zero)
+						vibrateState.offset = offset
+					end)
+				end, "vibrate", "activity")
+
+				-- Infinite Yield's swim, which turns gravity off and keeps you swimming. It ends when you die.
+				addQuickToggle(trollTab, "Swim in Air", "Swim through the air like it's water. Hold Space to rise", function(enabled)
+					if enabled then claimMovement("Swim in Air") end
+					execCmd(enabled and "swim" or "unswim", localPlayer, true)
+				end, "waves")
+				table.insert(respawnHandlers, function() switchOff("Swim in Air") end)
+
+				-- The takeovers (Handstand, Crawl, Superman, Helicopter and Bow Down) hold your character
+				-- themselves: PlatformStand stops the humanoid fighting them, Animate is held so your limbs
+				-- keep still (a mode can loop an animation of its own), and every frame the mode's step says
+				-- where your root goes. takeoverState.yaw is the way you face, for standing back up after.
+				local function endTakeover(name)
+					if takeoverState.name ~= name then return end
+					takeoverState.name = nil
+					if takeoverState.loop then
+						takeoverState.loop:Disconnect()
+						takeoverState.loop = nil
+					end
+					if takeoverState.track then
+						pcall(function() takeoverState.track:Stop(0.2) end)
+						takeoverState.track = nil
+					end
+					local _, humanoid, root = myCharacter()
+					if humanoid then
+						humanoid.PlatformStand = false
+						root.CFrame = CFrame.new(root.Position + Vector3.new(0, 2.5, 0)) * CFrame.Angles(0, takeoverState.yaw, 0)
+						humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+					end
+					holdAnimate(name, false)
+				end
+				-- mode has start(humanoid, root), step(deltaTime, humanoid, root) returning the root's CFrame
+				-- (or nil to leave it), and optionally animation = { r15 = id, r6 = id }.
+				local function beginTakeover(name, mode)
+					if takeoverState.name == name and takeoverState.loop then
+						-- Starting again, on a new target: only the loop changes.
+						takeoverState.loop:Disconnect()
+						takeoverState.loop = nil
+					else
+						claimMovement(name)
+					end
+					local _, humanoid, root = myCharacter()
+					if not humanoid then
+						notify(name, "Your character isn't ready yet.")
+						return false
+					end
+					local look = flat(root.CFrame.LookVector)
+					takeoverState.name = name
+					takeoverState.yaw = yawOf(look.Magnitude > 0.1 and look or Vector3.new(0, 0, -1))
+					holdAnimate(name, true)
+					mode.start(humanoid, root)
+					if mode.animation and not takeoverState.track then
+						local id = isR15(humanoid) and mode.animation.r15 or mode.animation.r6
+						takeoverState.track = id and playOnMe("rbxassetid://" .. tostring(id)) or nil
+						if takeoverState.track then takeoverState.track.Looped = true end
+					end
+					takeoverState.loop = RunService.Heartbeat:Connect(function(deltaTime)
+						local _, myHumanoid, myRoot = myCharacter()
+						if not myHumanoid then return end
+						-- A new character ends it.
+						if myHumanoid ~= humanoid then return switchOff(name) end
+						myHumanoid.PlatformStand = true
+						local cframe = mode.step(deltaTime, myHumanoid, myRoot)
+						if cframe then
+							myRoot.CFrame = cframe
+							myRoot.AssemblyLinearVelocity = Vector3.zero
+							myRoot.AssemblyAngularVelocity = Vector3.zero
+						end
+					end)
+					return true
+				end
+				local function takeoverSwitch(name, mode)
+					return function(enabled)
+						if not enabled then return endTakeover(name) end
+						return beginTakeover(name, mode)
+					end
+				end
+
+				-- Handstand: upside down on your head and hands, legs walking in the air as you go.
+				local handstandMode = { animation = { r15 = 507777826, r6 = 180426354 }, position = nil, headHeight = 2.5, moving = nil }
+				function handstandMode.start(humanoid, root)
+					local head = humanoid.Parent:FindFirstChild("Head")
+					local height = head and head:IsA("BasePart") and (head.Position.Y + head.Size.Y / 2 - root.Position.Y) or 2.5
+					handstandMode.headHeight = math.clamp(height, 1.5, 4)
+					handstandMode.position = root.Position
+					handstandMode.moving = nil
+				end
+				function handstandMode.step(deltaTime, humanoid, root)
+					local move = flat(humanoid.MoveDirection)
+					local moving = move.Magnitude > 0.05
+					if moving then
+						handstandMode.position += move * humanoid.WalkSpeed * 0.5 * deltaTime
+						takeoverState.yaw = yawOf(move)
+					end
+					-- Spin on too makes it a headspin.
+					if spinState.enabled then takeoverState.yaw += featureSettings.trollSpinSpeed * deltaTime end
+					-- The legs only walk while you're moving.
+					if takeoverState.track and moving ~= handstandMode.moving then
+						takeoverState.track:AdjustSpeed(moving and 1 or 0)
+					end
+					handstandMode.moving = moving
+					local ground = groundBelow(handstandMode.position, { humanoid.Parent })
+					local position = handstandMode.position
+					handstandMode.position = Vector3.new(position.X, ground and ground + handstandMode.headHeight or position.Y, position.Z)
+					return CFrame.new(handstandMode.position) * CFrame.Angles(0, takeoverState.yaw, 0) * CFrame.Angles(0, 0, math.pi)
+				end
+				addQuickToggle(trollTab, "Handstand", "Walk on your head and hands, legs kicking in the air. With Spin on too, it's a headspin", takeoverSwitch("Handstand", handstandMode), "hand", "hand-metal")
+
+				-- Crawl: down on the ground, wriggling along like a worm, sliding on your belly or rolling
+				-- along like a log (the style is in its settings card).
+				local crawlMode = { position = nil, roll = 0, phase = 0 }
+				function crawlMode.start(humanoid, root)
+					crawlMode.position = root.Position
+					crawlMode.roll, crawlMode.phase = 0, 0
+				end
+				function crawlMode.step(deltaTime, humanoid, root)
+					local style = featureSettings.trollCrawlStyle
+					local move = flat(humanoid.MoveDirection)
+					if move.Magnitude > 0.05 then
+						local speed = humanoid.WalkSpeed * (style == "Belly Slide" and 1.4 or style == "Log Roll" and 0.6 or 0.35)
+						local step = move * speed * deltaTime
+						crawlMode.position += step
+						takeoverState.yaw = yawOf(move)
+						crawlMode.roll += step.Magnitude / 0.9
+						crawlMode.phase += deltaTime * 9
+					end
+					local height = style == "Log Roll" and 1 or 0.75
+					if style == "Worm" then height += math.max(0, math.sin(crawlMode.phase)) * 0.45 end
+					local ground = groundBelow(crawlMode.position, { humanoid.Parent })
+					local position = crawlMode.position
+					crawlMode.position = Vector3.new(position.X, ground and ground + height or position.Y, position.Z)
+					local facing = CFrame.new(crawlMode.position) * CFrame.Angles(0, takeoverState.yaw, 0)
+					if style == "Log Roll" then
+						-- On your side across the way you're going, rolling over and over.
+						return facing * CFrame.Angles(0, 0, math.pi / 2) * CFrame.Angles(0, crawlMode.roll, 0)
+					end
+					-- Face down and head first; the worm arches as it goes.
+					local wiggle = style == "Worm" and math.sin(crawlMode.phase) * math.rad(14) or 0
+					return facing * CFrame.Angles(-math.pi / 2 + wiggle, 0, 0)
+				end
+				addQuickToggle(trollTab, "Crawl", "Get down and wriggle along like a worm. Right-click for belly slide or log roll", takeoverSwitch("Crawl", crawlMode), "worm", "bug")
+
+				-- Superman: flying flat out, face down and head first. Your movement keys steer, Space goes
+				-- up and Ctrl or Q go down.
+				local supermanMode = { animation = { r15 = 616108001, r6 = 180436148 }, position = nil }
+				function supermanMode.start(humanoid, root)
+					supermanMode.position = root.Position + Vector3.new(0, 3, 0)
+				end
+				function supermanMode.step(deltaTime, humanoid, root)
+					local move = flat(humanoid.MoveDirection)
+					local rising = 0
+					if not UserInputService:GetFocusedTextBox() then
+						if UserInputService:IsKeyDown(Enum.KeyCode.Space) then rising += 1 end
+						if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then rising -= 1 end
+					end
+					supermanMode.position += (move * 45 + Vector3.new(0, rising * 30, 0)) * deltaTime
+					local moving = move.Magnitude > 0.05
+					if moving then takeoverState.yaw = yawOf(move) end
+					-- A gentle bob while you hover.
+					local bob = moving and 0 or math.sin(os.clock() * 2) * 0.3
+					return CFrame.new(supermanMode.position + Vector3.new(0, bob, 0)) * CFrame.Angles(0, takeoverState.yaw, 0) * CFrame.Angles(-math.pi / 2, 0, 0)
+				end
+				addQuickToggle(trollTab, "Superman", "Fly flat out like a superhero. Space goes up, Ctrl or Q down", takeoverSwitch("Superman", supermanMode), "plane", "rocket")
+
+				-- Helicopter: hovering above the ground and spinning, arms up like rotor blades. The height is
+				-- in its settings card.
+				local helicopterMode = { animation = { r15 = 507767968, r6 = 180436148 }, position = nil }
+				function helicopterMode.start(humanoid, root)
+					helicopterMode.position = root.Position
+				end
+				function helicopterMode.step(deltaTime, humanoid, root)
+					local move = flat(humanoid.MoveDirection)
+					local position = helicopterMode.position + move * humanoid.WalkSpeed * deltaTime
+					local height = featureSettings.trollHeliHeight
+					local ground = groundBelow(position, { humanoid.Parent })
+					local targetY = (ground and ground + height or position.Y) + math.sin(os.clock() * 2) * 0.6
+					helicopterMode.position = Vector3.new(position.X, position.Y + (targetY - position.Y) * math.min(1, deltaTime * 2.5), position.Z)
+					takeoverState.yaw += 16 * deltaTime
+					return CFrame.new(helicopterMode.position) * CFrame.Angles(0, takeoverState.yaw, 0)
+				end
+				addQuickToggle(trollTab, "Helicopter", "Hover and spin with your arms up like rotor blades. Right-click for the height", takeoverSwitch("Helicopter", helicopterMode), "fan", "tornado")
+
+				-- Moves: one-off tricks.
+				withIcon(trollTab, "CreateSection", { name = "Moves" }, "zap", "sparkles")
+				trollTab:CreateText({
+					text = "These are commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, yeet, launch, fakeout), so you can put them on keys in IY Settings.",
+				})
+				withIcon(trollTab, "CreateButton", {
+					name = "Front Flip",
+					description = "A jump with a full turn forwards",
+					callback = function() trolling.flip("front") end,
+				}, "rotate-cw", "refresh-cw")
+				withIcon(trollTab, "CreateButton", {
+					name = "Back Flip",
+					description = "A jump with a full turn backwards",
+					callback = function() trolling.flip("back") end,
+				}, "rotate-ccw", "refresh-ccw")
+				withIcon(trollTab, "CreateButton", {
+					name = "Cartwheel",
+					description = "A jump with a full turn sideways",
+					callback = function() trolling.flip("side") end,
+				}, "rotate-3d", "refresh-ccw")
+				withIcon(trollTab, "CreateButton", {
+					name = "Triple Spin",
+					description = "A jump with three spins, like a figure skater",
+					callback = function() trolling.flip("spin") end,
+				}, "refresh-cw", "tornado")
+				withIcon(trollTab, "CreateButton", {
+					name = "Trip",
+					description = "Fall flat over",
+					callback = function() execCmd("trip", localPlayer, true) end,
+				}, "footprints")
+				withIcon(trollTab, "CreateButton", {
+					name = "Tumble",
+					description = "Go head over heels in a heap, then get back up",
+					callback = function() trolling.tumble() end,
+				}, "dices", "shuffle")
+				withIcon(trollTab, "CreateButton", {
+					name = "Yeet",
+					description = "Throw yourself forwards, tumbling through the air",
+					callback = function() trolling.yeet() end,
+				}, "wind", "rocket")
+				withIcon(trollTab, "CreateButton", {
+					name = "Launch",
+					description = "Shoots you high into the air. Some games give fall damage",
+					callback = function() trolling.launch() end,
+				}, "rocket")
+				withIcon(trollTab, "CreateButton", {
+					name = "Fakeout",
+					description = "Vanish into the void for a second, then pop back where you were",
+					callback = function() execCmd("fakeout", localPlayer, true) end,
+				}, "ghost")
+
+				-- With other players: Headsit, Orbit, Copycat and Bow Down use the player picked here, which
+				-- is the one selected on the Players tab too.
+				withIcon(trollTab, "CreateSection", { name = "With other players" }, "users-round", "users")
+				local function findPlayer(name)
+					name = tostring(name or ""):lower()
+					if name == "" then return nil end
+					for _, player in ipairs(Players:GetPlayers()) do
+						if player.Name:lower() == name then return player end
+					end
+					for _, player in ipairs(Players:GetPlayers()) do
+						if player.Name:lower():sub(1, #name) == name or player.DisplayName:lower():sub(1, #name) == name then
+							return player
+						end
+					end
+					return nil
+				end
+				local function currentTarget()
+					local player = findPlayer(menuModules.selectedPlayerName and menuModules.selectedPlayerName())
+					if player == localPlayer then return nil end
+					return player
+				end
+				local function targetFor(feature)
+					local player = currentTarget()
+					if not player then
+						notify(feature, "Pick someone first: use Choose Player or Nearest Player in this tab.")
+					end
+					return player
+				end
+				local targetText = withIcon(trollTab, "CreateText", {
+					name = "Target",
+					text = "Nobody picked yet",
+				}, "user-round")
+				local function refreshTargetText()
+					local name = menuModules.selectedPlayerName and menuModules.selectedPlayerName()
+					local player = findPlayer(name)
+					local text = "Nobody picked yet"
+					if player and player ~= localPlayer then
+						text = player.DisplayName .. "  (@" .. player.Name .. ")"
+					elseif not player and name and name ~= "" then
+						text = "@" .. name .. " isn't in this server"
+					end
+					pcall(function() targetText:Set(text) end)
+				end
+				withIcon(trollTab, "CreateButton", {
+					name = "Choose Player",
+					description = "Pick who Headsit, Orbit, Copycat and Bow Down use, by their face and name",
+					callback = function()
+						if menuModules.openPlayerPicker then menuModules.openPlayerPicker() end
+					end,
+				}, "layout-grid", "users-round")
+				withIcon(trollTab, "CreateButton", {
+					name = "Nearest Player",
+					description = "Picks the player closest to you",
+					callback = function()
+						local _, _, root = myCharacter()
+						local nearest, nearestDistance = nil, math.huge
+						for _, player in ipairs(Players:GetPlayers()) do
+							local theirRoot = player ~= localPlayer and player.Character and getRoot(player.Character)
+							if root and theirRoot then
+								local distance = (theirRoot.Position - root.Position).Magnitude
+								if distance < nearestDistance then nearest, nearestDistance = player, distance end
+							end
+						end
+						if not nearest then return notify("Nearest Player", "There's nobody else around right now.") end
+						if menuModules.selectPlayer then
+							menuModules.selectPlayer(nearest.Name, nearest.DisplayName .. "  (@" .. nearest.Name .. ")")
+						end
+						notify("Target", nearest.DisplayName .. ", " .. math.floor(nearestDistance + 0.5) .. " studs away", 2.5)
+					end,
+				}, "locate-fixed", "crosshair")
+
+				-- Picking someone else moves whichever of these are on over to them.
+				local targetedSwitches = {}
+				local function retarget()
+					for name, setter in pairs(targetedSwitches) do
+						local entry = quickToggleByName[name]
+						if entry and entry.state and setter(true) == false then switchOff(name) end
+					end
+				end
+				table.insert(menuModules.selectionListeners, function()
+					refreshTargetText()
+					retarget()
+				end)
+				Players.PlayerAdded:Connect(function() task.defer(refreshTargetText) end)
+				Players.PlayerRemoving:Connect(function() task.defer(refreshTargetText) end)
+
+				-- Headsit: you sit on the target's head, or on their back for a piggyback (in its settings
+				-- card), and ride along. Jump to get off.
+				local headsitState = { loop = nil, sitting = false }
+				local function setHeadsit(enabled)
+					if headsitState.loop then
+						headsitState.loop:Disconnect()
+						headsitState.loop = nil
+					end
+					local _, humanoid = myCharacter()
+					if not enabled then
+						if humanoid and headsitState.sitting then humanoid.Sit = false end
+						headsitState.sitting = false
+						return
+					end
+					local target = targetFor("Headsit")
+					if not target then return false end
+					if not humanoid then
+						notify("Headsit", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Headsit")
+					humanoid.Sit = true
+					headsitState.sitting = true
+					headsitState.loop = RunService.Heartbeat:Connect(function()
+						if not target.Parent then
+							notify("Headsit", target.DisplayName .. " left the server")
+							return switchOff("Headsit")
+						end
+						local _, myHumanoid, myRoot = myCharacter()
+						local character = target.Character
+						local head = character and character:FindFirstChild("Head")
+						local theirRoot = character and getRoot(character)
+						if not myHumanoid or not head or not theirRoot then return end
+						if not myHumanoid.Sit then return switchOff("Headsit") end
+						if featureSettings.trollSitSpot == "Back" then
+							myRoot.CFrame = theirRoot.CFrame * CFrame.new(0, 0.9, 1.1)
+						else
+							myRoot.CFrame = theirRoot.CFrame.Rotation + (head.Position + Vector3.new(0, head.Size.Y / 2 + 1, 0))
+						end
+						myRoot.AssemblyLinearVelocity = Vector3.zero
+					end)
+				end
+				targetedSwitches["Headsit"] = setHeadsit
+				addQuickToggle(trollTab, "Headsit", "Sit on your target's head and ride along. Jump to get off. Right-click for a piggyback", setHeadsit, "armchair")
+
+				-- Orbit: you circle round the target. Speed, distance and height are in its settings card.
+				local orbitState = { loop = nil, angle = 0 }
+				local function setOrbit(enabled)
+					if orbitState.loop then
+						orbitState.loop:Disconnect()
+						orbitState.loop = nil
+					end
+					if not enabled then return end
+					local target = targetFor("Orbit")
+					if not target then return false end
+					claimMovement("Orbit")
+					orbitState.loop = RunService.Heartbeat:Connect(function(deltaTime)
+						if not target.Parent then
+							notify("Orbit", target.DisplayName .. " left the server")
+							return switchOff("Orbit")
+						end
+						local _, _, root = myCharacter()
+						local theirRoot = target.Character and getRoot(target.Character)
+						if not root or not theirRoot then return end
+						orbitState.angle = (orbitState.angle + deltaTime * featureSettings.trollOrbitSpeed * 1.2) % (math.pi * 2)
+						local center = theirRoot.Position
+						local distance = featureSettings.trollOrbitDistance
+						local position = center + Vector3.new(math.cos(orbitState.angle) * distance, featureSettings.trollOrbitHeight, math.sin(orbitState.angle) * distance)
+						root.CFrame = CFrame.lookAt(position, Vector3.new(center.X, position.Y, center.Z))
+						root.AssemblyLinearVelocity = Vector3.zero
+					end)
+				end
+				targetedSwitches["Orbit"] = setOrbit
+				addQuickToggle(trollTab, "Orbit", "Circle round your target. Right-click for speed, distance and height", setOrbit, "orbit")
+
+				-- Copycat: plays whatever animations the target is playing, in step with them, and can follow
+				-- them about too (in its settings card). Your own Animate script is off meanwhile, so only
+				-- their animations show on you.
+				local copycatState = { loop = nil, tracks = {}, animator = nil }
+				local function stopCopiedTracks()
+					for _, track in pairs(copycatState.tracks) do
+						pcall(function() track:Stop(0.2) end)
+					end
+					table.clear(copycatState.tracks)
+				end
+				local function setCopycat(enabled)
+					if copycatState.loop then
+						copycatState.loop:Disconnect()
+						copycatState.loop = nil
+					end
+					stopCopiedTracks()
+					copycatState.animator = nil
+					if not enabled then
+						holdAnimate("Copycat", false)
+						return
+					end
+					local target = targetFor("Copycat")
+					if not target then return false end
+					local _, humanoid = myCharacter()
+					local theirHumanoid = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+					if humanoid and theirHumanoid and humanoid.RigType ~= theirHumanoid.RigType then
+						notify("Copycat", "You and " .. target.DisplayName .. " have different body types (R6 and R15), so some moves won't copy.", 5)
+					end
+					switchOff("Emote")
+					holdAnimate("Copycat", true)
+					local lastSync = 0
+					copycatState.loop = RunService.Heartbeat:Connect(function()
+						if not target.Parent then
+							notify("Copycat", target.DisplayName .. " left the server")
+							return switchOff("Copycat")
+						end
+						local _, myHumanoid, myRoot = myCharacter()
+						local theirCharacter = target.Character
+						local theirRoot = theirCharacter and getRoot(theirCharacter)
+						local follow = featureSettings.trollCopyFollow
+						if follow ~= "Off" and myRoot and theirRoot then
+							myRoot.CFrame = theirRoot.CFrame * (follow == "Beside" and CFrame.new(3.5, 0, 0) or CFrame.new(0, 0, 3.5))
+							myRoot.AssemblyLinearVelocity = Vector3.zero
+						end
+						local now = os.clock()
+						if now - lastSync < 0.1 then return end
+						lastSync = now
+						local animator = animatorOf(myHumanoid)
+						local theirAnimator = animatorOf(theirCharacter and theirCharacter:FindFirstChildOfClass("Humanoid"))
+						if not animator or not theirAnimator then return end
+						if animator ~= copycatState.animator then
+							-- A new character of yours: copy onto it from scratch.
+							copycatState.animator = animator
+							table.clear(copycatState.tracks)
+						end
+						local playing = {}
+						for _, theirTrack in ipairs(theirAnimator:GetPlayingAnimationTracks()) do
+							local animation = theirTrack.Animation
+							local id = animation and animation.AnimationId
+							if id and id ~= "" then
+								playing[id] = true
+								local mine = copycatState.tracks[id]
+								if not mine then
+									local copy = Instance.new("Animation")
+									copy.AnimationId = id
+									local loaded, track = pcall(animator.LoadAnimation, animator, copy)
+									if loaded and track then
+										mine = track
+										mine.Priority = theirTrack.Priority
+										mine.Looped = theirTrack.Looped
+										copycatState.tracks[id] = mine
+									end
+								end
+								if mine then
+									if not mine.IsPlaying then mine:Play(0.15, theirTrack.WeightTarget, theirTrack.Speed) end
+									if math.abs(mine.Speed - theirTrack.Speed) > 0.01 then mine:AdjustSpeed(theirTrack.Speed) end
+									if math.abs(mine.WeightTarget - theirTrack.WeightTarget) > 0.01 then
+										mine:AdjustWeight(theirTrack.WeightTarget, 0.15)
+									end
+									-- Kept in step with them, unless your animations are sped up or reversed.
+									if animationMultiplier() == 1 and mine.Length > 0 and math.abs(mine.TimePosition - theirTrack.TimePosition) > 0.3 then
+										mine.TimePosition = theirTrack.TimePosition
+									end
+								end
+							end
+						end
+						for id, mine in pairs(copycatState.tracks) do
+							if not playing[id] then
+								mine:Stop(0.15)
+								copycatState.tracks[id] = nil
+							end
+						end
+					end)
+				end
+				targetedSwitches["Copycat"] = setCopycat
+				addQuickToggle(trollTab, "Copycat", "Copy your target's animations and emotes as they do them. Right-click to follow them too", setCopycat, "copy", "users-round")
+
+				-- Bow Down: you stand in front of the target and bow to them, over and over.
+				local bowMode = { target = nil, standHeight = 3, last = nil }
+				function bowMode.start(humanoid, root)
+					local ground = groundBelow(root.Position, { humanoid.Parent })
+					bowMode.standHeight = ground and math.clamp(root.Position.Y - ground, 1.5, 6) or 3
+					bowMode.last = root.CFrame
+				end
+				function bowMode.step(deltaTime, humanoid, root)
+					local target = bowMode.target
+					if not target or not target.Parent then
+						notify("Bow Down", "They left the server")
+						switchOff("Bow Down")
+						return nil
+					end
+					local theirRoot = target.Character and getRoot(target.Character)
+					if not theirRoot then return bowMode.last end
+					local front = flat(theirRoot.CFrame.LookVector)
+					if front.Magnitude < 0.1 then front = Vector3.new(0, 0, -1) end
+					local spot = theirRoot.Position + front.Unit * 4.5
+					local ground = groundBelow(spot, { humanoid.Parent, target.Character })
+					local position = Vector3.new(spot.X, ground and ground + bowMode.standHeight or theirRoot.Position.Y, spot.Z)
+					local towards = flat(theirRoot.Position - position)
+					if towards.Magnitude > 0.1 then takeoverState.yaw = yawOf(towards) end
+					local bow = (0.5 - 0.5 * math.cos(os.clock() * 4)) * math.rad(70)
+					bowMode.last = CFrame.new(position) * CFrame.Angles(0, takeoverState.yaw, 0) * CFrame.Angles(-bow, 0, 0)
+					return bowMode.last
+				end
+				local function setBowDown(enabled)
+					if not enabled then return endTakeover("Bow Down") end
+					local target = targetFor("Bow Down")
+					if not target then return false end
+					bowMode.target = target
+					return beginTakeover("Bow Down", bowMode)
+				end
+				targetedSwitches["Bow Down"] = setBowDown
+				addQuickToggle(trollTab, "Bow Down", "Bow down to your target, over and over", setBowDown, "crown", "hand")
+
+				-- Only you can see: these change your own screen and nobody else's.
+				withIcon(trollTab, "CreateSection", { name = "Only you can see" }, "eye", "monitor")
+				-- Disco Mode: a colour tint that cycles through the rainbow, with a flash on every beat.
+				local discoState = { loop = nil, effect = nil }
+				addQuickToggle(trollTab, "Disco Mode", "Party lights for your screen", function(enabled)
+					if discoState.loop then
+						discoState.loop:Disconnect()
+						discoState.loop = nil
+					end
+					if discoState.effect then
+						discoState.effect:Destroy()
+						discoState.effect = nil
+					end
+					if not enabled then return end
+					local effect = Instance.new("ColorCorrectionEffect")
+					effect.Name = "SpreadCheeksDisco"
+					effect.Saturation = 0.4
+					effect.Contrast = 0.15
+					effect.Parent = Lighting
+					discoState.effect = effect
+					discoState.loop = RunService.RenderStepped:Connect(function()
+						local now = os.clock()
+						effect.TintColor = Color3.fromHSV((now * 0.35) % 1, 0.6, 1)
+						-- Two beats a second.
+						effect.Brightness = 0.12 * (1 - (now * 2) % 1)
+					end)
+				end, "party-popper", "music")
+
+				-- Calls apply(character, keep) for everyone else's character, now and whenever one spawns,
+				-- until the function it returns is called. keep holds on to a connection until then.
+				local function watchOthers(apply)
+					local connections = {}
+					local function keep(connection)
+						table.insert(connections, connection)
+					end
+					local function watch(player)
+						if player == localPlayer then return end
+						if player.Character then task.spawn(apply, player.Character, keep) end
+						keep(player.CharacterAdded:Connect(function(character)
+							-- Heads, hats and clothes arrive a moment after the character does.
+							task.wait(0.5)
+							if character.Parent then apply(character, keep) end
+						end))
+					end
+					for _, player in ipairs(Players:GetPlayers()) do
+						watch(player)
+					end
+					keep(Players.PlayerAdded:Connect(watch))
+					return function()
+						for _, connection in ipairs(connections) do
+							connection:Disconnect()
+						end
+						table.clear(connections)
+					end
+				end
+
+				-- Big Heads and Noob Mode note what they change on each character, so it can be put back.
+				-- Big Heads grows the head and moves the neck joint to match, so it still sits on the
+				-- shoulders.
+				local bigHeadsState = { enabled = false, stop = nil, saved = {} }
+				local function resizeHead(head, saved, factor)
+					local mesh = head:FindFirstChildOfClass("SpecialMesh")
+					if mesh and saved.meshScale then
+						mesh.Scale = saved.meshScale * factor
+					else
+						head.Size = saved.size * factor
+					end
+					if saved.neck and saved.neck.Parent then
+						saved.neck.C1 = saved.neckC1.Rotation + saved.neckC1.Position * factor
+					end
+				end
+				local function growHead(character)
+					if not bigHeadsState.enabled then return end
+					local head = character:FindFirstChild("Head")
+					if not head or not head:IsA("BasePart") then return end
+					for oldHead in pairs(bigHeadsState.saved) do
+						if not oldHead.Parent then bigHeadsState.saved[oldHead] = nil end
+					end
+					local saved = bigHeadsState.saved[head]
+					if not saved then
+						local mesh = head:FindFirstChildOfClass("SpecialMesh")
+						local neck = character:FindFirstChild("Neck", true)
+						if neck and not neck:IsA("Motor6D") then neck = nil end
+						saved = { size = head.Size, meshScale = mesh and mesh.Scale, neck = neck, neckC1 = neck and neck.C1 }
+						bigHeadsState.saved[head] = saved
+					end
+					resizeHead(head, saved, featureSettings.trollHeadSize)
+				end
+				function trolling.setHeadSize(size)
+					featureSettings.trollHeadSize = math.clamp(tonumber(size) or 3, 2, 5)
+					if bigHeadsState.enabled then
+						for head, saved in pairs(bigHeadsState.saved) do
+							pcall(resizeHead, head, saved, featureSettings.trollHeadSize)
+						end
+					end
+				end
+				addQuickToggle(trollTab, "Big Heads", "Gives everyone else giant heads. Right-click for the size", function(enabled)
+					bigHeadsState.enabled = enabled
+					if bigHeadsState.stop then
+						bigHeadsState.stop()
+						bigHeadsState.stop = nil
+					end
+					if enabled then
+						bigHeadsState.stop = watchOthers(function(character)
+							pcall(growHead, character)
+						end)
+					else
+						for head, saved in pairs(bigHeadsState.saved) do
+							pcall(resizeHead, head, saved, 1)
+						end
+						table.clear(bigHeadsState.saved)
+					end
+				end, "maximize-2", "scaling")
+
+				-- Noob Mode: everyone else gets the classic yellow, blue and green with no clothes, hats or
+				-- textures, and the old smile.
+				local noobState = { enabled = false, stop = nil, saved = {} }
+				local noobYellow, noobBlue, noobGreen = Color3.fromRGB(245, 205, 48), Color3.fromRGB(13, 105, 172), Color3.fromRGB(164, 189, 71)
+				local function noobSet(object, property, value)
+					local saved = noobState.saved[object]
+					if not saved then
+						saved = {}
+						noobState.saved[object] = saved
+					end
+					if saved[property] == nil then saved[property] = object[property] end
+					object[property] = value
+				end
+				local function noobColor(partName)
+					local name = partName:lower()
+					if name:find("torso") then return noobBlue end
+					if name:find("leg") or name:find("foot") then return noobGreen end
+					if name == "head" or name:find("arm") or name:find("hand") then return noobYellow end
+					return nil
+				end
+				local function noobify(object)
+					if not noobState.enabled then return end
+					if object:IsA("BasePart") then
+						if object:FindFirstAncestorOfClass("Accessory") then
+							noobSet(object, "LocalTransparencyModifier", 1)
+						elseif object.Name ~= "HumanoidRootPart" then
+							local color = noobColor(object.Name)
+							if color then noobSet(object, "Color", color) end
+							if object:IsA("MeshPart") and object.TextureID ~= "" then noobSet(object, "TextureID", "") end
+						end
+					elseif object:IsA("Shirt") then
+						noobSet(object, "ShirtTemplate", "")
+					elseif object:IsA("Pants") then
+						noobSet(object, "PantsTemplate", "")
+					elseif object:IsA("ShirtGraphic") then
+						noobSet(object, "Graphic", "")
+					elseif object:IsA("BodyColors") then
+						noobSet(object, "HeadColor3", noobYellow)
+						noobSet(object, "LeftArmColor3", noobYellow)
+						noobSet(object, "RightArmColor3", noobYellow)
+						noobSet(object, "TorsoColor3", noobBlue)
+						noobSet(object, "LeftLegColor3", noobGreen)
+						noobSet(object, "RightLegColor3", noobGreen)
+					elseif object:IsA("Decal") and object.Name == "face" then
+						noobSet(object, "Texture", "rbxasset://textures/face.png")
+					end
+				end
+				local function noobCharacter(character, keep)
+					if not noobState.enabled then return end
+					for object in pairs(noobState.saved) do
+						if not object.Parent then noobState.saved[object] = nil end
+					end
+					for _, object in ipairs(character:GetDescendants()) do
+						pcall(noobify, object)
+					end
+					keep(character.DescendantAdded:Connect(function(object)
+						-- A moment later, once the new hat or shirt has its properties.
+						task.defer(pcall, noobify, object)
+					end))
+				end
+				addQuickToggle(trollTab, "Noob Mode", "Everyone else looks like a classic noob", function(enabled)
+					noobState.enabled = enabled
+					if noobState.stop then
+						noobState.stop()
+						noobState.stop = nil
+					end
+					if enabled then
+						noobState.stop = watchOthers(noobCharacter)
+					else
+						for object, saved in pairs(noobState.saved) do
+							for property, value in pairs(saved) do
+								pcall(function() object[property] = value end)
+							end
+						end
+						table.clear(noobState.saved)
+					end
+				end, "baby", "user-round")
+
+				-- Upside Down, Drunk Vision and Earthquake bend your camera after the game has placed it each
+				-- frame. They only roll and nudge it, never turn where it looks, so the game's own camera
+				-- carries on as normal underneath.
+				local cameraFx = { flip = false, drunk = false, quake = false, bound = false, base = nil, lastSet = nil, blur = nil }
+				local function updateCameraFx()
+					local wanted = cameraFx.flip or cameraFx.drunk or cameraFx.quake
+					if wanted == cameraFx.bound then return end
+					cameraFx.bound = wanted
+					cameraFx.lastSet = nil
+					if not wanted then
+						pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksCameraFx") end)
+						return
+					end
+					RunService:BindToRenderStep("SpreadCheeksCameraFx", Enum.RenderPriority.Camera.Value + 1, function()
+						local camera = workspace.CurrentCamera
+						if not camera then return end
+						local base = camera.CFrame
+						-- If nothing has moved the camera since last frame, start from where it was before
+						-- these effects, so they don't pile up.
+						if cameraFx.lastSet and base == cameraFx.lastSet then base = cameraFx.base end
+						local result = base
+						local now = os.clock()
+						if cameraFx.flip then
+							local look = base.LookVector
+							if math.abs(look.Y) < 0.99 then
+								result = CFrame.lookAt(base.Position, base.Position + look, Vector3.new(0, -1, 0))
+							else
+								result = base * CFrame.Angles(0, 0, math.pi)
+							end
+						end
+						if cameraFx.drunk then
+							local roll = math.sin(now * 1.1) * math.rad(7) + math.sin(now * 2.3) * math.rad(2)
+							result = result * CFrame.new(math.sin(now * 0.8) * 0.2, math.sin(now * 1.6) * 0.15, 0) * CFrame.Angles(0, 0, roll)
+							if cameraFx.blur then cameraFx.blur.Size = 3 + 3 * (0.5 + 0.5 * math.sin(now * 1.7)) end
+						end
+						if cameraFx.quake then
+							result = result * CFrame.new((math.random() - 0.5) * 0.7, (math.random() - 0.5) * 0.7, 0)
+								* CFrame.Angles(0, 0, math.rad((math.random() - 0.5) * 3))
+						end
+						camera.CFrame = result
+						cameraFx.base = base
+						cameraFx.lastSet = camera.CFrame
+					end)
+				end
+				addQuickToggle(trollTab, "Upside Down", "Turns your view upside down", function(enabled)
+					cameraFx.flip = enabled
+					updateCameraFx()
+				end, "flip-vertical", "arrow-up-down")
+				addQuickToggle(trollTab, "Drunk Vision", "A wobbly, blurry view", function(enabled)
+					cameraFx.drunk = enabled
+					if cameraFx.blur then
+						cameraFx.blur:Destroy()
+						cameraFx.blur = nil
+					end
+					if enabled then
+						local blur = Instance.new("BlurEffect")
+						blur.Name = "SpreadCheeksDrunkBlur"
+						blur.Size = 4
+						blur.Parent = Lighting
+						cameraFx.blur = blur
+					end
+					updateCameraFx()
+				end, "wine", "beer")
+				addQuickToggle(trollTab, "Earthquake", "Shakes your screen", function(enabled)
+					cameraFx.quake = enabled
+					updateCameraFx()
+				end, "activity", "vibrate")
+
+				-- Trail: things a script adds to your character only show on your screen, so this one is
+				-- yours alone. The look is in its settings card.
+				local trailState = { enabled = false, objects = {} }
+				local function attachTrail()
+					for _, object in ipairs(trailState.objects) do
+						object:Destroy()
+					end
+					table.clear(trailState.objects)
+					if not trailState.enabled then return end
+					local _, _, root = myCharacter()
+					if not root then return end
+					local function add(object)
+						object.Parent = root
+						table.insert(trailState.objects, object)
+						return object
+					end
+					local style = featureSettings.trollTrail
+					if style == "Sparkles" then
+						local sparkles = Instance.new("Sparkles")
+						sparkles.SparkleColor = Color3.fromRGB(255, 215, 90)
+						add(sparkles)
+					elseif style == "Fire" then
+						local fire = Instance.new("Fire")
+						fire.Size = 5
+						fire.Heat = 9
+						add(fire)
+					else
+						local top = Instance.new("Attachment")
+						top.Name = "SpreadCheeksTrailTop"
+						top.Position = Vector3.new(0, 0.9, 0)
+						local bottom = Instance.new("Attachment")
+						bottom.Name = "SpreadCheeksTrailBottom"
+						bottom.Position = Vector3.new(0, -0.9, 0)
+						add(top)
+						add(bottom)
+						local rainbow = Instance.new("Trail")
+						rainbow.Attachment0 = top
+						rainbow.Attachment1 = bottom
+						rainbow.Lifetime = 0.9
+						rainbow.LightEmission = 0.6
+						rainbow.FaceCamera = true
+						rainbow.Transparency = NumberSequence.new(0.15, 1)
+						rainbow.Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 70)),
+							ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 165, 60)),
+							ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 235, 80)),
+							ColorSequenceKeypoint.new(0.6, Color3.fromRGB(90, 220, 110)),
+							ColorSequenceKeypoint.new(0.8, Color3.fromRGB(80, 160, 255)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(175, 110, 255)),
+						})
+						add(rainbow)
+					end
+				end
+				table.insert(respawnHandlers, attachTrail)
+				function trolling.setTrailStyle(style)
+					featureSettings.trollTrail = style
+					saveFeatureSettings()
+					attachTrail()
+				end
+				addQuickToggle(trollTab, "Trail", "A rainbow, sparkle or fire trail follows you around. Right-click for the look", function(enabled)
+					trailState.enabled = enabled
+					attachTrail()
+				end, "sparkles", "wand-sparkles")
+
+				-- Loading a config doesn't play dead, freeze you or go after a player who may not be in the
+				-- server.
+				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down" }) do
+					if quickToggleByName[name] then quickToggleByName[name].noConfig = true end
+				end
+
+				-- Like a settings card's row of choices, but wrapping onto more lines for a longer list.
+				local function addChoiceGrid(card, options, columns, get, set)
+					local grid = Instance.new("Frame")
+					grid.LayoutOrder = card.nextOrder()
+					grid.Size = UDim2.fromScale(1, 0)
+					grid.AutomaticSize = Enum.AutomaticSize.Y
+					grid.BackgroundTransparency = 1
+					grid.Parent = card.content
+					local gridLayout = Instance.new("UIGridLayout")
+					gridLayout.CellSize = UDim2.new(1 / columns, -6 * (columns - 1) / columns, 0, 28)
+					gridLayout.CellPadding = UDim2.fromOffset(6, 6)
+					gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+					gridLayout.Parent = grid
+					local buttons = {}
+					for index, option in ipairs(options) do
+						local button = Instance.new("TextButton")
+						button.LayoutOrder = index
+						button.AutoButtonColor = false
+						button.BorderSizePixel = 0
+						button.Font = Enum.Font.GothamMedium
+						button.Text = option
+						button.TextSize = 12
+						button.TextTruncate = Enum.TextTruncate.AtEnd
+						button.Parent = grid
+						local buttonCorner = Instance.new("UICorner")
+						buttonCorner.CornerRadius = UDim.new(0, 8)
+						buttonCorner.Parent = button
+						button.Activated:Connect(function()
+							set(option)
+							card.refresh()
+						end)
+						buttons[option] = button
+					end
+					table.insert(card.refreshers, function()
+						local theme = auxiliaryUiTheme
+						local current = get()
+						for option, button in pairs(buttons) do
+							local selected = current == option
+							button.BackgroundColor3 = selected and theme.Accent or theme.Inset
+							button.TextColor3 = selected and theme.OnAccent or theme.SubText
+						end
+					end)
+				end
+				-- A card choice saved straight into featureSettings[key].
+				local function addSettingChoice(card, key, options)
+					card.addChoice(options, function() return featureSettings[key] end, function(value)
+						featureSettings[key] = value
+						saveFeatureSettings()
+					end)
+				end
+
+				-- The settings cards, opened by right-clicking these switches. Called once
+				-- createSettingsCard exists.
+				function trolling.buildSettings(createSettingsCard)
+					local function cardFor(name)
+						return quickToggleByName[name] and createSettingsCard(quickToggleByName[name])
+					end
+					local emoteCard = cardFor("Emote")
+					if emoteCard then
+						for _, group in ipairs(emoteGroups) do
+							emoteCard.addSectionLabel(group.name, group.name == "DANCES" and "music" or "smile")
+							addChoiceGrid(emoteCard, group.names, 3, function() return featureSettings.trollEmote end, trolling.chooseEmote)
+						end
+						emoteCard.addHint("It loops until you switch Emote off. Silly ones are made from Roblox's own movement animations; most need an R15 avatar.")
+					end
+					local deadCard = cardFor("Fake Dead")
+					if deadCard then
+						deadCard.addSectionLabel("POSE", "skull")
+						addSettingChoice(deadCard, "trollDeadPose", { "On your back", "Face down" })
+					end
+					local lagCard = cardFor("Fake Lag")
+					if lagCard then
+						local styleHints = {
+							Stutter = "Freezes you for moments at a time, like a bad connection.",
+							["Rubber-band"] = "Snaps you back to where you just were as you move.",
+							Glitch = "Twitches you around on the spot.",
+						}
+						lagCard.addSectionLabel("STYLE", "wifi-off", "wifi")
+						addSettingChoice(lagCard, "trollLagStyle", { "Stutter", "Rubber-band", "Glitch" })
+						lagCard.addHint(function() return styleHints[featureSettings.trollLagStyle] end)
+					end
+					local spinCard = cardFor("Spin")
+					if spinCard then
+						spinCard.addSectionLabel("SPEED", "gauge")
+						spinCard.addSlider({
+							text = "Spin speed",
+							icon = { "refresh-cw" },
+							min = 1, max = 100, step = 1,
+							get = function() return featureSettings.trollSpinSpeed end,
+							set = trolling.setSpinSpeed,
+							commit = saveFeatureSettings,
+						})
+					end
+					local crawlCard = cardFor("Crawl")
+					if crawlCard then
+						local styleHints = {
+							Worm = "Face down, wriggling along slowly like a worm.",
+							["Belly Slide"] = "Face down, sliding along fast like a penguin.",
+							["Log Roll"] = "On your side, rolling over and over like a log.",
+						}
+						crawlCard.addSectionLabel("STYLE", "worm", "bug")
+						addSettingChoice(crawlCard, "trollCrawlStyle", { "Worm", "Belly Slide", "Log Roll" })
+						crawlCard.addHint(function() return styleHints[featureSettings.trollCrawlStyle] end)
+					end
+					local helicopterCard = cardFor("Helicopter")
+					if helicopterCard then
+						helicopterCard.addSectionLabel("HOVER", "fan")
+						helicopterCard.addSlider({
+							text = "Height",
+							icon = { "arrow-up-down" },
+							min = 3, max = 30, step = 1,
+							get = function() return featureSettings.trollHeliHeight end,
+							set = function(value) featureSettings.trollHeliHeight = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return tostring(math.floor(value + 0.5)) .. " studs" end,
+						})
+					end
+					local headsitCard = cardFor("Headsit")
+					if headsitCard then
+						headsitCard.addSectionLabel("SIT ON", "armchair")
+						addSettingChoice(headsitCard, "trollSitSpot", { "Head", "Back" })
+						headsitCard.addHint("Back is a piggyback ride.")
+					end
+					local orbitCard = cardFor("Orbit")
+					if orbitCard then
+						orbitCard.addSectionLabel("ORBIT", "orbit")
+						orbitCard.addSlider({
+							text = "Speed",
+							icon = { "gauge" },
+							min = 1, max = 10, step = 0.5,
+							get = function() return featureSettings.trollOrbitSpeed end,
+							set = function(value) featureSettings.trollOrbitSpeed = value end,
+							commit = saveFeatureSettings,
+						})
+						orbitCard.addSlider({
+							text = "Distance",
+							icon = { "ruler" },
+							min = 3, max = 25, step = 1,
+							get = function() return featureSettings.trollOrbitDistance end,
+							set = function(value) featureSettings.trollOrbitDistance = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return tostring(math.floor(value + 0.5)) .. " studs" end,
+						})
+						orbitCard.addSlider({
+							text = "Height",
+							icon = { "arrow-up-down" },
+							min = -5, max = 15, step = 1,
+							get = function() return featureSettings.trollOrbitHeight end,
+							set = function(value) featureSettings.trollOrbitHeight = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return tostring(math.floor(value + 0.5)) .. " studs" end,
+						})
+					end
+					local copycatCard = cardFor("Copycat")
+					if copycatCard then
+						copycatCard.addSectionLabel("FOLLOW THEM", "footprints")
+						addSettingChoice(copycatCard, "trollCopyFollow", { "Off", "Behind", "Beside" })
+						copycatCard.addHint("Behind or beside, you stick with them as they move, like a shadow.")
+					end
+					local headsCard = cardFor("Big Heads")
+					if headsCard then
+						headsCard.addSectionLabel("SIZE", "maximize-2", "scaling")
+						headsCard.addChoice({ "2×", "3×", "5×" }, function() return tostring(featureSettings.trollHeadSize) .. "×" end, function(choice)
+							trolling.setHeadSize(tonumber((choice:gsub("×", ""))))
+							saveFeatureSettings()
+						end)
+					end
+					local trailCard = cardFor("Trail")
+					if trailCard then
+						trailCard.addSectionLabel("LOOK", "sparkles")
+						trailCard.addChoice({ "Rainbow", "Sparkles", "Fire" }, function() return featureSettings.trollTrail end, trolling.setTrailStyle)
+						trailCard.addHint("Only you can see it: things a script adds to your character stay on your screen.")
+					end
+				end
+
+				-- After a config loads: its animation pack, emote, spin speed, head size and trail go on, and
+				-- any choice the config didn't know about goes back to its first option.
+				function trolling.applySettings()
+					local choices = {
+						trollDeadPose = { "On your back", "Face down" },
+						trollLagStyle = { "Stutter", "Rubber-band", "Glitch" },
+						trollCrawlStyle = { "Worm", "Belly Slide", "Log Roll" },
+						trollSitSpot = { "Head", "Back" },
+						trollCopyFollow = { "Off", "Behind", "Beside" },
+						trollTrail = { "Rainbow", "Sparkles", "Fire" },
+					}
+					for key, options in pairs(choices) do
+						if not table.find(options, featureSettings[key]) then featureSettings[key] = options[1] end
+					end
+					if not packByName[featureSettings.trollAnimPack] then featureSettings.trollAnimPack = "Default" end
+					if not emoteByName[featureSettings.trollEmote] then featureSettings.trollEmote = "Dance 1" end
+					pcall(function() trolling.packDropdown:Set(featureSettings.trollAnimPack, true) end)
+					applyAnimationPack(true)
+					trolling.setSpinSpeed(featureSettings.trollSpinSpeed)
+					trolling.setHeadSize(featureSettings.trollHeadSize)
+					attachTrail()
+					local emote = quickToggleByName["Emote"]
+					if emote and emote.state then playChosenEmote() end
+				end
+			end)
+			if not built then
+				warn("[SpreadCheeksGUI] Some of the Trolling tab couldn't be added: " .. tostring(problem))
+			end
+		end
 
 		-- Interface: windows on screen, keybinds and extras. Performance Stats is made here, with the
 		-- other switches, so it gets a key box; its window is built further down (buildPerformanceStats).
@@ -17859,6 +19874,13 @@ if rayfieldLoaded and Rayfield then
 		if not featureSettingsOk then
 			warn("[SpreadCheeksGUI] Feature settings couldn't be added: " .. tostring(featureSettingsError))
 		end
+		-- The Trolling switches' settings cards (see the Trolling tab, further up).
+		if trolling.buildSettings then
+			local trollingSettingsOk, trollingSettingsError = pcall(trolling.buildSettings, createSettingsCard)
+			if not trollingSettingsOk then
+				warn("[SpreadCheeksGUI] Trolling settings couldn't be added: " .. tostring(trollingSettingsError))
+			end
+		end
 
 		local function addCommandSlider(tab, name, minValue, maxValue, initialValue, command, increment, suffix, ...)
 			withIcon(tab, "CreateSlider", {
@@ -19179,11 +21201,19 @@ if rayfieldLoaded and Rayfield then
 			selectedPlayerName = name
 			selectedPlayerDisplay:Set(label)
 			if menuModules.onPlayerSelected then task.spawn(menuModules.onPlayerSelected) end
+			for _, listener in ipairs(menuModules.selectionListeners) do
+				task.spawn(listener)
+			end
 			if locatedPlayerName and locatedPlayerName ~= name then
 				execCmd("nolocate " .. locatedPlayerName, Players.LocalPlayer, true)
 				execCmd("locate " .. name, Players.LocalPlayer, true)
 				locatedPlayerName = name
 			end
+		end
+		-- The Trolling tab picks its target through this same selection.
+		menuModules.selectPlayer = selectPlayer
+		function menuModules.selectedPlayerName()
+			return selectedPlayerName
 		end
 		local function buildFacePicker()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -19510,15 +21540,17 @@ if rayfieldLoaded and Rayfield then
 			Players.PlayerAdded:Connect(refreshFaceCards)
 			Players.PlayerRemoving:Connect(refreshFaceCards)
 			refreshFaceCards()
+			-- The Trolling tab's Choose Player button opens it too.
+			function menuModules.openPlayerPicker()
+				refreshFaceCards()
+				searchInput.Text = ""
+				pickerGui.Enabled = true
+				fitTiles()
+			end
 			withIcon(playerTab, "CreateButton", {
 				name = "Player picker",
 				description = "Choose a player from their face and username",
-				callback = function()
-					refreshFaceCards()
-					searchInput.Text = ""
-					pickerGui.Enabled = true
-					fitTiles()
-				end,
+				callback = menuModules.openPlayerPicker,
 			}, "layout-grid")
 		end
 		buildFacePicker()
@@ -21366,7 +23398,8 @@ if rayfieldLoaded and Rayfield then
 				local keys, switches = {}, {}
 				for _, entry in ipairs(quickToggles) do
 					if entry.key then keys[entry.name] = entry.key.Name end
-					switches[entry.name] = entry.state == true
+					-- noConfig switches (Fake Dead, and the ones that need a player) stay as they are.
+					if not entry.noConfig then switches[entry.name] = entry.state == true end
 				end
 				switches["Aimbot"] = aimbotState.enabled == true
 				switches["Keybind List"] = featureSettings.keybindList == true
@@ -21397,6 +23430,8 @@ if rayfieldLoaded and Rayfield then
 						pcall(function() themeDropdown:Set(palette.name, true) end)
 					end
 					if aimbotState.refreshKey then aimbotState.refreshKey() end
+					-- The animation pack, spin speed and so on go on straight away.
+					if trolling.applySettings then pcall(trolling.applySettings) end
 				end
 				if type(config.esp) == "table" then
 					for key, default in pairs(espDefaultSettings) do
@@ -21419,7 +23454,7 @@ if rayfieldLoaded and Rayfield then
 				if withSwitches and type(config.switches) == "table" then
 					for _, entry in ipairs(quickToggles) do
 						local on = config.switches[entry.name] == true
-						if entry.state ~= on then setQuickToggle(entry, on) end
+						if not entry.noConfig and entry.state ~= on then setQuickToggle(entry, on) end
 					end
 					applyAimbot(config.switches["Aimbot"] == true)
 					pcall(function() aimbotToggle:Set(aimbotState.enabled, true) end)
@@ -23198,15 +25233,20 @@ if rayfieldLoaded and Rayfield then
 			-- Turns a Quick Controls switch on or off (or over, with on left out), moving the switch.
 			local function setSwitch(name, on)
 				local entry = quickToggleByName[name]
-				if not entry then return end
+				if not entry then
+					warn("[SpreadCheeksGUI] There's no switch called " .. tostring(name))
+					return
+				end
 				if on == nil then on = not entry.state end
 				setQuickToggle(entry, on)
 			end
-			local function addSwitchCommands(switchName, names, onDescription, offDescription)
+			-- switchName is the switch's name as it shows in the menu; label is how the toggle
+			-- command's description names it, when that reads better ("the radar").
+			local function addSwitchCommands(switchName, names, onDescription, offDescription, label)
 				local on, off, toggle = names[1], names[2], names[3]
 				describe(on[1] .. (on[2] and (" / " .. on[2]) or ""), onDescription)
 				describe(off[1] .. (off[2] and (" / " .. off[2]) or ""), offDescription)
-				describe(toggle, "Turns " .. switchName .. " on or off")
+				describe(toggle, "Turns " .. (label or switchName) .. " on or off")
 				addcmd(on[1], { on[2] }, function() setSwitch(switchName, true) end)
 				addcmd(off[1], { off[2] }, function() setSwitch(switchName, false) end)
 				addcmd(toggle, {}, function() setSwitch(switchName, nil) end)
@@ -23294,8 +25334,8 @@ if rayfieldLoaded and Rayfield then
 			end)
 
 			-- Trigger bot.
-			addSwitchCommands("the trigger bot", { { "triggerbot", "tbot" }, { "untriggerbot", "untbot" }, "toggletriggerbot" },
-				"Turns the trigger bot on: it fires while your crosshair is on a player", "Turns the trigger bot off")
+			addSwitchCommands("Trigger Bot", { { "triggerbot", "tbot" }, { "untriggerbot", "untbot" }, "toggletriggerbot" },
+				"Turns the trigger bot on: it fires while your crosshair is on a player", "Turns the trigger bot off", "the trigger bot")
 			describe("triggermode [tap/hold]", "Tap clicks once per shot delay; Hold keeps the button down, for automatic guns")
 			addcmd("triggermode", {}, function(args)
 				local choice = firstArgument(args)
@@ -23314,8 +25354,8 @@ if rayfieldLoaded and Rayfield then
 			end)
 
 			-- Cheater detector.
-			addSwitchCommands("the cheater detector", { { "cheatdetector", "detectcheaters" }, { "uncheatdetector", "undetectcheaters" }, "togglecheatdetector" },
-				"Warns you when someone moves like a cheater: flying, speed, teleporting, noclip or flinging", "Turns the cheater detector off")
+			addSwitchCommands("Cheater Detector", { { "cheatdetector", "detectcheaters" }, { "uncheatdetector", "undetectcheaters" }, "togglecheatdetector" },
+				"Warns you when someone moves like a cheater: flying, speed, teleporting, noclip or flinging", "Turns the cheater detector off", "the cheater detector")
 			describe("cheatsensitivity [relaxed/normal/strict]", "How sure the cheater detector has to be before it warns you")
 			addcmd("cheatsensitivity", {}, function(args)
 				local levels = { relaxed = "Relaxed", normal = "Normal", strict = "Strict" }
@@ -23383,10 +25423,10 @@ if rayfieldLoaded and Rayfield then
 			describe("iysettings", "Opens the menu on IY Settings: keybinds, prefix, aliases, waypoints and plugins")
 			addcmd("iysettings", {}, function() openTab(iySettingsTab) end)
 			-- Windows and alerts added with the radar and logs.
-			addSwitchCommands("the radar", { { "radar", "minimap" }, { "unradar", "unminimap" }, "toggleradar" },
-				"Shows the radar: a minimap of the players around you", "Hides the radar")
-			addSwitchCommands("the Logs window", { { "logswindow" }, { "unlogswindow" }, "togglelogswindow" },
-				"Shows the Logs window: chat, joins and recent notifications", "Hides the Logs window")
+			addSwitchCommands("Radar", { { "radar", "minimap" }, { "unradar", "unminimap" }, "toggleradar" },
+				"Shows the radar: a minimap of the players around you", "Hides the radar", "the radar")
+			addSwitchCommands("Logs", { { "logswindow" }, { "unlogswindow" }, "togglelogswindow" },
+				"Shows the Logs window: chat, joins and recent notifications", "Hides the Logs window", "the Logs window")
 			addSwitchCommands("Join Alerts", { { "joinalerts" }, { "unjoinalerts" }, "togglejoinalerts" },
 				"Tells you when friends or watched players join or leave", "Turns Join Alerts off")
 			describe("watch [username]", "Adds a player to your watch list, so Join Alerts tells you when they come and go")
@@ -23405,6 +25445,173 @@ if rayfieldLoaded and Rayfield then
 				else
 					notify("Join Alerts", name .. " isn't on your watch list")
 				end
+			end)
+
+			-- Trolling. (Spin, Headsit, Orbit, Swim, Trip and Fakeout already have Infinite Yield commands of
+			-- those names.)
+			describe("trolling", "Opens the menu on the Trolling tab")
+			addcmd("trolling", {}, function() openTab(trollTab) end)
+			-- Picks the Trolling tab's target from a typed name, for the commands that take one.
+			local function chooseTarget(args, speaker, feature)
+				if not args[1] then return true end
+				local names = getPlayer(args[1], speaker)
+				local target = names and names[1] and Players:FindFirstChild(names[1])
+				if not target or target == Players.LocalPlayer then
+					notify(feature, "Couldn't find that player")
+					return false
+				end
+				if menuModules.selectPlayer then
+					menuModules.selectPlayer(target.Name, target.DisplayName .. "  (@" .. target.Name .. ")")
+				end
+				return true
+			end
+
+			-- Animations.
+			describe("animpack / animationpack [name]", "Changes your animation pack (R15 only): " .. table.concat(trolling.packNames or {}, ", "))
+			addcmd("animpack", { "animationpack" }, function(args)
+				if not trolling.setAnimationPack or not trolling.setAnimationPack(getstring(1, args)) then
+					return notify("Animation Pack", "Pick one of: " .. table.concat(trolling.packNames or {}, ", "), 8)
+				end
+				notify("Animation Pack", featureSettings.trollAnimPack, 2)
+			end)
+			describe("animationspeed [0-5]", "How fast all your animations play: 1 is normal, 0 freezes you mid-move")
+			addcmd("animationspeed", {}, function(args)
+				local speed = tonumber(args[1])
+				if not speed or not trolling.setAnimationSpeed then
+					return notify("Animation Speed", "Give a speed from 0 to 5, like animationspeed 2")
+				end
+				trolling.setAnimationSpeed(speed)
+				notify("Animation Speed", tostring(trolling.animSpeed) .. "×", 2)
+			end)
+			describe("emoteloop [emote]", "Loops an emote, a dance or something silly: " .. table.concat(trolling.emoteNames or {}, ", "))
+			describe("unemoteloop", "Stops the looping emote")
+			addcmd("emoteloop", {}, function(args)
+				local name = getstring(1, args)
+				if name ~= "" and (not trolling.chooseEmote or not trolling.chooseEmote(name)) then
+					return notify("Emote", "Pick one of: " .. table.concat(trolling.emoteNames or {}, ", "), 8)
+				end
+				setSwitch("Emote", true)
+			end)
+			addcmd("unemoteloop", {}, function() setSwitch("Emote", false) end)
+			addSwitchCommands("Reverse Animations", { { "reverseanims", "reverseanimations" }, { "unreverseanims", "unreverseanimations" }, "togglereverseanims" },
+				"Everything you do plays backwards", "Your animations play forwards again")
+			addSwitchCommands("Mannequin", { { "mannequin" }, { "unmannequin" }, "togglemannequin" },
+				"Your arms and legs stop moving, so you glide about stiff as a board", "You move normally again")
+			addSwitchCommands("Statue", { { "statue" }, { "unstatue" }, "togglestatue" },
+				"Freeze mid-pose and stay rooted to the spot", "Unfreezes you")
+
+			-- Silly walks.
+			addSwitchCommands("Moonwalk", { { "moonwalk" }, { "unmoonwalk" }, "togglemoonwalk" },
+				"Walk facing backwards, so you glide the wrong way", "Stops moonwalking")
+			addSwitchCommands("Crab Walk", { { "crabwalk" }, { "uncrabwalk" }, "togglecrabwalk" },
+				"Walk sideways, like a crab", "Walk normally again")
+			addSwitchCommands("Drunk Walk", { { "drunkwalk" }, { "undrunkwalk" }, "toggledrunkwalk" },
+				"Stagger about and trip over now and then", "Walk straight again")
+			addSwitchCommands("Zoomies", { { "zoomies" }, { "unzoomies" }, "togglezoomies" },
+				"Run round and round in circles all by yourself", "Stops the zoomies")
+			addSwitchCommands("Ice Skates", { { "iceskates", "skate" }, { "uniceskates", "unskate" }, "toggleiceskates" },
+				"Glide around like you're on ice", "Takes the skates off")
+			addSwitchCommands("Bunny Hop", { { "bunnyhop", "bhop" }, { "unbunnyhop", "unbhop" }, "togglebunnyhop" },
+				"Keeps you hopping nonstop", "Stops the hopping")
+			addSwitchCommands("Bouncy Ball", { { "bouncy", "bouncyball" }, { "unbouncy", "unbouncyball" }, "togglebouncy" },
+				"Every time you land, you bounce back up", "Stops the bouncing")
+			addSwitchCommands("Flip Every Jump", { { "flipjumps" }, { "unflipjumps" }, "toggleflipjumps" },
+				"Every jump comes with a random flip", "Jumps are plain again")
+
+			-- Body tricks.
+			addSwitchCommands("Fake Dead", { { "fakedead", "playdead" }, { "unfakedead", "unplaydead" }, "togglefakedead" },
+				"Drop down and lie still as if you died. Jump to get back up", "Gets you back up")
+			addSwitchCommands("Fake Lag", { { "fakelag" }, { "unfakelag" }, "togglefakelag" },
+				"Makes you look like you're lagging to everyone", "Stops the fake lag")
+			describe("fakelagstyle [stutter/rubberband/glitch]", "How Fake Lag looks: freezing, snapping back, or twitching about")
+			addcmd("fakelagstyle", {}, function(args)
+				local styles = { stutter = "Stutter", rubberband = "Rubber-band", ["rubber-band"] = "Rubber-band", glitch = "Glitch" }
+				local style = styles[firstArgument(args)]
+				if not style then return notify("Fake Lag", "Choose stutter, rubberband or glitch, like fakelagstyle glitch") end
+				featureSettings.trollLagStyle = style
+				saveFeatureSettings()
+				notify("Fake Lag", style, 2)
+			end)
+			addSwitchCommands("Vibrate", { { "vibrate" }, { "unvibrate" }, "togglevibrate" },
+				"Shake on the spot like a phone going off", "Stops the shaking")
+			addSwitchCommands("Handstand", { { "handstand" }, { "unhandstand" }, "togglehandstand" },
+				"Walk on your head and hands, legs kicking in the air (with Spin on too, it's a headspin)", "Back on your feet")
+			addSwitchCommands("Crawl", { { "crawl" }, { "uncrawl" }, "togglecrawl" },
+				"Get down and wriggle along like a worm, slide on your belly or roll like a log", "Back on your feet")
+			describe("crawlstyle [worm/bellyslide/logroll]", "How Crawl moves you")
+			addcmd("crawlstyle", {}, function(args)
+				local styles = { worm = "Worm", bellyslide = "Belly Slide", belly = "Belly Slide", logroll = "Log Roll", log = "Log Roll" }
+				local style = styles[firstArgument(args)]
+				if not style then return notify("Crawl", "Choose worm, bellyslide or logroll, like crawlstyle logroll") end
+				featureSettings.trollCrawlStyle = style
+				saveFeatureSettings()
+				notify("Crawl", style, 2)
+			end)
+			addSwitchCommands("Superman", { { "superman" }, { "unsuperman" }, "togglesuperman" },
+				"Fly flat out like a superhero. Space goes up, Ctrl or Q down", "Lands you")
+			addSwitchCommands("Helicopter", { { "helicopter" }, { "unhelicopter" }, "togglehelicopter" },
+				"Hover and spin with your arms up like rotor blades", "Lands you")
+
+			-- Moves.
+			describe("frontflip / flip", "Does a front flip")
+			addcmd("frontflip", { "flip" }, function() if trolling.flip then trolling.flip("front") end end)
+			describe("backflip", "Does a back flip")
+			addcmd("backflip", {}, function() if trolling.flip then trolling.flip("back") end end)
+			describe("cartwheel", "Does a cartwheel")
+			addcmd("cartwheel", {}, function() if trolling.flip then trolling.flip("side") end end)
+			describe("triplespin / spinjump", "Jumps with three spins, like a figure skater")
+			addcmd("triplespin", { "spinjump" }, function() if trolling.flip then trolling.flip("spin") end end)
+			describe("tumble", "Go head over heels in a heap, then get back up")
+			addcmd("tumble", {}, function() if trolling.tumble then trolling.tumble() end end)
+			describe("yeet", "Throws you forwards, tumbling through the air")
+			addcmd("yeet", {}, function() if trolling.yeet then trolling.yeet() end end)
+			describe("launch", "Shoots you high into the air")
+			addcmd("launch", {}, function() if trolling.launch then trolling.launch() end end)
+
+			-- With other players.
+			describe("copycat [player]", "Copies a player's animations and emotes as they do them (the Trolling tab's target if you leave the name out)")
+			describe("uncopycat", "Stops copying")
+			addcmd("copycat", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Copycat") then setSwitch("Copycat", true) end
+			end)
+			addcmd("uncopycat", {}, function() setSwitch("Copycat", false) end)
+			describe("bowdown [player]", "Bows down to a player, over and over (the Trolling tab's target if you leave the name out)")
+			describe("unbowdown", "Stops bowing")
+			addcmd("bowdown", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Bow Down") then setSwitch("Bow Down", true) end
+			end)
+			addcmd("unbowdown", {}, function() setSwitch("Bow Down", false) end)
+
+			-- Only you can see.
+			addSwitchCommands("Disco Mode", { { "disco" }, { "undisco" }, "toggledisco" },
+				"Party lights on your screen (only you see them)", "Turns the party lights off")
+			addSwitchCommands("Big Heads", { { "bigheads" }, { "unbigheads" }, "togglebigheads" },
+				"Gives everyone else giant heads on your screen", "Puts everyone's heads back")
+			describe("bigheadsize [2-5]", "How big Big Heads makes heads")
+			addcmd("bigheadsize", {}, function(args)
+				local size = tonumber(args[1])
+				if not size or not trolling.setHeadSize then return notify("Big Heads", "Give a size from 2 to 5, like bigheadsize 3") end
+				trolling.setHeadSize(size)
+				saveFeatureSettings()
+				notify("Big Heads", tostring(featureSettings.trollHeadSize) .. "×", 2)
+			end)
+			addSwitchCommands("Noob Mode", { { "noobmode" }, { "unnoobmode" }, "togglenoobmode" },
+				"Everyone else looks like a classic noob on your screen", "Everyone looks normal again")
+			addSwitchCommands("Upside Down", { { "upsidedown" }, { "unupsidedown" }, "toggleupsidedown" },
+				"Turns your view upside down", "Turns your view the right way up")
+			addSwitchCommands("Drunk Vision", { { "drunk" }, { "undrunk" }, "toggledrunk" },
+				"A wobbly, blurry view", "Clears your view")
+			addSwitchCommands("Earthquake", { { "earthquake" }, { "unearthquake" }, "toggleearthquake" },
+				"Shakes your screen", "Stops the shaking")
+			addSwitchCommands("Trail", { { "trail" }, { "untrail" }, "toggletrail" },
+				"A trail follows you around (only you see it)", "Takes the trail off")
+			describe("trailstyle [rainbow/sparkles/fire]", "What the Trail looks like")
+			addcmd("trailstyle", {}, function(args)
+				local styles = { rainbow = "Rainbow", sparkles = "Sparkles", fire = "Fire" }
+				local style = styles[firstArgument(args)]
+				if not style or not trolling.setTrailStyle then return notify("Trail", "Choose rainbow, sparkles or fire, like trailstyle fire") end
+				trolling.setTrailStyle(style)
+				notify("Trail", style, 2)
 			end)
 
 			describe("configs", "Opens the menu on Configs, to save and load your setups")
