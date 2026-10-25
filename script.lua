@@ -14658,6 +14658,14 @@ if rayfieldLoaded and Rayfield then
 			-- how high it jumps and how big the ball is (studs).
 			trollBowSpot = "In front", trollBowSpeed = 4, trollBowDepth = 70, trollBowDistance = 4.5, trollBowKneel = false,
 			trollMarbleSpeed = 100, trollMarbleJump = 100, trollMarbleSize = 5,
+			-- Glide To: how fast it flies you over (studs a second).
+			trollGlideSpeed = 50,
+			-- The Favourites bar: shown, where it was dragged to (like keybindListX/Y), and what's on it,
+			-- in order: "switch:<name>" for a switch, "move:<name>" for a move from the Trolling tab.
+			favouritesBar = false, favouritesBarX = -1, favouritesBarY = -1, favourites = {},
+			-- Mention Alerts: on or off, whether your username and display name count, the ping, and
+			-- other words that count as you (a nickname, say).
+			mentionAlerts = false, mentionUsername = true, mentionDisplayName = true, mentionSound = true, mentionWords = {},
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14668,6 +14676,7 @@ if rayfieldLoaded and Rayfield then
 			trollOrbitHeight = { -5, 15 }, trollHeliHeight = { 3, 30 },
 			trollBowSpeed = { 1, 10 }, trollBowDepth = { 20, 90 }, trollBowDistance = { 2, 15 },
 			trollMarbleSpeed = { 20, 300 }, trollMarbleJump = { 0, 250 }, trollMarbleSize = { 3, 10 },
+			trollGlideSpeed = { 10, 200 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15558,6 +15567,14 @@ if rayfieldLoaded and Rayfield then
 			end
 			if enabled and menuModules.joinAlerts then menuModules.joinAlerts.announceHere() end
 		end, "bell-ring", "bell")
+		-- Mention Alerts tell you when someone says your name in chat. The listening is built further
+		-- down (Mention Alerts, by Join Alerts); this remembers on or off.
+		addQuickToggle(protectionTab, "Mention Alerts", "Tells you when someone says your name in chat. Right-click for settings", function(enabled)
+			if featureSettings.mentionAlerts ~= enabled then
+				featureSettings.mentionAlerts = enabled
+				saveFeatureSettings()
+			end
+		end, "at-sign", "message-circle")
 
 		-- Trolling: harmless fun, in a tab of its own. Animations, walks, tricks, moves and the player
 		-- tricks play on your own character, so everyone in the server sees them; the effects under
@@ -15615,7 +15632,7 @@ if rayfieldLoaded and Rayfield then
 				-- character themselves every frame and steering switches change how you walk, so each
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball" }
 				local clashes = {}
 				local function clash(first, second)
@@ -16905,59 +16922,34 @@ if rayfieldLoaded and Rayfield then
 					end
 				end, "globe", "circle-dot")
 
-				-- Moves: one-off tricks.
+				-- Moves: one-off tricks. They're kept in trolling.moves for the Favourites bar too, along
+				-- with Stop Animations from further up.
 				withIcon(trollTab, "CreateSection", { name = "Moves" }, "zap", "sparkles")
 				trollTab:CreateText({
 					text = "These are commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, yeet, launch, fakeout), so you can put them on keys in IY Settings.",
 				})
-				withIcon(trollTab, "CreateButton", {
-					name = "Front Flip",
-					description = "A jump with a full turn forwards",
-					callback = function() trolling.flip("front") end,
-				}, "rotate-cw", "refresh-cw")
-				withIcon(trollTab, "CreateButton", {
-					name = "Back Flip",
-					description = "A jump with a full turn backwards",
-					callback = function() trolling.flip("back") end,
-				}, "rotate-ccw", "refresh-ccw")
-				withIcon(trollTab, "CreateButton", {
-					name = "Cartwheel",
-					description = "A jump with a full turn sideways",
-					callback = function() trolling.flip("side") end,
-				}, "rotate-3d", "refresh-ccw")
-				withIcon(trollTab, "CreateButton", {
-					name = "Triple Spin",
-					description = "A jump with three spins, like a figure skater",
-					callback = function() trolling.flip("spin") end,
-				}, "refresh-cw", "tornado")
-				withIcon(trollTab, "CreateButton", {
-					name = "Trip",
-					description = "Fall flat over",
-					callback = function() execCmd("trip", localPlayer, true) end,
-				}, "footprints")
-				withIcon(trollTab, "CreateButton", {
-					name = "Tumble",
-					description = "Go head over heels in a heap, then get back up",
-					callback = function() trolling.tumble() end,
-				}, "dices", "shuffle")
-				withIcon(trollTab, "CreateButton", {
-					name = "Yeet",
-					description = "Throw yourself forwards, tumbling through the air",
-					callback = function() trolling.yeet() end,
-				}, "wind", "rocket")
-				withIcon(trollTab, "CreateButton", {
-					name = "Launch",
-					description = "Shoots you high into the air. Some games give fall damage",
-					callback = function() trolling.launch() end,
-				}, "rocket")
-				withIcon(trollTab, "CreateButton", {
-					name = "Fakeout",
-					description = "Vanish into the void for a second, then pop back where you were",
-					callback = function() execCmd("fakeout", localPlayer, true) end,
-				}, "ghost")
+				trolling.moves = {
+					{ name = "Front Flip", description = "A jump with a full turn forwards", icons = { "rotate-cw", "refresh-cw" }, run = function() trolling.flip("front") end },
+					{ name = "Back Flip", description = "A jump with a full turn backwards", icons = { "rotate-ccw", "refresh-ccw" }, run = function() trolling.flip("back") end },
+					{ name = "Cartwheel", description = "A jump with a full turn sideways", icons = { "rotate-3d", "refresh-ccw" }, run = function() trolling.flip("side") end },
+					{ name = "Triple Spin", description = "A jump with three spins, like a figure skater", icons = { "refresh-cw", "tornado" }, run = function() trolling.flip("spin") end },
+					{ name = "Trip", description = "Fall flat over", icons = { "footprints" }, run = function() execCmd("trip", localPlayer, true) end },
+					{ name = "Tumble", description = "Go head over heels in a heap, then get back up", icons = { "dices", "shuffle" }, run = function() trolling.tumble() end },
+					{ name = "Yeet", description = "Throw yourself forwards, tumbling through the air", icons = { "wind", "rocket" }, run = function() trolling.yeet() end },
+					{ name = "Launch", description = "Shoots you high into the air. Some games give fall damage", icons = { "rocket" }, run = function() trolling.launch() end },
+					{ name = "Fakeout", description = "Vanish into the void for a second, then pop back where you were", icons = { "ghost" }, run = function() execCmd("fakeout", localPlayer, true) end },
+				}
+				for _, move in ipairs(trolling.moves) do
+					withIcon(trollTab, "CreateButton", {
+						name = move.name,
+						description = move.description,
+						callback = move.run,
+					}, table.unpack(move.icons))
+				end
+				table.insert(trolling.moves, { name = "Stop Animations", icons = { "circle-stop", "square" }, run = function() trolling.stopAnimations() end })
 
-				-- With other players: Headsit, Orbit, Copycat and Bow Down use the player picked here, which
-				-- is the one selected on the Players tab too.
+				-- With other players: Headsit, Orbit, Copycat, Bow Down and Glide To use the player picked
+				-- here, which is the one selected on the Players tab too.
 				withIcon(trollTab, "CreateSection", { name = "With other players" }, "users-round", "users")
 				local function findPlayer(name)
 					name = tostring(name or ""):lower()
@@ -16980,7 +16972,7 @@ if rayfieldLoaded and Rayfield then
 				local function targetFor(feature)
 					local player = currentTarget()
 					if not player then
-						notify(feature, "Pick someone first: use Choose Player or Nearest Player in this tab.")
+						notify(feature, "Pick someone first: use Choose Player or Nearest Player in the Trolling tab.")
 					end
 					return player
 				end
@@ -17001,7 +16993,7 @@ if rayfieldLoaded and Rayfield then
 				end
 				withIcon(trollTab, "CreateButton", {
 					name = "Choose Player",
-					description = "Pick who Headsit, Orbit, Copycat and Bow Down use, by their face and name",
+					description = "Pick who the tricks below use, by their face and name",
 					callback = function()
 						if menuModules.openPlayerPicker then menuModules.openPlayerPicker() end
 					end,
@@ -17355,6 +17347,121 @@ if rayfieldLoaded and Rayfield then
 				targetedSwitches["Bow Down"] = setBowDown
 				addQuickToggle(trollTab, "Bow Down", "Bow down to your target, over and over. Right-click to change how", setBowDown, "crown", "hand")
 
+				-- Glide To: you fly smoothly over to the target, through walls, and stop just behind them.
+				-- Like Orbit, it moves you by velocity rather than teleporting, so everyone sees the flight
+				-- and the server agrees where you are, and it aims where they'll be once lag catches up. It
+				-- switches itself off when you arrive, or after a minute. The speed is in its settings card.
+				local glideState = { loop = nil, noclip = nil, collisions = nil, humanoid = nil, started = 0 }
+				-- keepPose: starting again on a new target, so you carry on flying.
+				local function stopGlide(keepPose)
+					if glideState.loop then
+						glideState.loop:Disconnect()
+						glideState.loop = nil
+					end
+					if glideState.noclip then
+						glideState.noclip:Disconnect()
+						glideState.noclip = nil
+					end
+					for part, canCollide in pairs(glideState.collisions or {}) do
+						if part.Parent then part.CanCollide = canCollide end
+					end
+					glideState.collisions = nil
+					if keepPose then return end
+					local humanoid = glideState.humanoid
+					glideState.humanoid = nil
+					if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
+					local root = getRoot(humanoid.Parent)
+					humanoid.PlatformStand = false
+					if root then
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						-- Upright again, facing the way you were going.
+						local look = flat(root.CFrame.LookVector)
+						if look.Magnitude > 0.1 then root.CFrame = CFrame.lookAt(root.Position, root.Position + look) end
+					end
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+				local function setGlide(enabled)
+					stopGlide(enabled)
+					if not enabled then return end
+					local target = targetFor("Glide To")
+					if not target then return false end
+					local character, humanoid = myCharacter()
+					if not humanoid then
+						notify("Glide To", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Glide To")
+					glideState.humanoid = humanoid
+					glideState.collisions = {}
+					for _, part in ipairs(character:GetDescendants()) do
+						if part:IsA("BasePart") then glideState.collisions[part] = part.CanCollide end
+					end
+					glideState.started = os.clock()
+					-- The humanoid keeps turning collisions back on, so they're switched off every frame.
+					glideState.noclip = RunService.Stepped:Connect(function()
+						for part in pairs(glideState.collisions) do
+							if part.Parent then part.CanCollide = false end
+						end
+					end)
+					glideState.loop = RunService.Heartbeat:Connect(function(deltaTime)
+						if not target.Parent then
+							notify("Glide To", target.DisplayName .. " left the server")
+							return switchOff("Glide To")
+						end
+						local _, myHumanoid, myRoot = myCharacter()
+						if not myHumanoid then return end
+						-- A new character ends it.
+						if myHumanoid ~= glideState.humanoid then return switchOff("Glide To") end
+						if os.clock() - glideState.started > 60 then
+							notify("Glide To", "Gave up after a minute of gliding.")
+							return switchOff("Glide To")
+						end
+						myHumanoid.PlatformStand = true
+						myRoot.AssemblyAngularVelocity = Vector3.zero
+						local theirRoot = target.Character and getRoot(target.Character)
+						if not theirRoot then
+							-- Hold still while they respawn.
+							myRoot.AssemblyLinearVelocity = Vector3.zero
+							return
+						end
+						-- Just behind them, where they'll be by the time they see you get there.
+						local behind = flat(theirRoot.CFrame.LookVector)
+						behind = behind.Magnitude > 0.1 and behind.Unit or Vector3.new(0, 0, -1)
+						local lead = math.clamp(networkPing() * 2 + 0.05, 0, 0.5)
+						local spot = theirRoot.Position + flat(theirRoot.AssemblyLinearVelocity) * lead - behind * 3
+						local offset = spot - myRoot.Position
+						local distance = offset.Magnitude
+						if distance < 1.5 then
+							-- Landing facing them.
+							local position = myRoot.Position
+							local towards = flat(theirRoot.Position - position)
+							if towards.Magnitude > 0.1 then myRoot.CFrame = CFrame.lookAt(position, position + towards) end
+							notify("Glide To", "Got to " .. target.DisplayName, 2)
+							return switchOff("Glide To")
+						end
+						-- Never faster than reaches the spot this frame, so you don't overshoot it.
+						local speed = math.min(featureSettings.trollGlideSpeed, distance / math.max(deltaTime, 1 / 120))
+						myRoot.AssemblyLinearVelocity = offset.Unit * speed
+						-- Facing the way you're flying, leaning into it.
+						local position = myRoot.Position
+						local heading = flat(offset)
+						if heading.Magnitude > 0.1 then
+							myRoot.CFrame = CFrame.lookAt(position, position + heading) * CFrame.Angles(-math.rad(15), 0, 0)
+						end
+					end)
+				end
+				targetedSwitches["Glide To"] = setGlide
+				addQuickToggle(trollTab, "Glide To", "Fly smoothly over to your target, through walls, and stop behind them. Right-click for the speed", setGlide, "send", "navigation")
+				-- For the Players tab's button and the glideto command. A glide that's under way starts over,
+				-- towards whoever is picked now, without landing first.
+				function trolling.startGlide()
+					local entry = quickToggleByName["Glide To"]
+					if not entry then return end
+					if not entry.state then return setQuickToggle(entry, true) end
+					if setGlide(true) == false then switchOff("Glide To") end
+				end
+
 				-- Only you can see: these change your own screen and nobody else's.
 				withIcon(trollTab, "CreateSection", { name = "Only you can see" }, "eye", "monitor")
 				-- Disco Mode: a colour tint that cycles through the rainbow, with a flash on every beat.
@@ -17681,7 +17788,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Loading a config doesn't play dead, freeze you or go after a player who may not be in the
 				-- server.
-				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down" }) do
+				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To" }) do
 					if quickToggleByName[name] then quickToggleByName[name].noConfig = true end
 				end
 
@@ -17903,6 +18010,20 @@ if rayfieldLoaded and Rayfield then
 							},
 						}, 1)
 					end
+					local glideCard = cardFor("Glide To")
+					if glideCard then
+						glideCard.addSectionLabel("SPEED", "gauge")
+						glideCard.addSlider({
+							text = "Glide speed",
+							icon = { "send", "navigation" },
+							min = 10, max = 200, step = 5,
+							get = function() return featureSettings.trollGlideSpeed end,
+							set = function(value) featureSettings.trollGlideSpeed = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return tostring(math.floor(value + 0.5)) .. " studs/s" end,
+						})
+						glideCard.addHint("Walking speed is 16. It stops a few studs behind them, or after a minute if it can't get there.")
+					end
 					local marbleCard = cardFor("Marble Ball")
 					if marbleCard then
 						marbleCard.addSectionLabel("BALL", "globe", "circle-dot")
@@ -18008,6 +18129,16 @@ if rayfieldLoaded and Rayfield then
 			end
 			if menuModules.logs then menuModules.logs.setShown(enabled) end
 		end, "scroll-text", "message-square")
+		-- The Favourites bar, built further down too (menuModules.favouritesBar).
+		addQuickToggle(interfaceTab, "Favourites Bar", "Your starred switches on screen. Hover over a switch and click its star; right-click here for moves", function(enabled)
+			if featureSettings.favouritesBar ~= enabled then
+				featureSettings.favouritesBar = enabled
+				saveFeatureSettings()
+			end
+			if menuModules.favouritesBar then menuModules.favouritesBar.setShown(enabled) end
+		end, "star", "bookmark")
+		-- A star on this row would only put a tile on the bar that hides the bar.
+		quickToggleByName["Favourites Bar"].noFavourite = true
 
 		local keybindFile = "SpreadCheeksGUI_Keybinds.json"
 		-- Semicolon opens the quick command bar; Escape and Backspace are used while capturing.
@@ -18051,6 +18182,55 @@ if rayfieldLoaded and Rayfield then
 			return ok and menuKey == keyCode
 		end
 
+		-- Favourites: the switches and moves on the Favourites bar, kept in featureSettings.favourites
+		-- in the order they were added, as "switch:<name>" or "move:<name>". Whatever shows them (the
+		-- bar, the stars on the switch rows, the bar's settings card) goes in listeners, to be told
+		-- when the list changes.
+		local favourites = { listeners = {} }
+		function favourites.has(key)
+			return table.find(featureSettings.favourites, key) ~= nil
+		end
+		function favourites.changed()
+			saveFeatureSettings()
+			for _, listener in ipairs(favourites.listeners) do pcall(listener) end
+		end
+		function favourites.set(key, on)
+			local list = featureSettings.favourites
+			local index = table.find(list, key)
+			if (index ~= nil) == (on == true) then return end
+			if on then table.insert(list, key) else table.remove(list, index) end
+			favourites.changed()
+			-- Adding something shows the bar, so you can see where it went.
+			local barEntry = quickToggleByName["Favourites Bar"]
+			if on and barEntry and not barEntry.state then setQuickToggle(barEntry, true) end
+		end
+		-- Moves a favourite along the bar: -1 is one place left, 1 one place right.
+		function favourites.shift(key, by)
+			local list = featureSettings.favourites
+			local index = table.find(list, key)
+			local other = index and index + by
+			if not other or other < 1 or other > #list then return end
+			list[index], list[other] = list[other], list[index]
+			favourites.changed()
+		end
+
+		-- Each switch row has a star just left of its key box: click it to put the switch on the bar,
+		-- or take it off. It shows while the mouse is over the row, and all the time once starred.
+		local function placeStar(entry)
+			if not entry.star then return end
+			-- A row without a key box (ESP) has its 26px settings arrow there instead.
+			local besideWidth = entry.chip and entry.chip.Size.X.Offset or 26
+			entry.star.Position = UDim2.new(1, -77 - besideWidth, 0, 20)
+		end
+		local function paintStar(entry)
+			local icon = entry.starIcon
+			if not icon then return end
+			local theme = auxiliaryUiTheme
+			local starred = favourites.has("switch:" .. entry.name)
+			icon.ImageColor3 = starred and theme.AccentText or (entry.starHovered and theme.Text or theme.Muted)
+			icon.ImageTransparency = (starred or entry.starHovered) and 0 or (entry.rowHovered and 0.3 or 1)
+		end
+
 		local function refreshKeyChip(entry)
 			local chip = entry.chip
 			if not chip then return end
@@ -18062,6 +18242,8 @@ if rayfieldLoaded and Rayfield then
 			chip.TextTransparency = (entry.key or recording) and 0 or 0.45
 			entry.chipStroke.Color = recording and auxiliaryUiTheme.Accent or auxiliaryUiTheme.Stroke
 			entry.chipStroke.Transparency = recording and 0 or 0.35
+			-- The star moves along as the box changes width.
+			placeStar(entry)
 		end
 
 		local function stopKeyRecording()
@@ -18125,7 +18307,61 @@ if rayfieldLoaded and Rayfield then
 			else
 				warn("[SpreadCheeksGUI] Couldn't add a key box to " .. entry.name .. "; Rayfield's toggle layout may have changed.")
 			end
+			if typeof(row) == "Instance" and not entry.noFavourite then
+				local star = Instance.new("TextButton")
+				star.Name = "FavouriteStar"
+				star.AnchorPoint = Vector2.new(1, 0.5)
+				star.Size = UDim2.fromOffset(24, 24)
+				star.AutoButtonColor = false
+				star.BackgroundTransparency = 1
+				star.Text = ""
+				-- Above the full-row click target, like the key box, so clicking it doesn't flip the switch.
+				star.ZIndex = 11
+				local starIcon = Instance.new("ImageLabel")
+				starIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+				starIcon.Position = UDim2.fromScale(0.5, 0.5)
+				starIcon.Size = UDim2.fromOffset(15, 15)
+				starIcon.BackgroundTransparency = 1
+				starIcon.ZIndex = 11
+				local starImage = menuIcons.get("star", "bookmark")
+				if starImage then menuIcons.apply(starIcon, starImage) end
+				starIcon.Parent = star
+				entry.star = star
+				entry.starIcon = starIcon
+				placeStar(entry)
+				paintStar(entry)
+				star.MouseEnter:Connect(function()
+					entry.starHovered = true
+					paintStar(entry)
+				end)
+				star.MouseLeave:Connect(function()
+					entry.starHovered = false
+					paintStar(entry)
+				end)
+				local hoverTarget = entry.object.interact
+				if typeof(hoverTarget) ~= "Instance" or not hoverTarget:IsA("GuiObject") then hoverTarget = row end
+				hoverTarget.MouseEnter:Connect(function()
+					entry.rowHovered = true
+					paintStar(entry)
+				end)
+				hoverTarget.MouseLeave:Connect(function()
+					entry.rowHovered = false
+					paintStar(entry)
+				end)
+				star.Activated:Connect(function()
+					local key = "switch:" .. entry.name
+					local adding = not favourites.has(key)
+					favourites.set(key, adding)
+					notify("Favourites", entry.name .. (adding and " is on your Favourites bar" or " is off your Favourites bar"), 2)
+				end)
+				star.Parent = row
+			end
 		end
+		local function paintAllStars()
+			for _, entry in ipairs(quickToggles) do paintStar(entry) end
+		end
+		table.insert(favourites.listeners, paintAllStars)
+		table.insert(auxiliaryUiThemeListeners, paintAllStars)
 
 		local function flipQuickToggle(entry)
 			entry.apply(not entry.state)
@@ -22049,6 +22285,13 @@ if rayfieldLoaded and Rayfield then
 			callback = function() runForSelectedPlayer("goto") end,
 		}, "navigation")
 		withIcon(playerTab, "CreateButton", {
+			name = "Glide to selected player",
+			description = "Fly smoothly over to them instead of teleporting. Its speed is in Trolling, under Glide To",
+			callback = function()
+				if trolling.startGlide then trolling.startGlide() end
+			end,
+		}, "send", "navigation")
+		withIcon(playerTab, "CreateButton", {
 			name = "TP unanchored parts to selected player",
 			description = "Move loose, unanchored parts to the selected player's character",
 			callback = function() runForSelectedPlayer("tpunanchored") end,
@@ -23787,8 +24030,9 @@ if rayfieldLoaded and Rayfield then
 			-- saved settings (switches are saved on their own, below).
 			local notConfigSettings = {
 				performanceStats = true, cheatDetector = true, keybindList = true, radar = true, logsWindow = true, joinAlerts = true,
+				mentionAlerts = true, favouritesBar = true, favourites = true,
 				keybindListX = true, keybindListY = true, performanceStatsX = true, performanceStatsY = true,
-				radarX = true, radarY = true, logsWindowX = true, logsWindowY = true, fpsCap = true,
+				radarX = true, radarY = true, logsWindowX = true, logsWindowY = true, favouritesBarX = true, favouritesBarY = true, fpsCap = true,
 			}
 			local store = { configs = {}, autoload = "", applySwitches = true }
 			if readfile then
@@ -24583,6 +24827,12 @@ if rayfieldLoaded and Rayfield then
 			function windowApi.isShown()
 				return shown
 			end
+			-- For a window whose contents come and go (the Favourites bar): a new size, kept on screen.
+			function windowApi.resize(width, height)
+				size = Vector2.new(width, height)
+				panel.Size = UDim2.fromOffset(width, height)
+				if shown and not dragInput then placePanel() end
+			end
 			-- Stays on screen when the screen changes size.
 			local lastScreen = nil
 			table.insert(connections, RunService.Heartbeat:Connect(function()
@@ -24876,6 +25126,286 @@ if rayfieldLoaded and Rayfield then
 			menuModules.logs = { setShown = logWindow.setShown }
 			if featureSettings.logsWindow and quickToggleByName["Logs"] then
 				setQuickToggle(quickToggleByName["Logs"], true)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Favourites bar: the switches and moves you've starred, as tiles on screen. A switch's tile
+		-- lights up while it's on and flips it when clicked; a move's tile does the move. Right-click
+		-- a tile to take it off. Switches get starred on their rows; moves are added in the bar
+		-- switch's settings card, which also puts the tiles in order.
+		safeBuild("The Favourites bar", function()
+			local tileWidth, tileHeight, gap, edge, perRow = 72, 58, 6, 8, 6
+			local barWindow = menuModules.makeWindow({
+				name = "SpreadCheeksFavourites", title = "Favourites", icons = { "star", "bookmark" },
+				width = 250, height = 86, xKey = "favouritesBarX", yKey = "favouritesBarY",
+				-- Top middle, under Roblox's buttons.
+				defaultPosition = function(screen, size) return (screen.X - size.X) / 2, 64 end,
+			})
+			local tiles = Instance.new("Frame")
+			tiles.Name = "Tiles"
+			tiles.Position = UDim2.fromOffset(edge, 0)
+			tiles.Size = UDim2.new(1, -edge * 2, 1, -edge)
+			tiles.BackgroundTransparency = 1
+			tiles.Parent = barWindow.body
+			local tilesLayout = Instance.new("UIGridLayout")
+			tilesLayout.CellSize = UDim2.fromOffset(tileWidth, tileHeight)
+			tilesLayout.CellPadding = UDim2.fromOffset(gap, gap)
+			tilesLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			tilesLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			tilesLayout.Parent = tiles
+			local emptyLabel = Instance.new("TextLabel")
+			emptyLabel.Position = UDim2.fromOffset(14, 0)
+			emptyLabel.Size = UDim2.new(1, -28, 1, -edge)
+			emptyLabel.BackgroundTransparency = 1
+			emptyLabel.Font = Enum.Font.Gotham
+			emptyLabel.Text = "Nothing here yet. Hover over a switch in the menu and click its star."
+			emptyLabel.TextSize = 12
+			emptyLabel.TextWrapped = true
+			bindAuxiliaryUiColor(emptyLabel, "TextColor3", "Muted")
+			emptyLabel.Parent = barWindow.body
+
+			-- What a favourite stands for: a switch, or a move to do.
+			local movesByName = {}
+			for _, move in ipairs(trolling.moves or {}) do movesByName[move.name] = move end
+			local function resolve(key)
+				local kind, name = tostring(key):match("^(%a+):(.+)$")
+				local entry = kind == "switch" and quickToggleByName[name]
+				if entry then return { name = name, icons = entry.icons, entry = entry } end
+				local move = kind == "move" and movesByName[name]
+				if move then return { name = name, icons = move.icons, run = move.run } end
+				return nil
+			end
+
+			-- Tile colours depend on the switch being on, so they're painted here rather than bound.
+			local shownTiles = {}
+			local function paintTile(tile)
+				local theme = auxiliaryUiTheme
+				tile.on = tile.entry ~= nil and tile.entry.state
+				local lit = tile.on or tile.flash
+				tile.button.BackgroundColor3 = lit and theme.Accent or theme.Inset
+				tile.stroke.Color = tile.hovered and theme.Accent or theme.Stroke
+				tile.icon.ImageColor3 = lit and theme.OnAccent or (tile.entry and theme.SubText or theme.AccentText)
+				tile.label.TextColor3 = lit and theme.OnAccent or theme.Text
+			end
+			local function render()
+				for _, child in ipairs(tiles:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				table.clear(shownTiles)
+				for _, key in ipairs(featureSettings.favourites) do
+					local favourite = resolve(key)
+					if favourite then
+						local tile = { entry = favourite.entry, run = favourite.run }
+						local button = Instance.new("TextButton")
+						button.LayoutOrder = #shownTiles + 1
+						button.AutoButtonColor = false
+						button.BorderSizePixel = 0
+						button.Text = ""
+						button.Parent = tiles
+						local corner = Instance.new("UICorner")
+						corner.CornerRadius = UDim.new(0, 9)
+						corner.Parent = button
+						local stroke = Instance.new("UIStroke")
+						stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+						stroke.Transparency = 0.4
+						stroke.Parent = button
+						local icon = Instance.new("ImageLabel")
+						icon.AnchorPoint = Vector2.new(0.5, 0)
+						icon.Position = UDim2.new(0.5, 0, 0, 9)
+						icon.Size = UDim2.fromOffset(18, 18)
+						icon.BackgroundTransparency = 1
+						local iconImage = menuIcons.get(table.unpack(favourite.icons or {})) or menuIcons.get("star")
+						if iconImage then menuIcons.apply(icon, iconImage) end
+						icon.Parent = button
+						local label = Instance.new("TextLabel")
+						label.Position = UDim2.fromOffset(4, 31)
+						label.Size = UDim2.new(1, -8, 0, 22)
+						label.BackgroundTransparency = 1
+						label.Font = Enum.Font.GothamMedium
+						label.Text = favourite.name
+						label.TextSize = 10
+						label.TextWrapped = true
+						label.TextTruncate = Enum.TextTruncate.AtEnd
+						label.TextYAlignment = Enum.TextYAlignment.Top
+						label.Parent = button
+						tile.button, tile.stroke, tile.icon, tile.label = button, stroke, icon, label
+						button.MouseEnter:Connect(function()
+							tile.hovered = true
+							paintTile(tile)
+						end)
+						button.MouseLeave:Connect(function()
+							tile.hovered = false
+							paintTile(tile)
+						end)
+						button.Activated:Connect(function()
+							if tile.entry then
+								setQuickToggle(tile.entry, not tile.entry.state)
+							else
+								-- A quick flash, so you can tell it went.
+								tile.flash = true
+								task.delay(0.18, function()
+									tile.flash = false
+									if button.Parent then paintTile(tile) end
+								end)
+								local ran, problem = pcall(tile.run)
+								if not ran then warn("[SpreadCheeksGUI] " .. favourite.name .. " didn't work: " .. tostring(problem)) end
+							end
+							paintTile(tile)
+						end)
+						button.MouseButton2Click:Connect(function()
+							favourites.set(key, false)
+							notify("Favourites", favourite.name .. " is off your Favourites bar", 2)
+						end)
+						paintTile(tile)
+						table.insert(shownTiles, tile)
+					end
+				end
+				-- Up to six tiles a line, and the window sized to fit them.
+				local count = #shownTiles
+				emptyLabel.Visible = count == 0
+				local columns = math.clamp(count, 1, perRow)
+				local rows = math.max(1, math.ceil(count / perRow))
+				local width = count == 0 and 250 or math.max(150, edge * 2 + columns * tileWidth + (columns - 1) * gap)
+				local height = 36 + (count == 0 and 50 or rows * tileHeight + (rows - 1) * gap + edge)
+				barWindow.resize(width, height)
+			end
+			table.insert(favourites.listeners, render)
+			table.insert(auxiliaryUiThemeListeners, function()
+				for _, tile in ipairs(shownTiles) do paintTile(tile) end
+			end)
+			-- Switches also change from keys, commands and the menu, so the tiles keep checking.
+			task.spawn(function()
+				while barWindow.gui.Parent do
+					task.wait(0.2)
+					if barWindow.isShown() then
+						for _, tile in ipairs(shownTiles) do
+							if tile.entry and tile.on ~= tile.entry.state then paintTile(tile) end
+						end
+					end
+				end
+			end)
+			render()
+
+			-- Settings: moves to add, and the order of the tiles.
+			local barEntry = quickToggleByName["Favourites Bar"]
+			local card = barEntry and createSettingsCard(barEntry)
+			if card then
+				card.addSectionLabel("MOVES", "zap", "sparkles")
+				local moveOptions = {}
+				for _, move in ipairs(trolling.moves or {}) do
+					table.insert(moveOptions, {
+						text = move.name,
+						get = function() return favourites.has("move:" .. move.name) end,
+						set = function(on) favourites.set("move:" .. move.name, on) end,
+					})
+				end
+				card.addSwitchGrid(moveOptions, 2)
+				card.addSectionLabel("ON THE BAR", "star", "bookmark")
+				card.addHint("Top to bottom here is left to right on the bar. To add a switch, hover over it in the menu and click its star; right-click a tile on the bar to take it off.")
+				local list = Instance.new("Frame")
+				list.LayoutOrder = card.nextOrder()
+				list.Size = UDim2.fromScale(1, 0)
+				list.AutomaticSize = Enum.AutomaticSize.Y
+				list.BackgroundTransparency = 1
+				list.Parent = card.content
+				local listLayout = Instance.new("UIListLayout")
+				listLayout.Padding = UDim.new(0, 4)
+				listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				listLayout.Parent = list
+				-- A small button at the right of a row, showing an icon (or text, without one).
+				local function rowButton(row, rightInset, width, iconName, text)
+					local button = Instance.new("TextButton")
+					button.AnchorPoint = Vector2.new(1, 0.5)
+					button.Position = UDim2.new(1, -rightInset, 0.5, 0)
+					button.Size = UDim2.fromOffset(width, 22)
+					button.AutoButtonColor = false
+					button.BorderSizePixel = 0
+					button.Font = Enum.Font.GothamMedium
+					button.TextSize = 11
+					button.BackgroundColor3 = auxiliaryUiTheme.Card
+					button.TextColor3 = auxiliaryUiTheme.SubText
+					local buttonCorner = Instance.new("UICorner")
+					buttonCorner.CornerRadius = UDim.new(0, 6)
+					buttonCorner.Parent = button
+					local iconImage = iconName and menuIcons.get(iconName)
+					button.Text = iconImage and "" or text
+					if iconImage then
+						local arrow = Instance.new("ImageLabel")
+						arrow.AnchorPoint = Vector2.new(0.5, 0.5)
+						arrow.Position = UDim2.fromScale(0.5, 0.5)
+						arrow.Size = UDim2.fromOffset(14, 14)
+						arrow.BackgroundTransparency = 1
+						arrow.ImageColor3 = auxiliaryUiTheme.SubText
+						menuIcons.apply(arrow, iconImage)
+						arrow.Parent = button
+					end
+					button.Parent = row
+					return button
+				end
+				local function showList()
+					for _, child in ipairs(list:GetChildren()) do
+						if child:IsA("GuiObject") then child:Destroy() end
+					end
+					local theme = auxiliaryUiTheme
+					local keys = featureSettings.favourites
+					if #keys == 0 then
+						local none = Instance.new("TextLabel")
+						none.Size = UDim2.new(1, 0, 0, 18)
+						none.BackgroundTransparency = 1
+						none.Font = Enum.Font.Gotham
+						none.Text = "Nothing on the bar yet."
+						none.TextSize = 11
+						none.TextXAlignment = Enum.TextXAlignment.Left
+						none.TextColor3 = theme.Muted
+						none.Parent = list
+						return
+					end
+					for index, key in ipairs(keys) do
+						local favourite = resolve(key)
+						local row = Instance.new("Frame")
+						row.LayoutOrder = index
+						row.Size = UDim2.new(1, 0, 0, 28)
+						row.BorderSizePixel = 0
+						row.BackgroundColor3 = theme.Inset
+						local rowCorner = Instance.new("UICorner")
+						rowCorner.CornerRadius = UDim.new(0, 7)
+						rowCorner.Parent = row
+						row.Parent = list
+						local label = Instance.new("TextLabel")
+						label.Position = UDim2.fromOffset(10, 0)
+						label.Size = UDim2.new(1, -144, 1, 0)
+						label.BackgroundTransparency = 1
+						label.Font = Enum.Font.GothamMedium
+						label.RichText = true
+						-- A favourite this version doesn't have (a renamed switch) stays listed, so it can be removed.
+						local name = favourite and favourite.name or (tostring(key):gsub("^%a+:", ""))
+						local kind = favourite and (favourite.entry and "switch" or "move") or "not found"
+						label.Text = menuModules.escape(name) .. '  <font color="' .. menuModules.hex(theme.Muted) .. '">' .. kind .. "</font>"
+						label.TextSize = 12
+						label.TextXAlignment = Enum.TextXAlignment.Left
+						label.TextTruncate = Enum.TextTruncate.AtEnd
+						label.TextColor3 = theme.Text
+						label.Parent = row
+						local up = rowButton(row, 106, 24, "chevron-up", "^")
+						up.Visible = index > 1
+						up.Activated:Connect(function() favourites.shift(key, -1) end)
+						local down = rowButton(row, 78, 24, "chevron-down", "v")
+						down.Visible = index < #keys
+						down.Activated:Connect(function() favourites.shift(key, 1) end)
+						local remove = rowButton(row, 4, 70, nil, "Remove")
+						remove.Activated:Connect(function() favourites.set(key, false) end)
+					end
+				end
+				-- Colours here depend on the list, so the list is redrawn with the card.
+				table.insert(card.refreshers, showList)
+				table.insert(favourites.listeners, card.refresh)
+				card.refresh()
+			end
+
+			menuModules.favouritesBar = { setShown = barWindow.setShown }
+			if featureSettings.favouritesBar and barEntry then
+				setQuickToggle(barEntry, true)
 			end
 		end)
 
@@ -25339,6 +25869,308 @@ if rayfieldLoaded and Rayfield then
 			}
 			if featureSettings.joinAlerts and quickToggleByName["Join Alerts"] then
 				setQuickToggle(quickToggleByName["Join Alerts"], true)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Mention Alerts: a notification, with a ping, when someone says your name in chat: your
+		-- username, your display name, or another word you add (a nickname, say). A word only counts
+		-- on its own, so "sam" doesn't go off on "same". Right-click its switch for what counts.
+		safeBuild("Mention Alerts", function()
+			local localPlayer = Players.LocalPlayer
+			local function enabled()
+				local entry = quickToggleByName["Mention Alerts"]
+				return entry ~= nil and entry.state
+			end
+			local function wordList()
+				return type(featureSettings.mentionWords) == "table" and featureSettings.mentionWords or {}
+			end
+			-- Everything that counts as you, in lower case.
+			local function myWords()
+				local words = {}
+				if featureSettings.mentionUsername then table.insert(words, localPlayer.Name:lower()) end
+				local displayName = localPlayer.DisplayName:lower()
+				if featureSettings.mentionDisplayName and not table.find(words, displayName) then table.insert(words, displayName) end
+				for _, word in ipairs(wordList()) do
+					word = tostring(word):lower()
+					if word ~= "" and not table.find(words, word) then table.insert(words, word) end
+				end
+				return words
+			end
+			-- Whether text has word in it on its own: a letter, digit or underscore either side would
+			-- make it part of a longer word. An @ in front is fine.
+			local function says(text, word)
+				local from = 1
+				while true do
+					local first, last = text:find(word, from, true)
+					if not first then return false end
+					local before = text:sub(first - 1, first - 1)
+					local after = text:sub(last + 1, last + 1)
+					if not before:find("[%w_]") and not after:find("[%w_]") then return true end
+					from = first + 1
+				end
+			end
+
+			local lastAlert = {}
+			local function heard(player, text)
+				if not enabled() or not player or player == localPlayer or type(text) ~= "string" then return end
+				local lowered = text:lower()
+				local mentioned = false
+				for _, word in ipairs(myWords()) do
+					if says(lowered, word) then
+						mentioned = true
+						break
+					end
+				end
+				if not mentioned then return end
+				-- One alert every few seconds from each player is plenty.
+				local now = os.clock()
+				if lastAlert[player.UserId] and now - lastAlert[player.UserId] < 3 then return end
+				lastAlert[player.UserId] = now
+				local who = player.DisplayName ~= player.Name and (player.DisplayName .. " (@" .. player.Name .. ")") or player.Name
+				notify("Mentioned by " .. who, text, 6)
+				if featureSettings.mentionSound then
+					local ping = Instance.new("Sound")
+					ping.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+					ping.Volume = 0.6
+					ping.Parent = SoundService
+					ping:Play()
+					task.delay(3, function() ping:Destroy() end)
+				end
+			end
+			local connections = {}
+			if sharedEnv.SpreadCheeksMentionAlerts then
+				for _, connection in ipairs(sharedEnv.SpreadCheeksMentionAlerts) do
+					pcall(function() connection:Disconnect() end)
+				end
+			end
+			sharedEnv.SpreadCheeksMentionAlerts = connections
+			-- Chat, from Roblox's newer chat or the legacy one, whichever the game uses.
+			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				table.insert(connections, TextChatService.MessageReceived:Connect(function(message)
+					local source = message.TextSource
+					if source then heard(Players:GetPlayerByUserId(source.UserId), message.Text) end
+				end))
+			else
+				local function listenTo(player)
+					table.insert(connections, player.Chatted:Connect(function(text) heard(player, text) end))
+				end
+				for _, player in ipairs(Players:GetPlayers()) do listenTo(player) end
+				table.insert(connections, Players.PlayerAdded:Connect(listenTo))
+			end
+
+			-- Adding and taking off words, for the settings card and the mentionword commands.
+			local function cleanWord(word)
+				local cleaned = tostring(word or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("^@", "")
+				return cleaned
+			end
+			local function addWord(word)
+				word = cleanWord(word)
+				if word == "" or #word > 30 then return false end
+				if type(featureSettings.mentionWords) ~= "table" then featureSettings.mentionWords = {} end
+				for _, existing in ipairs(featureSettings.mentionWords) do
+					if tostring(existing):lower() == word:lower() then return true end
+				end
+				table.insert(featureSettings.mentionWords, word)
+				saveFeatureSettings()
+				return true
+			end
+			local function removeWord(word)
+				word = cleanWord(word):lower()
+				local list = wordList()
+				for index = #list, 1, -1 do
+					if tostring(list[index]):lower() == word then
+						table.remove(list, index)
+						saveFeatureSettings()
+						return true
+					end
+				end
+				return false
+			end
+
+			-- Settings: what counts as you, other words, and the ping.
+			local entry = quickToggleByName["Mention Alerts"]
+			local card = entry and createSettingsCard(entry)
+			if card then
+				card.addSectionLabel("LISTEN FOR", "at-sign")
+				card.addSwitchGrid({
+					{
+						text = "Username",
+						get = function() return featureSettings.mentionUsername == true end,
+						set = function(on)
+							featureSettings.mentionUsername = on
+							saveFeatureSettings()
+						end,
+					},
+					{
+						text = "Display name",
+						get = function() return featureSettings.mentionDisplayName == true end,
+						set = function(on)
+							featureSettings.mentionDisplayName = on
+							saveFeatureSettings()
+						end,
+					},
+				})
+				card.addHint(function()
+					local words = myWords()
+					if #words == 0 then return "Nothing to listen for: turn on Username or Display name, or add a word below." end
+					return "Listening for: " .. table.concat(words, ", ")
+				end)
+				card.addSectionLabel("OTHER WORDS", "message-circle")
+				card.addHint("Nicknames, or anything else people call you. Each one only counts as a word on its own.")
+				-- Add a word: a box and a button on one line, like Join Alerts' watch list.
+				local addRow = Instance.new("Frame")
+				addRow.LayoutOrder = card.nextOrder()
+				addRow.Size = UDim2.new(1, 0, 0, 30)
+				addRow.BackgroundTransparency = 1
+				addRow.Parent = card.content
+				local wordBox = Instance.new("TextBox")
+				wordBox.Size = UDim2.new(1, -78, 1, 0)
+				wordBox.BorderSizePixel = 0
+				wordBox.ClearTextOnFocus = false
+				wordBox.Font = Enum.Font.Gotham
+				wordBox.PlaceholderText = "A word, like a nickname"
+				wordBox.Text = ""
+				wordBox.TextSize = 12
+				wordBox.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(wordBox, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(wordBox, "TextColor3", "Text")
+				bindAuxiliaryUiColor(wordBox, "PlaceholderColor3", "Muted")
+				local wordCorner = Instance.new("UICorner")
+				wordCorner.CornerRadius = UDim.new(0, 8)
+				wordCorner.Parent = wordBox
+				local wordPadding = Instance.new("UIPadding")
+				wordPadding.PaddingLeft = UDim.new(0, 10)
+				wordPadding.PaddingRight = UDim.new(0, 10)
+				wordPadding.Parent = wordBox
+				wordBox.Parent = addRow
+				local addButton = Instance.new("TextButton")
+				addButton.AnchorPoint = Vector2.new(1, 0)
+				addButton.Position = UDim2.fromScale(1, 0)
+				addButton.Size = UDim2.new(0, 70, 1, 0)
+				addButton.AutoButtonColor = false
+				addButton.BorderSizePixel = 0
+				addButton.Font = Enum.Font.GothamBold
+				addButton.Text = "Add"
+				addButton.TextSize = 12
+				bindAuxiliaryUiColor(addButton, "BackgroundColor3", "Accent")
+				bindAuxiliaryUiColor(addButton, "TextColor3", "OnAccent")
+				local addCorner = Instance.new("UICorner")
+				addCorner.CornerRadius = UDim.new(0, 8)
+				addCorner.Parent = addButton
+				addButton.Parent = addRow
+				-- The words, each with a remove button.
+				local wordsFrame = Instance.new("Frame")
+				wordsFrame.LayoutOrder = card.nextOrder()
+				wordsFrame.Size = UDim2.fromScale(1, 0)
+				wordsFrame.AutomaticSize = Enum.AutomaticSize.Y
+				wordsFrame.BackgroundTransparency = 1
+				wordsFrame.Parent = card.content
+				local wordsLayout = Instance.new("UIListLayout")
+				wordsLayout.Padding = UDim.new(0, 4)
+				wordsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				wordsLayout.Parent = wordsFrame
+				local function showWords()
+					for _, child in ipairs(wordsFrame:GetChildren()) do
+						if child:IsA("GuiObject") then child:Destroy() end
+					end
+					local list = wordList()
+					if #list == 0 then
+						local none = Instance.new("TextLabel")
+						none.Size = UDim2.new(1, 0, 0, 18)
+						none.BackgroundTransparency = 1
+						none.Font = Enum.Font.Gotham
+						none.Text = "No other words yet."
+						none.TextSize = 11
+						none.TextXAlignment = Enum.TextXAlignment.Left
+						none.TextColor3 = auxiliaryUiTheme.Muted
+						none.Parent = wordsFrame
+						return
+					end
+					for index, word in ipairs(list) do
+						local row = Instance.new("Frame")
+						row.LayoutOrder = index
+						row.Size = UDim2.new(1, 0, 0, 28)
+						row.BorderSizePixel = 0
+						row.BackgroundColor3 = auxiliaryUiTheme.Inset
+						local rowCorner = Instance.new("UICorner")
+						rowCorner.CornerRadius = UDim.new(0, 7)
+						rowCorner.Parent = row
+						row.Parent = wordsFrame
+						local label = Instance.new("TextLabel")
+						label.Position = UDim2.fromOffset(10, 0)
+						label.Size = UDim2.new(1, -90, 1, 0)
+						label.BackgroundTransparency = 1
+						label.Font = Enum.Font.GothamMedium
+						label.Text = tostring(word)
+						label.TextSize = 12
+						label.TextXAlignment = Enum.TextXAlignment.Left
+						label.TextTruncate = Enum.TextTruncate.AtEnd
+						label.TextColor3 = auxiliaryUiTheme.Text
+						label.Parent = row
+						local remove = Instance.new("TextButton")
+						remove.AnchorPoint = Vector2.new(1, 0.5)
+						remove.Position = UDim2.new(1, -4, 0.5, 0)
+						remove.Size = UDim2.fromOffset(70, 22)
+						remove.AutoButtonColor = false
+						remove.BorderSizePixel = 0
+						remove.Font = Enum.Font.GothamMedium
+						remove.Text = "Remove"
+						remove.TextSize = 11
+						remove.BackgroundColor3 = auxiliaryUiTheme.Card
+						remove.TextColor3 = auxiliaryUiTheme.SubText
+						local removeCorner = Instance.new("UICorner")
+						removeCorner.CornerRadius = UDim.new(0, 6)
+						removeCorner.Parent = remove
+						remove.Parent = row
+						remove.Activated:Connect(function()
+							table.remove(wordList(), index)
+							saveFeatureSettings()
+							card.refresh()
+						end)
+					end
+				end
+				-- Colours here depend on the list, so the list is redrawn with the card.
+				table.insert(card.refreshers, showWords)
+				local function addTypedWord()
+					if addWord(wordBox.Text) then
+						wordBox.Text = ""
+						card.refresh()
+					end
+				end
+				addButton.Activated:Connect(addTypedWord)
+				wordBox.FocusLost:Connect(function(enterPressed)
+					if enterPressed then addTypedWord() end
+				end)
+				card.addSectionLabel("SOUND", "volume-2", "bell")
+				card.addSwitchGrid({
+					{
+						text = "Ping with each alert",
+						get = function() return featureSettings.mentionSound == true end,
+						set = function(on)
+							featureSettings.mentionSound = on
+							saveFeatureSettings()
+						end,
+					},
+				}, 1)
+				card.refresh()
+			end
+
+			menuModules.mentionAlerts = {
+				-- For the mentionword and unmentionword commands.
+				addWord = function(word)
+					local added = addWord(word)
+					if added and card then card.refresh() end
+					return added
+				end,
+				removeWord = function(word)
+					local removed = removeWord(word)
+					if removed and card then card.refresh() end
+					return removed
+				end,
+			}
+			if featureSettings.mentionAlerts and entry then
+				setQuickToggle(entry, true)
 			end
 		end)
 
@@ -25875,6 +26707,65 @@ if rayfieldLoaded and Rayfield then
 					notify("Join Alerts", name .. " isn't on your watch list")
 				end
 			end)
+			addSwitchCommands("Mention Alerts", { { "mentionalerts", "mentions" }, { "unmentionalerts", "unmentions" }, "togglementionalerts" },
+				"Tells you when someone says your name in chat", "Turns Mention Alerts off")
+			describe("mentionword [word]", "Adds a word that counts as your name for Mention Alerts, like a nickname")
+			addcmd("mentionword", {}, function(args)
+				local word = getstring(1, args)
+				if not menuModules.mentionAlerts or not menuModules.mentionAlerts.addWord(word) then
+					return notify("Mention Alerts", "Give a word of up to 30 letters, like mentionword captain")
+				end
+				notify("Mention Alerts", "Listening for " .. word .. (featureSettings.mentionAlerts and "" or ". Turn on Mention Alerts to be told when someone says it"), 4)
+			end)
+			describe("unmentionword [word]", "Takes a word off Mention Alerts' list")
+			addcmd("unmentionword", {}, function(args)
+				local word = getstring(1, args)
+				if menuModules.mentionAlerts and menuModules.mentionAlerts.removeWord(word) then
+					notify("Mention Alerts", "Stopped listening for " .. word, 3)
+				else
+					notify("Mention Alerts", word .. " isn't on the list")
+				end
+			end)
+
+			-- The Favourites bar.
+			addSwitchCommands("Favourites Bar", { { "favbar", "favouritesbar" }, { "unfavbar", "unfavouritesbar" }, "togglefavbar" },
+				"Shows the Favourites bar: your starred switches and moves", "Hides the Favourites bar", "the Favourites bar")
+			-- A switch or move from a typed name, ignoring case, spaces and punctuation: the one that
+			-- matches, or else the first that starts with it. Gives its favourites key and its name.
+			local function favouriteNamed(typed)
+				local wanted = tostring(typed or ""):lower():gsub("[%s%p]", "")
+				if wanted == "" then return nil end
+				local choices = {}
+				for _, entry in ipairs(quickToggles) do
+					if not entry.noFavourite then table.insert(choices, { "switch:" .. entry.name, entry.name }) end
+				end
+				for _, move in ipairs(trolling.moves or {}) do
+					table.insert(choices, { "move:" .. move.name, move.name })
+				end
+				for pass = 1, 2 do
+					for _, choice in ipairs(choices) do
+						local simple = choice[2]:lower():gsub("[%s%p]", "")
+						if simple == wanted or (pass == 2 and simple:sub(1, #wanted) == wanted) then
+							return choice[1], choice[2]
+						end
+					end
+				end
+				return nil
+			end
+			describe("fav / favourite [switch or move]", "Puts a switch or move on the Favourites bar, by its name in the menu, like fav fly or fav front flip")
+			addcmd("fav", { "favourite", "favorite" }, function(args)
+				local key, name = favouriteNamed(getstring(1, args))
+				if not key then return notify("Favourites", "Give the name of a switch or move, like fav fly") end
+				favourites.set(key, true)
+				notify("Favourites", name .. " is on your Favourites bar", 2)
+			end)
+			describe("unfav / unfavourite [switch or move]", "Takes a switch or move off the Favourites bar")
+			addcmd("unfav", { "unfavourite", "unfavorite" }, function(args)
+				local key, name = favouriteNamed(getstring(1, args))
+				if not key or not favourites.has(key) then return notify("Favourites", "That isn't on your Favourites bar") end
+				favourites.set(key, false)
+				notify("Favourites", name .. " is off your Favourites bar", 2)
+			end)
 
 			-- Trolling. (Spin, Headsit, Orbit, Swim, Trip and Fakeout already have Infinite Yield commands of
 			-- those names.)
@@ -26020,6 +26911,20 @@ if rayfieldLoaded and Rayfield then
 				featureSettings.trollBowSpot = spot
 				saveFeatureSettings()
 				notify("Bow Down", spot, 2)
+			end)
+			describe("glideto [player]", "Flies you smoothly over to a player, through walls, and stops behind them (the Trolling tab's target if you leave the name out)")
+			describe("unglideto", "Stops gliding where you are")
+			addcmd("glideto", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Glide To") and trolling.startGlide then trolling.startGlide() end
+			end)
+			addcmd("unglideto", {}, function() setSwitch("Glide To", false) end)
+			describe("glidespeed [10-200]", "How fast Glide To flies you, in studs a second (50 to start with; walking is 16)")
+			addcmd("glidespeed", {}, function(args)
+				local speed = tonumber(args[1])
+				if not speed then return notify("Glide To", "Give a speed from 10 to 200, like glidespeed 80") end
+				featureSettings.trollGlideSpeed = math.clamp(math.floor(speed / 5 + 0.5) * 5, 10, 200)
+				saveFeatureSettings()
+				notify("Glide To", featureSettings.trollGlideSpeed .. " studs a second", 2)
 			end)
 
 			-- Only you can see.
