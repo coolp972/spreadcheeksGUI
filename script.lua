@@ -14666,6 +14666,10 @@ if rayfieldLoaded and Rayfield then
 			-- Bodyguard: which side of your target you stand ("Right", "Left", "Behind" or
 			-- "In front") and how close someone has to come (studs) before you step in.
 			trollGuardSide = "Right", trollGuardRange = 12,
+			-- Nothing Personal: how far behind your target you reappear (studs) and the least time
+			-- between blinks (seconds). Roomba: its speed (studs a second). Hype Man: whether you cheer
+			-- when your target jumps, and when they do an emote.
+			trollBlinkDistance = 3, trollBlinkCooldown = 0.35, trollRoombaSpeed = 12, trollHypeJump = true, trollHypeEmote = true,
 			-- The Favourites bar: shown, where it was dragged to (like keybindListX/Y), and what's on it,
 			-- in order: "switch:<name>" for a switch, "move:<name>" for a move from the Trolling tab.
 			favouritesBar = false, favouritesBarX = -1, favouritesBarY = -1, favourites = {},
@@ -14689,6 +14693,7 @@ if rayfieldLoaded and Rayfield then
 			trollBowSpeed = { 1, 10 }, trollBowDepth = { 20, 90 }, trollBowDistance = { 2, 15 },
 			trollMarbleSpeed = { 20, 300 }, trollMarbleJump = { 0, 250 }, trollMarbleSize = { 3, 10 },
 			trollGlideSpeed = { 10, 200 }, trollGuardRange = { 4, 40 },
+			trollBlinkDistance = { 2, 8 }, trollBlinkCooldown = { 0.1, 2 }, trollRoombaSpeed = { 4, 30 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15653,7 +15658,7 @@ if rayfieldLoaded and Rayfield then
 				-- character themselves every frame and steering switches change how you walk, so each
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball" }
 				local clashes = {}
 				local function clash(first, second)
@@ -15676,8 +15681,10 @@ if rayfieldLoaded and Rayfield then
 				clash("Fake Lag", "Statue")
 				-- Both of these switch Roblox's Animate script off and on as they go.
 				clash("Weeping Angel", "Copycat")
-				-- Copycat's following would keep pulling you off your post.
-				clash("Bodyguard", "Copycat")
+				-- Copycat's following would keep pulling you off your post (or your spot, or the floor).
+				for _, name in ipairs({ "Bodyguard", "Nothing Personal", "Hype Man", "Roomba" }) do
+					clash(name, "Copycat")
+				end
 				local function claimMovement(name)
 					for other in pairs(clashes[name] or {}) do
 						switchOff(other)
@@ -17130,6 +17137,94 @@ if rayfieldLoaded and Rayfield then
 					end
 				end, "globe", "circle-dot")
 
+				-- Roomba: you lie face down and slide about the floor by yourself like a robot vacuum, going
+				-- straight until you bump into something, then turning on the spot and heading off a new way.
+				-- Like a real one, it won't drive off a ledge. It moves you by velocity, the way Orbit does,
+				-- so everyone sees a smooth slide. Its speed is in its settings card.
+				local roombaState = { loop = nil, humanoid = nil, heading = nil, turnFrom = nil, turnAngle = nil, turnStart = 0 }
+				local roombaParams = RaycastParams.new()
+				roombaParams.FilterType = Enum.RaycastFilterType.Exclude
+				local function stopRoomba()
+					if roombaState.loop then
+						roombaState.loop:Disconnect()
+						roombaState.loop = nil
+					end
+					holdAnimate("Roomba", false)
+					local humanoid = roombaState.humanoid
+					roombaState.humanoid = nil
+					if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
+					local root = getRoot(humanoid.Parent)
+					humanoid.PlatformStand = false
+					if root then
+						root.AssemblyLinearVelocity = Vector3.zero
+						root.AssemblyAngularVelocity = Vector3.zero
+						-- Back on your feet, facing the way you were going.
+						local heading = roombaState.heading or Vector3.new(0, 0, -1)
+						local standing = root.Position + Vector3.new(0, 2.5, 0)
+						root.CFrame = CFrame.lookAt(standing, standing + heading)
+					end
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+				-- Something in the way, or the floor running out, this far ahead.
+				local function roombaBlocked(character, position, heading, ground)
+					roombaParams.FilterDescendantsInstances = { character }
+					for _, height in ipairs({ 0.9, 2 }) do
+						local wall = workspace:Raycast(Vector3.new(position.X, ground + height, position.Z), heading * 3.2, roombaParams)
+						-- Ramps and gentle slopes don't count; walls and steps too high to slide up do.
+						if wall and wall.Normal.Y < 0.7 then return true end
+					end
+					local ahead = position + heading * 3
+					local floor = groundBelow(Vector3.new(ahead.X, ground + 1, ahead.Z), { character })
+					return not floor or floor < ground - 2.5
+				end
+				local function setRoomba(enabled)
+					stopRoomba()
+					if not enabled then return end
+					local _, humanoid, root = myCharacter()
+					if not humanoid then
+						notify("Roomba", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Roomba")
+					local look = flat(root.CFrame.LookVector)
+					roombaState.humanoid = humanoid
+					roombaState.heading = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+					roombaState.turnAngle = nil
+					holdAnimate("Roomba", true)
+					roombaState.loop = RunService.Heartbeat:Connect(function(deltaTime)
+						local character, myHumanoid, myRoot = myCharacter()
+						if not myHumanoid then return end
+						-- A new character ends it.
+						if myHumanoid ~= roombaState.humanoid then return switchOff("Roomba") end
+						myHumanoid.PlatformStand = true
+						myRoot.AssemblyAngularVelocity = Vector3.zero
+						local now = os.clock()
+						local position = myRoot.Position
+						local ground = groundBelow(position, { character })
+						local speed = 0
+						if roombaState.turnAngle then
+							-- Turning on the spot after a bump, then off again once it's round.
+							local progress = math.clamp((now - roombaState.turnStart) / 0.6, 0, 1)
+							roombaState.heading = CFrame.Angles(0, roombaState.turnAngle * progress, 0):VectorToWorldSpace(roombaState.turnFrom)
+							if progress >= 1 then roombaState.turnAngle = nil end
+						elseif ground and roombaBlocked(character, position, roombaState.heading, ground) then
+							-- Bump: a new way to go, a bit over a quarter turn up to right round, either way.
+							roombaState.turnFrom = roombaState.heading
+							roombaState.turnAngle = math.rad(math.random(100, 180)) * (math.random() < 0.5 and -1 or 1)
+							roombaState.turnStart = now
+						else
+							speed = featureSettings.trollRoombaSpeed
+						end
+						-- Lying flat just off the floor, or dropping when there's no floor under you.
+						local wantedY = ground and ground + 0.75 or position.Y - 30 * deltaTime
+						local rise = math.clamp((wantedY - position.Y) / math.max(deltaTime, 1 / 120), -60, 60)
+						myRoot.AssemblyLinearVelocity = roombaState.heading * speed + Vector3.new(0, rise, 0)
+						-- Face down and head first; only the facing changes here, physics does the moving.
+						myRoot.CFrame = CFrame.lookAt(position, position + roombaState.heading) * CFrame.Angles(-math.pi / 2, 0, 0)
+					end)
+				end
+				addQuickToggle(trollTab, "Roomba", "Slide about the floor by yourself like a robot vacuum, bouncing off walls. Right-click for the speed", setRoomba, "disc", "circle-dot")
+
 				-- Moves: one-off tricks. They're kept in trolling.moves for the Favourites bar too, along
 				-- with Stop Animations from further up.
 				withIcon(trollTab, "CreateSection", { name = "Moves" }, "zap", "sparkles")
@@ -18081,6 +18176,202 @@ if rayfieldLoaded and Rayfield then
 				targetedSwitches["Bodyguard"] = setBodyguard
 				addQuickToggle(trollTab, "Bodyguard", "Stick by your target like security and stare down anyone who gets close. Right-click for where you stand", setBodyguard, "shield-check", "shield")
 
+				-- Nothing Personal: you stand just behind your target, and whenever they turn round to look
+				-- at you (the same check as Weeping Angel), you vanish and reappear right behind them again,
+				-- so they can never catch you in front of them. You walk after them as they move, and fly
+				-- over when they're far off. How far behind and how long between blinks are in its settings
+				-- card. Your own keys don't move you while it's on.
+				local blinkFollower = newFollower()
+				blinkFollower.driftSpeed = 40
+				blinkFollower.driftBeyond = 60
+				local blinkState = { lastBlink = 0 }
+				local blinkParams = RaycastParams.new()
+				blinkParams.FilterType = Enum.RaycastFilterType.Exclude
+				-- Straight behind them first, then round to their sides, for when their back is to a wall.
+				local blinkAngles = { 0, math.rad(45), math.rad(-45), math.rad(90), math.rad(-90) }
+				-- Where to reappear: behind them (closer in if a wall's there), with floor under it. Nil if
+				-- there's nowhere.
+				local function spotBehind(theirCharacter, theirRoot, character)
+					local back = -flat(theirRoot.CFrame.LookVector)
+					back = back.Magnitude > 0.1 and back.Unit or Vector3.new(0, 0, 1)
+					blinkParams.FilterDescendantsInstances = { theirCharacter, character }
+					for _, angle in ipairs(blinkAngles) do
+						local direction = CFrame.Angles(0, angle, 0):VectorToWorldSpace(back)
+						local distance = featureSettings.trollBlinkDistance
+						local wall = workspace:Raycast(theirRoot.Position, direction * (distance + 1), blinkParams)
+						if wall then distance = (wall.Position - theirRoot.Position).Magnitude - 1.5 end
+						if distance >= 1.5 then
+							local spot = theirRoot.Position + direction * distance
+							if groundBelow(spot, { theirCharacter, character }) then return spot end
+						end
+					end
+					return nil
+				end
+				local function setNothingPersonal(enabled)
+					afterControls("SpreadCheeksNothingPersonal", nil)
+					blinkFollower.reset()
+					if not enabled then return end
+					local target = targetFor("Nothing Personal")
+					if not target then return false end
+					if not myCharacter() then
+						notify("Nothing Personal", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Nothing Personal")
+					afterControls("SpreadCheeksNothingPersonal", function(deltaTime)
+						if not target.Parent then
+							notify("Nothing Personal", target.DisplayName .. " left the server")
+							return switchOff("Nothing Personal")
+						end
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local theirCharacter = target.Character
+						local theirRoot = theirCharacter and getRoot(theirCharacter)
+						if not theirRoot then
+							-- Waiting where you are while they respawn.
+							blinkFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+							return
+						end
+						local now = os.clock()
+						-- They've turned to look: gone, and behind them again.
+						if now - blinkState.lastBlink > featureSettings.trollBlinkCooldown and angelSeen(theirCharacter, theirRoot, character, root) then
+							local spot = spotBehind(theirCharacter, theirRoot, character)
+							if spot then
+								blinkState.lastBlink = now
+								blinkFollower.reset()
+								root.CFrame = CFrame.lookAt(spot, Vector3.new(theirRoot.Position.X, spot.Y, theirRoot.Position.Z))
+								root.AssemblyLinearVelocity = Vector3.zero
+								return
+							end
+						end
+						-- The rest of the time, keeping your spot behind them, facing their back.
+						local back = -flat(theirRoot.CFrame.LookVector)
+						back = back.Magnitude > 0.1 and back.Unit or Vector3.new(0, 0, 1)
+						blinkFollower.ignore = theirCharacter
+						if blinkFollower.step(deltaTime, character, humanoid, root, theirRoot.Position + back * featureSettings.trollBlinkDistance, 1.5, false) then
+							local facing = flat(theirRoot.Position - root.Position)
+							if facing.Magnitude > 0.1 then
+								root.CFrame = root.CFrame:Lerp(CFrame.lookAt(root.Position, root.Position + facing), math.clamp(deltaTime * 10, 0, 1))
+							end
+						end
+					end)
+				end
+				targetedSwitches["Nothing Personal"] = setNothingPersonal
+				addQuickToggle(trollTab, "Nothing Personal", "Whenever your target turns to look at you, you vanish and reappear right behind them", setNothingPersonal, "zap", "ghost")
+
+				-- Hype Man: you hang about in front of your target, off to one side and facing them, and
+				-- every time they jump or do an emote you cheer them on with a random cheer. What sets you off
+				-- is in its settings card. You walk after them as they move, and fly over when they're far
+				-- off. Your own keys don't move you while it's on.
+				local hypeFollower = newFollower()
+				hypeFollower.driftSpeed = 40
+				hypeFollower.driftBeyond = 60
+				-- seen holds the target's animations that have already been noticed, so each new one counts once.
+				local hypeState = { track = nil, lastCheer = 0, rising = false, animator = nil, seen = setmetatable({}, { __mode = "k" }), lastScan = 0 }
+				-- Classic Cheer first: it's the one with an R6 version.
+				local hypeCheers = { "Cheer", "Applaud", "Jumping Cheer", "Celebrate", "Stadium", "Louder" }
+				local function stopHypeTrack()
+					if hypeState.track then
+						pcall(function() hypeState.track:Stop(0.3) end)
+						hypeState.track = nil
+					end
+				end
+				-- One cheer, at most every couple of seconds, stopping by itself.
+				local function hypeCheer(humanoid)
+					local now = os.clock()
+					if now - hypeState.lastCheer < 2.5 then return end
+					local choices = {}
+					for _, name in ipairs(hypeCheers) do
+						local emote = emoteByName[name]
+						local id = emote and (isR15(humanoid) and emote.r15 or emote.r6)
+						if id then table.insert(choices, id) end
+					end
+					if #choices == 0 then return end
+					hypeState.lastCheer = now
+					stopHypeTrack()
+					local track = playOnMe("rbxassetid://" .. tostring(choices[math.random(1, #choices)]))
+					hypeState.track = track
+					if not track then return end
+					track.Looped = false
+					task.delay(2.2, function()
+						if hypeState.track == track then stopHypeTrack() end
+					end)
+				end
+				-- Whether they've started an emote since the last look: an action animation not seen before.
+				-- The first look at a character only takes note of what's already playing.
+				local function startedEmote(theirHumanoid)
+					local animator = animatorOf(theirHumanoid)
+					if not animator then return false end
+					local firstLook = animator ~= hypeState.animator
+					hypeState.animator = animator
+					local started = false
+					for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+						if not hypeState.seen[track] then
+							hypeState.seen[track] = true
+							local priority = track.Priority
+							if not firstLook and priority ~= Enum.AnimationPriority.Core and priority.Value >= Enum.AnimationPriority.Action.Value then
+								started = true
+							end
+						end
+					end
+					return started
+				end
+				local function setHypeMan(enabled)
+					afterControls("SpreadCheeksHypeMan", nil)
+					hypeFollower.reset()
+					stopHypeTrack()
+					hypeState.animator, hypeState.rising = nil, false
+					if not enabled then return end
+					local target = targetFor("Hype Man")
+					if not target then return false end
+					if not myCharacter() then
+						notify("Hype Man", "Your character isn't ready yet.")
+						return false
+					end
+					claimMovement("Hype Man")
+					afterControls("SpreadCheeksHypeMan", function(deltaTime)
+						if not target.Parent then
+							notify("Hype Man", target.DisplayName .. " left the server")
+							return switchOff("Hype Man")
+						end
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local theirCharacter = target.Character
+						local theirRoot = theirCharacter and getRoot(theirCharacter)
+						if not theirRoot then
+							hypeFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+							return
+						end
+						-- A jump: they've just started going up fast.
+						local rising = theirRoot.AssemblyLinearVelocity.Y > 12
+						local jumped = rising and not hypeState.rising
+						hypeState.rising = rising
+						-- Emotes are looked for five times a second.
+						local now = os.clock()
+						local emoted = false
+						if now - hypeState.lastScan > 0.2 then
+							hypeState.lastScan = now
+							emoted = startedEmote(theirCharacter:FindFirstChildOfClass("Humanoid"))
+						end
+						if (jumped and featureSettings.trollHypeJump) or (emoted and featureSettings.trollHypeEmote) then
+							hypeCheer(humanoid)
+						end
+						-- In front of them and off to their right, a few studs away, facing them.
+						local look = flat(theirRoot.CFrame.LookVector)
+						look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+						local spot = theirRoot.Position + CFrame.Angles(0, -math.rad(40), 0):VectorToWorldSpace(look) * 5
+						hypeFollower.ignore = theirCharacter
+						if hypeFollower.step(deltaTime, character, humanoid, root, spot, 1.5, false) then
+							local facing = flat(theirRoot.Position - root.Position)
+							if facing.Magnitude > 0.1 then
+								root.CFrame = root.CFrame:Lerp(CFrame.lookAt(root.Position, root.Position + facing), math.clamp(deltaTime * 10, 0, 1))
+							end
+						end
+					end)
+				end
+				targetedSwitches["Hype Man"] = setHypeMan
+				addQuickToggle(trollTab, "Hype Man", "Stand by your target and cheer every time they jump or do an emote. Right-click for what sets you off", setHypeMan, "party-popper", "megaphone")
+
 				-- Only you can see: these change your own screen and nobody else's.
 				withIcon(trollTab, "CreateSection", { name = "Only you can see" }, "eye", "monitor")
 				-- Disco Mode: a colour tint that cycles through the rainbow, with a flash on every beat.
@@ -18407,7 +18698,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Loading a config doesn't play dead, freeze you or go after a player who may not be in the
 				-- server.
-				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard" }) do
+				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man" }) do
 					if quickToggleByName[name] then quickToggleByName[name].noConfig = true end
 				end
 
@@ -18722,6 +19013,66 @@ if rayfieldLoaded and Rayfield then
 							format = function(value) return math.floor(value + 0.5) .. " studs" end,
 						})
 						guardCard.addHint("Anyone that close to your target, you step in between and stare down. Once they've gone, you're back at your post.")
+					end
+					local blinkCard = cardFor("Nothing Personal")
+					if blinkCard then
+						blinkCard.addSectionLabel("BLINK", "zap")
+						blinkCard.addSlider({
+							text = "Distance behind them",
+							icon = { "move-horizontal", "ruler" },
+							min = 2, max = 8, step = 0.5,
+							get = function() return featureSettings.trollBlinkDistance end,
+							set = function(value) featureSettings.trollBlinkDistance = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f studs", value) end,
+						})
+						blinkCard.addSlider({
+							text = "Time between blinks",
+							icon = { "timer", "clock" },
+							min = 0.1, max = 2, step = 0.05,
+							get = function() return featureSettings.trollBlinkCooldown end,
+							set = function(value) featureSettings.trollBlinkCooldown = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.2f s", value) end,
+						})
+						blinkCard.addHint("Like Weeping Angel, it goes by which way their character faces, so it works best on people in first person or shift lock.")
+					end
+					local hypeCard = cardFor("Hype Man")
+					if hypeCard then
+						hypeCard.addSectionLabel("CHEER WHEN THEY", "party-popper", "megaphone")
+						hypeCard.addSwitchGrid({
+							{
+								text = "Jump",
+								get = function() return featureSettings.trollHypeJump == true end,
+								set = function(on)
+									featureSettings.trollHypeJump = on
+									saveFeatureSettings()
+								end,
+							},
+							{
+								text = "Do an emote",
+								get = function() return featureSettings.trollHypeEmote == true end,
+								set = function(on)
+									featureSettings.trollHypeEmote = on
+									saveFeatureSettings()
+								end,
+							},
+						})
+						hypeCard.addHint("A random cheer, clap or celebration, at most every couple of seconds. Swinging a sword and the like counts as an emote too. Most cheers need an R15 avatar; on R6 it's the classic cheer.")
+					end
+					local roombaCard = cardFor("Roomba")
+					if roombaCard then
+						roombaCard.addSectionLabel("SPEED", "gauge")
+						roombaCard.addSlider({
+							text = "Roomba speed",
+							icon = { "gauge" },
+							min = 4, max = 30, step = 1,
+							get = function() return featureSettings.trollRoombaSpeed end,
+							set = function(value) featureSettings.trollRoombaSpeed = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs/s" end,
+						})
+						roombaCard.addHint("Walking speed is 16. It turns away from walls and steps, and won't drive off ledges.")
 					end
 					local glideCard = cardFor("Glide To")
 					if glideCard then
@@ -27901,6 +28252,16 @@ if rayfieldLoaded and Rayfield then
 				"Hover and spin with your arms up like rotor blades", "Lands you")
 			addSwitchCommands("Marble Ball", { { "marble", "marbleball" }, { "unmarble", "unmarbleball" }, "togglemarble" },
 				"Roll around on a big ball, tumbling along for everyone to see", "Back on your feet", "the marble ball")
+			addSwitchCommands("Roomba", { { "roomba" }, { "unroomba" }, "toggleroomba" },
+				"Slide about the floor by yourself like a robot vacuum, bouncing off walls", "Back on your feet")
+			describe("roombaspeed [4-30]", "How fast Roomba slides you about, in studs a second (12 to start with)")
+			addcmd("roombaspeed", {}, function(args)
+				local speed = tonumber(args[1])
+				if not speed then return notify("Roomba", "Give a speed from 4 to 30, like roombaspeed 20") end
+				featureSettings.trollRoombaSpeed = math.clamp(math.floor(speed + 0.5), 4, 30)
+				saveFeatureSettings()
+				notify("Roomba", featureSettings.trollRoombaSpeed .. " studs a second", 2)
+			end)
 
 			-- Moves.
 			describe("frontflip / flip", "Does a front flip")
@@ -27977,6 +28338,18 @@ if rayfieldLoaded and Rayfield then
 				saveFeatureSettings()
 				notify("Bodyguard", side, 2)
 			end)
+			describe("nothingpersonal [player]", "Whenever a player turns to look at you, you vanish and reappear right behind them (the Trolling tab's target if you leave the name out)")
+			describe("unnothingpersonal", "Stops the blinking")
+			addcmd("nothingpersonal", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Nothing Personal") then setSwitch("Nothing Personal", true) end
+			end)
+			addcmd("unnothingpersonal", {}, function() setSwitch("Nothing Personal", false) end)
+			describe("hypeman [player]", "Stand by a player and cheer every time they jump or do an emote (the Trolling tab's target if you leave the name out)")
+			describe("unhypeman", "Stops the cheering")
+			addcmd("hypeman", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Hype Man") then setSwitch("Hype Man", true) end
+			end)
+			addcmd("unhypeman", {}, function() setSwitch("Hype Man", false) end)
 
 			-- Only you can see.
 			addSwitchCommands("Disco Mode", { { "disco" }, { "undisco" }, "toggledisco" },
