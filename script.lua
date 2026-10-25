@@ -14482,6 +14482,12 @@ local quickCommandBar = {}
 		end)
 	end
 	quickCommandBar.open = openCommandBar
+	-- The menu's Command Bar tab finds commands and reads what's being typed the same way.
+	function quickCommandBar.search(word)
+		if indexedCommandCount ~= (type(cmds) == "table" and #cmds or 0) then buildCommandIndex() end
+		return findMatches(word)
+	end
+	quickCommandBar.splitCommandText = splitCommandText
 
 	commandInput.FocusLost:Connect(function(enterPressed, cause)
 		if enterPressed then
@@ -19404,24 +19410,502 @@ if rayfieldLoaded and Rayfield then
 
 		window:CreateSection({ name = "TOOLS" })
 		local runTab = withIcon(window, "CreateTab", { name = "Command Bar" }, "square-terminal", "terminal-square")
-		withIcon(runTab, "CreateSection", { name = "Run a command" }, "square-terminal", "terminal-square")
-		runTab:CreateText({
-			text = "Type a command and its arguments, then press Enter. Your command prefix is optional. You can also press ; anywhere: it suggests commands as you type (Tab fills one in), and Up and Down step through commands you've run.",
-		})
-		withIcon(runTab, "CreateInput", {
-			name = "Command input",
-			description = "Examples: fly   •   speed 32   •   goto playername",
-			placeholder = "Enter command and arguments",
-			callback = function(value)
-				local commandText = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
-				if commandText:sub(1, #prefix) == prefix then
-					commandText = commandText:sub(#prefix + 1)
+		-- Command Bar: a console for running commands, drawn with our own cards like Home. As you type
+		-- it shows the command's usage, other names and description, with other matches to pick
+		-- from; under that are your recent commands and some handy syntax.
+		local function buildCommandBarPage()
+			local page = runTab and runTab.tabPage
+			if typeof(page) ~= "Instance" then
+				warn("[SpreadCheeksGUI] Couldn't build the Command Bar page; Rayfield's tab layout may have changed.")
+				return
+			end
+
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius or UDim.new(0, 12)
+				corner.Parent = object
+			end
+			local function addPadding(object, vertical, horizontal)
+				local padding = Instance.new("UIPadding")
+				padding.PaddingTop = UDim.new(0, vertical)
+				padding.PaddingBottom = UDim.new(0, vertical)
+				padding.PaddingLeft = UDim.new(0, horizontal)
+				padding.PaddingRight = UDim.new(0, horizontal)
+				padding.Parent = object
+			end
+			local function addList(object, gap, horizontal)
+				local layout = Instance.new("UIListLayout")
+				layout.Padding = UDim.new(0, gap)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				if horizontal then
+					layout.FillDirection = Enum.FillDirection.Horizontal
+					layout.VerticalAlignment = Enum.VerticalAlignment.Center
+					pcall(function() layout.Wraps = true end)
 				end
-				if commandText ~= "" then
-					execCmd(commandText, Players.LocalPlayer, true)
+				layout.Parent = object
+				return layout
+			end
+			local function makeCard(parent, order)
+				local card = Instance.new("Frame")
+				card.LayoutOrder = order
+				card.Size = UDim2.fromScale(1, 0)
+				card.AutomaticSize = Enum.AutomaticSize.Y
+				card.BorderSizePixel = 0
+				bindAuxiliaryUiColor(card, "BackgroundColor3", "Card")
+				addCorner(card)
+				local stroke = Instance.new("UIStroke")
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.3
+				bindAuxiliaryUiColor(stroke, "Color", "Stroke")
+				stroke.Parent = card
+				addPadding(card, 14, 14)
+				addList(card, 10)
+				card.Parent = parent
+				return card
+			end
+			local function makeLabel(parent, options)
+				local label = Instance.new("TextLabel")
+				label.LayoutOrder = options.order or 0
+				label.BackgroundTransparency = 1
+				label.Font = options.font or Enum.Font.Gotham
+				label.TextSize = options.size or 12
+				label.Text = options.text or ""
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				label.Position = options.position or UDim2.new()
+				label.Size = options.frameSize or UDim2.new(1, 0, 0, (options.size or 12) + 4)
+				if options.autoWidth then
+					label.AutomaticSize = Enum.AutomaticSize.X
+					label.Size = UDim2.fromOffset(0, (options.size or 12) + 4)
 				end
-			end,
-		}, "chevron-right")
+				if options.wrap then
+					label.AutomaticSize = Enum.AutomaticSize.Y
+					label.TextWrapped = true
+					label.TextTruncate = Enum.TextTruncate.None
+				end
+				bindAuxiliaryUiColor(label, "TextColor3", options.role or "Text")
+				label.Parent = parent
+				return label
+			end
+			local function makeIcon(parent, size, role, ...)
+				local icon = menuIcons.get(...)
+				local image = Instance.new("ImageLabel")
+				image.BackgroundTransparency = 1
+				image.Size = UDim2.fromOffset(size, size)
+				image.Visible = icon ~= nil
+				if icon then menuIcons.apply(image, icon) end
+				bindAuxiliaryUiColor(image, "ImageColor3", role)
+				image.Parent = parent
+				return image
+			end
+			-- A small rounded button or tag, as wide as its text, in the given background and text roles.
+			local function makePill(parent, text, order, backgroundRole, textRole, className)
+				local pill = Instance.new(className or "TextButton")
+				pill.LayoutOrder = order or 0
+				pill.AutomaticSize = Enum.AutomaticSize.X
+				pill.Size = UDim2.fromOffset(0, 24)
+				pill.BorderSizePixel = 0
+				pill.Font = Enum.Font.GothamMedium
+				pill.Text = text
+				pill.TextSize = 12
+				if pill:IsA("TextButton") then pill.AutoButtonColor = false end
+				bindAuxiliaryUiColor(pill, "BackgroundColor3", backgroundRole or "Inset")
+				bindAuxiliaryUiColor(pill, "TextColor3", textRole or "SubText")
+				addCorner(pill, UDim.new(0, 7))
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 10)
+				padding.PaddingRight = UDim.new(0, 10)
+				padding.Parent = pill
+				pill.Parent = parent
+				return pill
+			end
+			-- A titled line at the top of a card: icon, title, and anything put on its right.
+			local function makeTitleRow(card, title, ...)
+				local row = Instance.new("Frame")
+				row.LayoutOrder = 0
+				row.Size = UDim2.new(1, 0, 0, 24)
+				row.BackgroundTransparency = 1
+				row.Parent = card
+				local icon = makeIcon(row, 16, "AccentText", ...)
+				icon.Position = UDim2.fromOffset(0, 4)
+				makeLabel(row, {
+					text = title, font = Enum.Font.GothamBold, size = 14,
+					position = UDim2.fromOffset(24, 3), frameSize = UDim2.new(1, -150, 0, 18),
+				})
+				return row
+			end
+			-- Rows here are rebuilt as things change, so their old theme bindings are cleared out.
+			local function pruneDeadThemeBindings()
+				for index = #auxiliaryUiColorBindings, 1, -1 do
+					if not auxiliaryUiColorBindings[index][1].Parent then
+						table.remove(auxiliaryUiColorBindings, index)
+					end
+				end
+			end
+
+			local root = Instance.new("Frame")
+			root.Name = "CommandConsole"
+			root.LayoutOrder = 1
+			root.Size = UDim2.new(1, -20, 0, 0)
+			root.AutomaticSize = Enum.AutomaticSize.Y
+			root.BackgroundTransparency = 1
+			root.Parent = page
+			addList(root, 8)
+
+			-- The console: the input, then what the command being typed does.
+			local console = makeCard(root, 1)
+			local consoleTitle = makeTitleRow(console, "Run a command", "square-terminal", "terminal-square")
+			local commandCount = makePill(consoleTitle, "", 0, "Inset", "SubText", "TextLabel")
+			commandCount.AnchorPoint = Vector2.new(1, 0)
+			commandCount.Position = UDim2.fromScale(1, 0)
+
+			local inputRow = Instance.new("Frame")
+			inputRow.LayoutOrder = 1
+			inputRow.Size = UDim2.new(1, 0, 0, 38)
+			inputRow.BackgroundTransparency = 1
+			inputRow.Parent = console
+			local prefixMark = Instance.new("TextLabel")
+			prefixMark.Size = UDim2.fromOffset(38, 38)
+			prefixMark.BorderSizePixel = 0
+			prefixMark.Font = Enum.Font.GothamBold
+			prefixMark.Text = tostring(prefix or ";")
+			prefixMark.TextSize = 16
+			bindAuxiliaryUiColor(prefixMark, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(prefixMark, "TextColor3", "AccentText")
+			addCorner(prefixMark, UDim.new(0, 9))
+			prefixMark.Parent = inputRow
+			local inputBox = Instance.new("TextBox")
+			inputBox.Position = UDim2.fromOffset(46, 0)
+			inputBox.Size = UDim2.new(1, -46 - 84, 1, 0)
+			inputBox.BorderSizePixel = 0
+			inputBox.ClearTextOnFocus = false
+			inputBox.Font = Enum.Font.Gotham
+			inputBox.PlaceholderText = "Type a command, like fly or speed 32"
+			inputBox.Text = ""
+			inputBox.TextSize = 14
+			inputBox.TextXAlignment = Enum.TextXAlignment.Left
+			inputBox.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(inputBox, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(inputBox, "TextColor3", "Text")
+			bindAuxiliaryUiColor(inputBox, "PlaceholderColor3", "Muted")
+			addCorner(inputBox, UDim.new(0, 9))
+			local inputPadding = Instance.new("UIPadding")
+			inputPadding.PaddingLeft = UDim.new(0, 12)
+			inputPadding.PaddingRight = UDim.new(0, 12)
+			inputPadding.Parent = inputBox
+			local inputStroke = Instance.new("UIStroke")
+			inputStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			inputStroke.Transparency = 0.35
+			bindAuxiliaryUiColor(inputStroke, "Color", "Stroke")
+			inputStroke.Parent = inputBox
+			inputBox.Parent = inputRow
+			inputBox.Focused:Connect(function() inputStroke.Color = auxiliaryUiTheme.Accent end)
+			inputBox.FocusLost:Connect(function() inputStroke.Color = auxiliaryUiTheme.Stroke end)
+			local runButton = Instance.new("TextButton")
+			runButton.AnchorPoint = Vector2.new(1, 0)
+			runButton.Position = UDim2.fromScale(1, 0)
+			runButton.Size = UDim2.fromOffset(76, 38)
+			runButton.AutoButtonColor = false
+			runButton.BorderSizePixel = 0
+			runButton.Font = Enum.Font.GothamBold
+			runButton.Text = "Run"
+			runButton.TextSize = 13
+			bindAuxiliaryUiColor(runButton, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(runButton, "TextColor3", "OnAccent")
+			addCorner(runButton, UDim.new(0, 9))
+			runButton.Parent = inputRow
+
+			-- What the command being typed does: its name and how it's used, its other names, and
+			-- its description.
+			local detail = Instance.new("Frame")
+			detail.LayoutOrder = 2
+			detail.Size = UDim2.fromScale(1, 0)
+			detail.AutomaticSize = Enum.AutomaticSize.Y
+			detail.BorderSizePixel = 0
+			bindAuxiliaryUiColor(detail, "BackgroundColor3", "Inset")
+			addCorner(detail, UDim.new(0, 10))
+			addPadding(detail, 10, 12)
+			addList(detail, 3)
+			detail.Parent = console
+			local detailHead = Instance.new("Frame")
+			detailHead.LayoutOrder = 1
+			detailHead.Size = UDim2.new(1, 0, 0, 18)
+			detailHead.BackgroundTransparency = 1
+			detailHead.Parent = detail
+			addList(detailHead, 8, true)
+			local detailName = makeLabel(detailHead, { order = 1, font = Enum.Font.GothamBold, size = 14, role = "AccentText", autoWidth = true })
+			local detailUsage = makeLabel(detailHead, { order = 2, font = Enum.Font.GothamMedium, size = 12, role = "SubText", autoWidth = true })
+			local detailAliases = makeLabel(detail, { order = 2, size = 11, role = "Muted" })
+			local detailDescription = makeLabel(detail, { order = 3, size = 12, role = "Text", wrap = true })
+			detailDescription.Size = UDim2.fromScale(1, 0)
+
+			-- Other commands that match, to pick from.
+			local suggestions = Instance.new("Frame")
+			suggestions.LayoutOrder = 3
+			suggestions.Size = UDim2.fromScale(1, 0)
+			suggestions.AutomaticSize = Enum.AutomaticSize.Y
+			suggestions.BackgroundTransparency = 1
+			suggestions.Parent = console
+			addList(suggestions, 6, true)
+
+			local search = quickCommandBar.search
+			local splitCommandText = quickCommandBar.splitCommandText
+			local function describe()
+				for _, child in ipairs(suggestions:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				pruneDeadThemeBindings()
+				local word, rest = "", ""
+				if splitCommandText then
+					local _, _, typedWord, typedRest = splitCommandText(inputBox.Text)
+					word, rest = typedWord:lower(), typedRest
+				end
+				if word == "" or not search then
+					detailName.Text = "Type a command"
+					detailUsage.Text = ""
+					detailAliases.Visible = false
+					detailDescription.Text = "Like fly, speed 32 or goto someone. Matching commands appear as you type: click one to use it, or press Tab for the first. Enter or Run runs it."
+					suggestions.Visible = false
+					return
+				end
+				local matches = search(word)
+				local best = matches[1]
+				if not best then
+					detailName.Text = word
+					detailUsage.Text = ""
+					detailAliases.Visible = false
+					detailDescription.Text = "There's no command called that. Check the spelling, or browse the Admin Commands tabs."
+					suggestions.Visible = false
+					return
+				end
+				local entry = best.entry
+				detailName.Text = best.name
+				detailUsage.Text = entry.usage or ""
+				local otherNames = {}
+				for _, name in ipairs(entry.names) do
+					if name ~= best.name then table.insert(otherNames, name) end
+				end
+				detailAliases.Visible = #otherNames > 0
+				detailAliases.Text = "Also: " .. table.concat(otherNames, ", ")
+				detailDescription.Text = entry.description ~= "" and entry.description or "No description for this one."
+				-- Only while the command itself is being typed, not its arguments.
+				suggestions.Visible = rest == ""
+				if rest ~= "" then return end
+				local shown = 0
+				for index, match in ipairs(matches) do
+					if shown >= 6 then break end
+					if not (index == 1 and best.rank == 1) then
+						shown += 1
+						local name = match.name
+						local pill = makePill(suggestions, name, index, "Card", "Text")
+						pill.Activated:Connect(function()
+							local pickBefore, pickLead, _, pickRest = splitCommandText(inputBox.Text)
+							inputBox.Text = pickBefore .. pickLead .. name .. (pickRest ~= "" and pickRest or " ")
+							inputBox:CaptureFocus()
+							inputBox.CursorPosition = #inputBox.Text + 1
+						end)
+					end
+				end
+				suggestions.Visible = shown > 0
+			end
+
+			-- Recent commands, newest first: run one again, or put it in the box to change it.
+			local recent = makeCard(root, 2)
+			makeTitleRow(recent, "Recent commands", "history", "clock")
+			local recentList = Instance.new("Frame")
+			recentList.LayoutOrder = 1
+			recentList.Size = UDim2.fromScale(1, 0)
+			recentList.AutomaticSize = Enum.AutomaticSize.Y
+			recentList.BackgroundTransparency = 1
+			recentList.Parent = recent
+			addList(recentList, 6)
+			local recentEmpty = makeLabel(recent, {
+				order = 2, size = 12, role = "SubText",
+				text = "Commands you run, here or with the ; bar, show up here.",
+			})
+
+			local function run(text)
+				text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+				local commandPrefix = tostring(prefix or ";")
+				if commandPrefix ~= "" and text:sub(1, #commandPrefix) == commandPrefix then
+					text = text:sub(#commandPrefix + 1)
+				end
+				if text == "" then return end
+				execCmd(text, Players.LocalPlayer, true)
+			end
+
+			local recentSignature = nil
+			local function refreshRecent()
+				local history = type(cmdHistory) == "table" and cmdHistory or {}
+				local items = {}
+				for index = 1, math.min(#history, 8) do
+					table.insert(items, tostring(history[index]))
+				end
+				local signature = table.concat(items, "\n")
+				if signature == recentSignature then return end
+				recentSignature = signature
+				for _, child in ipairs(recentList:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				pruneDeadThemeBindings()
+				recentEmpty.Visible = #items == 0
+				recentList.Visible = #items > 0
+				for index, commandText in ipairs(items) do
+					local row = Instance.new("Frame")
+					row.LayoutOrder = index
+					row.Size = UDim2.new(1, 0, 0, 32)
+					row.BorderSizePixel = 0
+					bindAuxiliaryUiColor(row, "BackgroundColor3", "Inset")
+					addCorner(row, UDim.new(0, 8))
+					row.Parent = recentList
+					makeLabel(row, {
+						text = commandText, font = Enum.Font.GothamMedium, size = 12,
+						position = UDim2.fromOffset(12, 0), frameSize = UDim2.new(1, -140, 1, 0),
+					})
+					local buttons = Instance.new("Frame")
+					buttons.AnchorPoint = Vector2.new(1, 0.5)
+					buttons.Position = UDim2.new(1, -4, 0.5, 0)
+					buttons.Size = UDim2.fromOffset(0, 24)
+					buttons.AutomaticSize = Enum.AutomaticSize.X
+					buttons.BackgroundTransparency = 1
+					buttons.Parent = row
+					local buttonLayout = addList(buttons, 4, true)
+					buttonLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+					local editButton = makePill(buttons, "Edit", 1, "Card", "SubText")
+					editButton.Activated:Connect(function()
+						inputBox.Text = commandText
+						inputBox:CaptureFocus()
+						inputBox.CursorPosition = #inputBox.Text + 1
+					end)
+					local againButton = makePill(buttons, "Run again", 2, "Accent", "OnAccent")
+					againButton.Activated:Connect(function() run(commandText) end)
+				end
+			end
+
+			-- Handy to know: counts, and the shortcuts and syntax Infinite Yield understands.
+			local info = makeCard(root, 3)
+			makeTitleRow(info, "Good to know", "info", "lightbulb")
+			local counts = Instance.new("Frame")
+			counts.LayoutOrder = 1
+			counts.Size = UDim2.fromScale(1, 0)
+			counts.AutomaticSize = Enum.AutomaticSize.Y
+			counts.BackgroundTransparency = 1
+			counts.Parent = info
+			addList(counts, 6, true)
+			local commandsTag = makePill(counts, "", 1, "Inset", "Text", "TextLabel")
+			local pluginsTag = makePill(counts, "", 2, "Inset", "Text", "TextLabel")
+			makePill(counts, "Prefix  " .. tostring(prefix or ";"), 3, "Inset", "Text", "TextLabel")
+			local tips = {
+				{ tostring(prefix or ";"), "Opens the quick command bar from anywhere in the game" },
+				{ "Tab", "Fills in the first matching command" },
+				{ "Up / Down", "Steps back through commands you've run" },
+				{ "fly\\noclip", "Runs several commands, one after another" },
+				{ "3^jump", "Runs a command 3 times" },
+				{ "!goto", "Runs goto again with the arguments it had last time" },
+			}
+			for index, tip in ipairs(tips) do
+				local line = Instance.new("Frame")
+				line.LayoutOrder = 1 + index
+				line.Size = UDim2.new(1, 0, 0, 24)
+				line.BackgroundTransparency = 1
+				line.Parent = info
+				local key = makePill(line, tip[1], 0, "Inset", "AccentText", "TextLabel")
+				key.Font = Enum.Font.GothamBold
+				-- The descriptions line up after the widest key.
+				makeLabel(line, {
+					text = tip[2], size = 12, role = "SubText",
+					position = UDim2.fromOffset(96, 4), frameSize = UDim2.new(1, -96, 0, 16),
+				})
+			end
+			local function refreshCounts()
+				local total, fromPlugins = 0, 0
+				for _, command in ipairs(type(cmds) == "table" and cmds or {}) do
+					if type(command) == "table" then
+						total += 1
+						if command.PLUGIN then fromPlugins += 1 end
+					end
+				end
+				commandCount.Text = total .. " commands"
+				commandsTag.Text = total .. " commands loaded"
+				pluginsTag.Text = fromPlugins .. (fromPlugins == 1 and " from a plugin" or " from plugins")
+				pluginsTag.Visible = fromPlugins > 0
+				prefixMark.Text = tostring(prefix or ";")
+			end
+
+			-- Typing: Tab takes the first match, Enter runs it, and Up and Down go through history.
+			local historyIndex = 0
+			local settingText = false
+			local function setText(text)
+				settingText = true
+				inputBox.Text = text
+				inputBox.CursorPosition = #text + 1
+				settingText = false
+			end
+			inputBox:GetPropertyChangedSignal("Text"):Connect(function()
+				local text = inputBox.Text
+				if text:find("\t", 1, true) then
+					text = text:gsub("\t", "")
+					local matches = search and splitCommandText and search((select(3, splitCommandText(text))):lower())
+					local best = matches and matches[1]
+					if best then
+						local tabBefore, tabLead, _, tabRest = splitCommandText(text)
+						text = tabBefore .. tabLead .. best.name .. (tabRest ~= "" and tabRest or " ")
+					end
+					setText(text)
+					return
+				end
+				if not settingText then historyIndex = 0 end
+				describe()
+			end)
+			local function runInput()
+				local text = inputBox.Text
+				if text:gsub("%s", "") == "" then return end
+				run(text)
+				historyIndex = 0
+				setText("")
+				-- The command lands in the history as it starts.
+				task.delay(0.15, refreshRecent)
+			end
+			inputBox.FocusLost:Connect(function(enterPressed)
+				if enterPressed then runInput() end
+			end)
+			runButton.Activated:Connect(runInput)
+			if sharedEnv.SpreadCheeksConsoleHistory then
+				pcall(function() sharedEnv.SpreadCheeksConsoleHistory:Disconnect() end)
+			end
+			sharedEnv.SpreadCheeksConsoleHistory = UserInputService.InputBegan:Connect(function(input)
+				if not inputBox:IsFocused() then return end
+				local history = type(cmdHistory) == "table" and cmdHistory or {}
+				if input.KeyCode == Enum.KeyCode.Up and historyIndex < #history then
+					historyIndex += 1
+				elseif input.KeyCode == Enum.KeyCode.Down and historyIndex > 0 then
+					historyIndex -= 1
+				else
+					return
+				end
+				setText(historyIndex > 0 and tostring(history[historyIndex]) or "")
+				describe()
+			end)
+
+			describe()
+			refreshCounts()
+			refreshRecent()
+			-- Commands run from the ; bar or keybinds show up too, while the tab is open.
+			task.spawn(function()
+				while root.Parent do
+					task.wait(1)
+					if page.Visible then
+						refreshRecent()
+						refreshCounts()
+					end
+				end
+			end)
+		end
+		-- Kept separate so a problem on the Command Bar page can't stop the rest of the menu loading.
+		local commandBarOk, commandBarError = pcall(buildCommandBarPage)
+		if not commandBarOk then
+			warn("[SpreadCheeksGUI] The Command Bar page couldn't be built: " .. tostring(commandBarError))
+		end
 
 		-- Servers: every public server of this game, from Roblox's server list (the same one
 		-- ;serverhop uses), each with a button to join it. Drawn with our own cards inside the tab's
