@@ -14670,8 +14670,14 @@ if rayfieldLoaded and Rayfield then
 			-- between blinks (seconds). Roomba: its speed (studs a second). Hype Man: whether you cheer
 			-- when your target jumps, and when they do an emote.
 			trollBlinkDistance = 3, trollBlinkCooldown = 0.35, trollRoombaSpeed = 12, trollHypeJump = true, trollHypeEmote = true,
+			-- Parkour Mode: which moves are on, how many jumps you get in the air, and the dash key
+			-- (a KeyCode name).
+			parkourDoubleJump = true, parkourWallJump = true, parkourDash = true, parkourAirJumps = 1, parkourDashKey = "Q",
+			-- Grapple Hook: "Swing" or "Pull", the key held to grapple, how far it reaches (studs)
+			-- and how fast Pull flies you (studs a second).
+			grappleStyle = "Swing", grappleKey = "G", grappleRange = 200, grapplePullSpeed = 80,
 			-- The Favourites bar: shown, where it was dragged to (like keybindListX/Y), and what's on it,
-			-- in order: "switch:<name>" for a switch, "move:<name>" for a move from the Trolling tab.
+			-- in order: "switch:<name>" for a switch, "move:<name>" for a move from Walks & Moves.
 			favouritesBar = false, favouritesBarX = -1, favouritesBarY = -1, favourites = {},
 			-- Mention Alerts: on or off, whether your username and display name count, the ping, and
 			-- other words that count as you (a nickname, say).
@@ -14694,6 +14700,7 @@ if rayfieldLoaded and Rayfield then
 			trollMarbleSpeed = { 20, 300 }, trollMarbleJump = { 0, 250 }, trollMarbleSize = { 3, 10 },
 			trollGlideSpeed = { 10, 200 }, trollGuardRange = { 4, 40 },
 			trollBlinkDistance = { 2, 8 }, trollBlinkCooldown = { 0.1, 2 }, trollRoombaSpeed = { 4, 30 },
+			parkourAirJumps = { 1, 3 }, grappleRange = { 50, 500 }, grapplePullSpeed = { 30, 150 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -14963,7 +14970,7 @@ if rayfieldLoaded and Rayfield then
 		-- Shared between the later parts of the menu (the radar, logs window, join alerts and so on),
 		-- so each doesn't need its own variable here. notificationLog keeps recent notifications for
 		-- the Logs window; selectionListeners are called when the Players tab's selected player
-		-- changes (the Trolling tab uses that selection too).
+		-- changes (Player Pranks uses that selection too).
 		local menuModules = { notificationLog = {}, selectionListeners = {} }
 
 		task.spawn(function()
@@ -15235,8 +15242,18 @@ if rayfieldLoaded and Rayfield then
 		local combatTab = withIcon(window, "CreateTab", { name = "Combat" }, "swords", "crosshair")
 		local viewTab = withIcon(window, "CreateTab", { name = "View" }, "aperture", "eye")
 		local protectionTab = withIcon(window, "CreateTab", { name = "Protection" }, "shield")
-		local trollTab = withIcon(window, "CreateTab", { name = "Trolling" }, "drama", "laugh", "party-popper", "smile")
 		local interfaceTab = withIcon(window, "CreateTab", { name = "Interface" }, "layout-dashboard", "app-window")
+		-- Trolling has a group of its own in the sidebar, split into tabs by kind so things are easy
+		-- to find. They're made one at a time, as the sidebar lists tabs in the order they're made.
+		window:CreateSection({ name = "TROLLING" })
+		local trollTabs = {}
+		trollTabs.emotes = withIcon(window, "CreateTab", { name = "Emotes" }, "smile", "music")
+		trollTabs.walks = withIcon(window, "CreateTab", { name = "Walks & Moves" }, "footprints")
+		trollTabs.tricks = withIcon(window, "CreateTab", { name = "Body Tricks" }, "person-standing", "accessibility")
+		trollTabs.players = withIcon(window, "CreateTab", { name = "Player Pranks" }, "drama", "laugh", "users-round")
+		trollTabs.screen = withIcon(window, "CreateTab", { name = "Screen Effects" }, "monitor", "eye")
+		-- The first of them, which the trolling command opens.
+		local trollTab = trollTabs.emotes
 		-- Rayfield's gear button opens this built-in tab; keep appearance options there.
 		withIcon(window.rfSettings, "CreateSection", { name = "Appearance" }, "palette")
 		local themeNames = {}
@@ -15602,11 +15619,11 @@ if rayfieldLoaded and Rayfield then
 			end
 		end, "at-sign", "message-circle")
 
-		-- Trolling: harmless fun, in a tab of its own. Animations, walks, tricks, moves and the player
-		-- tricks play on your own character, so everyone in the server sees them; the effects under
-		-- "Only you can see" are drawn on your screen alone. The switches are made here, with the others,
-		-- so they get key boxes; their settings cards come from trolling.buildSettings further down, once
-		-- createSettingsCard exists, and their commands from registerMenuCommands.
+		-- Trolling: harmless fun, in a group of tabs of its own (trollTabs). Animations, walks, tricks,
+		-- moves and the player pranks play on your own character, so everyone in the server sees them;
+		-- the Screen Effects tab is drawn on your screen alone. The switches are made here, with the
+		-- others, so they get key boxes; their settings cards come from trolling.buildSettings further
+		-- down, once createSettingsCard exists, and their commands from registerMenuCommands.
 		local trolling = { animSpeed = 1, reverse = false, statue = false }
 		do
 			local built, problem = pcall(function()
@@ -15659,7 +15676,7 @@ if rayfieldLoaded and Rayfield then
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
 				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba" }
-				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball" }
+				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook" }
 				local clashes = {}
 				local function clash(first, second)
 					clashes[first] = clashes[first] or {}
@@ -15821,12 +15838,12 @@ if rayfieldLoaded and Rayfield then
 					tumble(Vector3.new(0, 18, 0) + flat(root.CFrame.LookVector) * 6, (spin.Magnitude > 0.01 and spin.Unit or Vector3.xAxis) * 14, 1.6)
 				end
 
-				trollTab:CreateText({
-					text = "Harmless fun. Everything here shows for everyone in the server, apart from the last section, which only changes your screen.",
+				trollTabs.emotes:CreateText({
+					text = "Harmless fun. Everyone in the server sees what these trolling tabs do, apart from Screen Effects, which only changes your screen.",
 				})
 
-				-- Animations.
-				withIcon(trollTab, "CreateSection", { name = "Animations" }, "person-standing")
+				-- Animations: on the Emotes tab, with the emotes.
+				withIcon(trollTabs.emotes, "CreateSection", { name = "Animation style" }, "person-standing")
 				-- Roblox's animation packs, for R15 avatars. Each gives animation ids for the Animate
 				-- script's slots; a slot a pack leaves out keeps the game's own animation.
 				local animationPacks = {
@@ -15944,7 +15961,7 @@ if rayfieldLoaded and Rayfield then
 					end
 					return false
 				end
-				trolling.packDropdown = withIcon(trollTab, "CreateDropdown", {
+				trolling.packDropdown = withIcon(trollTabs.emotes, "CreateDropdown", {
 					name = "Animation Pack",
 					description = "How you walk, run, jump and stand. Needs an R15 avatar; remembered between sessions",
 					options = packNames,
@@ -16019,7 +16036,7 @@ if rayfieldLoaded and Rayfield then
 					updateSpeedLoop()
 					if not fromSlider then pcall(function() trolling.speedSlider:Set(trolling.animSpeed, true) end) end
 				end
-				trolling.speedSlider = withIcon(trollTab, "CreateSlider", {
+				trolling.speedSlider = withIcon(trollTabs.emotes, "CreateSlider", {
 					name = "Animation Speed",
 					range = { 0, 5 },
 					value = 1,
@@ -16200,7 +16217,8 @@ if rayfieldLoaded and Rayfield then
 					end
 					return false
 				end
-				addQuickToggle(trollTab, "Emote", "Loops the emote picked below (or right-click to pick by category). Everyone sees it", function(enabled)
+				withIcon(trollTabs.emotes, "CreateSection", { name = "Emotes" }, "smile", "music")
+				addQuickToggle(trollTabs.emotes, "Emote", "Loops the emote picked below (or right-click to pick by category). Everyone sees it", function(enabled)
 					if not enabled then return stopEmoteTrack() end
 					local played, why = playChosenEmote()
 					if not played then
@@ -16213,7 +16231,7 @@ if rayfieldLoaded and Rayfield then
 					if entry and entry.state then playChosenEmote() end
 				end)
 				-- Every preset in one list: picking one plays it straight away, through the Emote switch.
-				trolling.emoteDropdown = withIcon(trollTab, "CreateDropdown", {
+				trolling.emoteDropdown = withIcon(trollTabs.emotes, "CreateDropdown", {
 					name = "Pick an Emote",
 					description = tostring(#emotes) .. " emotes and dances. Picking one plays it on a loop; switch Emote off to stop",
 					options = emoteNames,
@@ -16246,7 +16264,7 @@ if rayfieldLoaded and Rayfield then
 				for slot = #featureSettings.emoteWheelEmotes, 9, -1 do
 					table.remove(featureSettings.emoteWheelEmotes, slot)
 				end
-				addQuickToggle(trollTab, "Emote Wheel", "Hold a key (B to start with) for a wheel of emotes and point at one. Right-click to change them and the key", function(enabled)
+				addQuickToggle(trollTabs.emotes, "Emote Wheel", "Hold a key (B to start with) for a wheel of emotes and point at one. Right-click to change them and the key", function(enabled)
 					if featureSettings.emoteWheel ~= enabled then
 						featureSettings.emoteWheel = enabled
 						saveFeatureSettings()
@@ -16415,11 +16433,12 @@ if rayfieldLoaded and Rayfield then
 				end
 				if featureSettings.emoteWheel then setQuickToggle(quickToggleByName["Emote Wheel"], true) end
 
-				addQuickToggle(trollTab, "Reverse Animations", "Everything you do plays backwards", function(enabled)
+				withIcon(trollTabs.emotes, "CreateSection", { name = "Animation tricks" }, "wand-sparkles", "sparkles")
+				addQuickToggle(trollTabs.emotes, "Reverse Animations", "Everything you do plays backwards", function(enabled)
 					trolling.reverse = enabled
 					updateSpeedLoop()
 				end, "rewind", "undo-2")
-				addQuickToggle(trollTab, "Mannequin", "Your arms and legs stop moving, so you glide about stiff as a board", function(enabled)
+				addQuickToggle(trollTabs.emotes, "Mannequin", "Your arms and legs stop moving, so you glide about stiff as a board", function(enabled)
 					holdAnimate("Mannequin", enabled)
 				end, "accessibility", "person-standing")
 				-- Statue: frozen mid-pose and rooted to the spot (anchored) until it's switched off.
@@ -16444,7 +16463,7 @@ if rayfieldLoaded and Rayfield then
 					end
 					updateSpeedLoop()
 				end
-				addQuickToggle(trollTab, "Statue", "Freeze mid-pose and stay rooted to the spot", setStatue, "pause", "snowflake")
+				addQuickToggle(trollTabs.emotes, "Statue", "Freeze mid-pose and stay rooted to the spot", setStatue, "pause", "snowflake")
 				table.insert(respawnHandlers, function() switchOff("Statue") end)
 
 				-- Play Animation ID: any animation Roblox lets this game load, played over everything else.
@@ -16492,7 +16511,7 @@ if rayfieldLoaded and Rayfield then
 					switchOff("Emote")
 					stopEmoteTrack()
 				end
-				trolling.animationInput = withIcon(trollTab, "CreateInput", {
+				trolling.animationInput = withIcon(trollTabs.emotes, "CreateInput", {
 					name = "Play Animation ID",
 					description = "Plays an animation or emote by its ID. Roblox only allows ones made by Roblox or by this game's creator",
 					placeholder = "Animation ID",
@@ -16506,14 +16525,14 @@ if rayfieldLoaded and Rayfield then
 						end)
 					end,
 				}, "clapperboard", "film", "play")
-				withIcon(trollTab, "CreateButton", {
+				withIcon(trollTabs.emotes, "CreateButton", {
 					name = "Stop Animations",
 					description = "Stops the emote and anything played by ID",
 					callback = function() trolling.stopAnimations() end,
 				}, "circle-stop", "square")
 
 				-- Silly walks.
-				withIcon(trollTab, "CreateSection", { name = "Silly walks" }, "footprints")
+				withIcon(trollTabs.walks, "CreateSection", { name = "Silly walks" }, "footprints")
 				-- Moonwalk and Crab Walk turn you away from where you're walking: right round, so you glide
 				-- the wrong way, or sideways like a crab.
 				local facingState = { loop = nil, humanoid = nil, autoRotate = true }
@@ -16548,12 +16567,12 @@ if rayfieldLoaded and Rayfield then
 						setWalkFacing(enabled and angle or nil)
 					end
 				end
-				addQuickToggle(trollTab, "Moonwalk", "You face backwards as you walk, so you glide the wrong way", walkFacingSwitch("Moonwalk", math.pi), "footprints")
-				addQuickToggle(trollTab, "Crab Walk", "You walk sideways, like a crab", walkFacingSwitch("Crab Walk", math.pi / 2), "shell", "bug")
+				addQuickToggle(trollTabs.walks, "Moonwalk", "You face backwards as you walk, so you glide the wrong way", walkFacingSwitch("Moonwalk", math.pi), "footprints")
+				addQuickToggle(trollTabs.walks, "Crab Walk", "You walk sideways, like a crab", walkFacingSwitch("Crab Walk", math.pi / 2), "shell", "bug")
 
 				-- Drunk Walk: your steering wobbles from side to side, and every so often you trip over.
 				local drunkWalkState = { nextTrip = 0 }
-				addQuickToggle(trollTab, "Drunk Walk", "You stagger about and trip over now and then", function(enabled)
+				addQuickToggle(trollTabs.walks, "Drunk Walk", "You stagger about and trip over now and then", function(enabled)
 					if not enabled then return afterControls("SpreadCheeksDrunkWalk", nil) end
 					claimMovement("Drunk Walk")
 					drunkWalkState.nextTrip = os.clock() + 5
@@ -16574,7 +16593,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Zoomies: you run round and round in circles by yourself, whatever keys you press.
 				local zoomiesState = { angle = 0 }
-				addQuickToggle(trollTab, "Zoomies", "You run round and round in circles all by yourself", function(enabled)
+				addQuickToggle(trollTabs.walks, "Zoomies", "You run round and round in circles all by yourself", function(enabled)
 					if not enabled then return afterControls("SpreadCheeksZoomies", nil) end
 					claimMovement("Zoomies")
 					afterControls("SpreadCheeksZoomies", function(deltaTime)
@@ -16588,7 +16607,7 @@ if rayfieldLoaded and Rayfield then
 				-- Ice Skates: your keys push you along instead of walking you, and you keep gliding and slow
 				-- down gradually, like on ice. You glide standing up, facing where you're going.
 				local skateState = { velocity = Vector3.zero }
-				addQuickToggle(trollTab, "Ice Skates", "Glide around like you're on ice", function(enabled)
+				addQuickToggle(trollTabs.walks, "Ice Skates", "Glide around like you're on ice", function(enabled)
 					if not enabled then return afterControls("SpreadCheeksIceSkates", nil) end
 					claimMovement("Ice Skates")
 					skateState.velocity = Vector3.zero
@@ -16611,7 +16630,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Bunny Hop: holds jump down for you whenever you're on the ground. The control script sets
 				-- jumping from your keys every frame, so this goes straight after it.
-				addQuickToggle(trollTab, "Bunny Hop", "Keeps you hopping nonstop", function(enabled)
+				addQuickToggle(trollTabs.walks, "Bunny Hop", "Keeps you hopping nonstop", function(enabled)
 					if not enabled then return afterControls("SpreadCheeksBunnyHop", nil) end
 					claimMovement("Bunny Hop")
 					afterControls("SpreadCheeksBunnyHop", function()
@@ -16624,7 +16643,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Bouncy Ball: every landing bounces you back up, nearly as high as you came down from.
 				local bouncyState = { loop = nil, fallSpeed = 0 }
-				addQuickToggle(trollTab, "Bouncy Ball", "Every time you land, you bounce back up", function(enabled)
+				addQuickToggle(trollTabs.walks, "Bouncy Ball", "Every time you land, you bounce back up", function(enabled)
 					if bouncyState.loop then
 						bouncyState.loop:Disconnect()
 						bouncyState.loop = nil
@@ -16667,13 +16686,13 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				table.insert(respawnHandlers, hookFlipJumps)
-				addQuickToggle(trollTab, "Flip Every Jump", "Every jump comes with a random flip. Try it with Bunny Hop", function(enabled)
+				addQuickToggle(trollTabs.walks, "Flip Every Jump", "Every jump comes with a random flip. Try it with Bunny Hop", function(enabled)
 					flipJumpState.enabled = enabled
 					hookFlipJumps()
 				end, "rotate-3d", "refresh-cw")
 
 				-- Body tricks.
-				withIcon(trollTab, "CreateSection", { name = "Body tricks" }, "smile", "user-round")
+				withIcon(trollTabs.tricks, "CreateSection", { name = "On the spot" }, "smile", "user-round")
 				-- Fake Dead: you drop flat (on your back, or face down) and lie still, seated so you don't
 				-- stand back up, until it's switched off or you jump.
 				local fakeDeadState = { loop = nil, upright = nil, serial = 0 }
@@ -16724,7 +16743,7 @@ if rayfieldLoaded and Rayfield then
 						end)
 					end)
 				end
-				addQuickToggle(trollTab, "Fake Dead", "Drop down and lie still as if you died. Jump to get back up. Right-click for the pose", setFakeDead, "skull")
+				addQuickToggle(trollTabs.tricks, "Fake Dead", "Drop down and lie still as if you died. Jump to get back up. Right-click for the pose", setFakeDead, "skull")
 
 				-- Fake Lag: makes you look laggy to everyone. Stutter freezes you for moments at a time,
 				-- Rubber-band snaps you back to where you just were, and Glitch twitches you about.
@@ -16771,7 +16790,7 @@ if rayfieldLoaded and Rayfield then
 						end
 					end)
 				end
-				addQuickToggle(trollTab, "Fake Lag", "Makes you look like you're lagging. Right-click for the style", setFakeLag, "wifi-off", "wifi")
+				addQuickToggle(trollTabs.tricks, "Fake Lag", "Makes you look like you're lagging. Right-click for the style", setFakeLag, "wifi-off", "wifi")
 
 				-- Spin: turns you round and round like a top. The speed is in its settings card. During
 				-- Handstand it's a headspin.
@@ -16798,7 +16817,7 @@ if rayfieldLoaded and Rayfield then
 						spinState.mover.AngularVelocity = Vector3.new(0, featureSettings.trollSpinSpeed, 0)
 					end
 				end
-				addQuickToggle(trollTab, "Spin", "Spin like a top. Right-click for the speed", function(enabled)
+				addQuickToggle(trollTabs.tricks, "Spin", "Spin like a top. Right-click for the speed", function(enabled)
 					spinState.enabled = enabled
 					attachSpin()
 				end, "refresh-cw", "rotate-cw")
@@ -16806,7 +16825,7 @@ if rayfieldLoaded and Rayfield then
 				-- Vibrate: you shake on the spot like a phone going off. Each frame takes back the last nudge,
 				-- so you don't drift.
 				local vibrateState = { loop = nil, offset = nil }
-				addQuickToggle(trollTab, "Vibrate", "Shake on the spot like a phone going off", function(enabled)
+				addQuickToggle(trollTabs.tricks, "Vibrate", "Shake on the spot like a phone going off", function(enabled)
 					if vibrateState.loop then
 						vibrateState.loop:Disconnect()
 						vibrateState.loop = nil
@@ -16822,8 +16841,9 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end, "vibrate", "activity")
 
+				withIcon(trollTabs.tricks, "CreateSection", { name = "Ways to get around" }, "plane", "rocket")
 				-- Infinite Yield's swim, which turns gravity off and keeps you swimming. It ends when you die.
-				addQuickToggle(trollTab, "Swim in Air", "Swim through the air like it's water. Hold Space to rise", function(enabled)
+				addQuickToggle(trollTabs.tricks, "Swim in Air", "Swim through the air like it's water. Hold Space to rise", function(enabled)
 					if enabled then claimMovement("Swim in Air") end
 					execCmd(enabled and "swim" or "unswim", localPlayer, true)
 				end, "waves")
@@ -16927,7 +16947,7 @@ if rayfieldLoaded and Rayfield then
 					handstandMode.position = Vector3.new(position.X, ground and ground + handstandMode.headHeight or position.Y, position.Z)
 					return CFrame.new(handstandMode.position) * CFrame.Angles(0, takeoverState.yaw, 0) * CFrame.Angles(0, 0, math.pi)
 				end
-				addQuickToggle(trollTab, "Handstand", "Walk on your head and hands, legs kicking in the air. With Spin on too, it's a headspin", takeoverSwitch("Handstand", handstandMode), "hand", "hand-metal")
+				addQuickToggle(trollTabs.tricks, "Handstand", "Walk on your head and hands, legs kicking in the air. With Spin on too, it's a headspin", takeoverSwitch("Handstand", handstandMode), "hand", "hand-metal")
 
 				-- Crawl: down on the ground, wriggling along like a worm, sliding on your belly or rolling
 				-- along like a log (the style is in its settings card).
@@ -16961,7 +16981,7 @@ if rayfieldLoaded and Rayfield then
 					local wiggle = style == "Worm" and math.sin(crawlMode.phase) * math.rad(14) or 0
 					return facing * CFrame.Angles(-math.pi / 2 + wiggle, 0, 0)
 				end
-				addQuickToggle(trollTab, "Crawl", "Get down and wriggle along like a worm. Right-click for belly slide or log roll", takeoverSwitch("Crawl", crawlMode), "worm", "bug")
+				addQuickToggle(trollTabs.tricks, "Crawl", "Get down and wriggle along like a worm. Right-click for belly slide or log roll", takeoverSwitch("Crawl", crawlMode), "worm", "bug")
 
 				-- Superman: flying flat out, face down and head first. Your movement keys steer, Space goes
 				-- up and Ctrl or Q go down.
@@ -16983,7 +17003,7 @@ if rayfieldLoaded and Rayfield then
 					local bob = moving and 0 or math.sin(os.clock() * 2) * 0.3
 					return CFrame.new(supermanMode.position + Vector3.new(0, bob, 0)) * CFrame.Angles(0, takeoverState.yaw, 0) * CFrame.Angles(-math.pi / 2, 0, 0)
 				end
-				addQuickToggle(trollTab, "Superman", "Fly flat out like a superhero. Space goes up, Ctrl or Q down", takeoverSwitch("Superman", supermanMode), "plane", "rocket")
+				addQuickToggle(trollTabs.tricks, "Superman", "Fly flat out like a superhero. Space goes up, Ctrl or Q down", takeoverSwitch("Superman", supermanMode), "plane", "rocket")
 
 				-- Helicopter: hovering above the ground and spinning, arms up like rotor blades. The height is
 				-- in its settings card.
@@ -17001,7 +17021,7 @@ if rayfieldLoaded and Rayfield then
 					takeoverState.yaw += 16 * deltaTime
 					return CFrame.new(helicopterMode.position) * CFrame.Angles(0, takeoverState.yaw, 0)
 				end
-				addQuickToggle(trollTab, "Helicopter", "Hover and spin with your arms up like rotor blades. Right-click for the height", takeoverSwitch("Helicopter", helicopterMode), "fan", "tornado")
+				addQuickToggle(trollTabs.tricks, "Helicopter", "Hover and spin with your arms up like rotor blades. Right-click for the height", takeoverSwitch("Helicopter", helicopterMode), "fan", "tornado")
 
 				-- Marble Ball (from your marble ball script): your root part turns into a big invisible ball
 				-- and you roll about on it, your body tumbling round with it for everyone to see. The
@@ -17126,7 +17146,7 @@ if rayfieldLoaded and Rayfield then
 				table.insert(respawnHandlers, function()
 					if marbleState.enabled then startMarble() end
 				end)
-				addQuickToggle(trollTab, "Marble Ball", "Roll around on a big ball, tumbling along for everyone to see. Right-click for speed, jump and size", function(enabled)
+				addQuickToggle(trollTabs.tricks, "Marble Ball", "Roll around on a big ball, tumbling along for everyone to see. Right-click for speed, jump and size", function(enabled)
 					marbleState.enabled = enabled
 					if not enabled then return stopMarble() end
 					claimMovement("Marble Ball")
@@ -17223,12 +17243,12 @@ if rayfieldLoaded and Rayfield then
 						myRoot.CFrame = CFrame.lookAt(position, position + roombaState.heading) * CFrame.Angles(-math.pi / 2, 0, 0)
 					end)
 				end
-				addQuickToggle(trollTab, "Roomba", "Slide about the floor by yourself like a robot vacuum, bouncing off walls. Right-click for the speed", setRoomba, "disc", "circle-dot")
+				addQuickToggle(trollTabs.tricks, "Roomba", "Slide about the floor by yourself like a robot vacuum, bouncing off walls. Right-click for the speed", setRoomba, "disc", "circle-dot")
 
 				-- Moves: one-off tricks. They're kept in trolling.moves for the Favourites bar too, along
 				-- with Stop Animations from further up.
-				withIcon(trollTab, "CreateSection", { name = "Moves" }, "zap", "sparkles")
-				trollTab:CreateText({
+				withIcon(trollTabs.walks, "CreateSection", { name = "Moves" }, "zap", "sparkles")
+				trollTabs.walks:CreateText({
 					text = "These are commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, yeet, launch, fakeout), so you can put them on keys in IY Settings.",
 				})
 				trolling.moves = {
@@ -17243,7 +17263,7 @@ if rayfieldLoaded and Rayfield then
 					{ name = "Fakeout", description = "Vanish into the void for a second, then pop back where you were", icons = { "ghost" }, run = function() execCmd("fakeout", localPlayer, true) end },
 				}
 				for _, move in ipairs(trolling.moves) do
-					withIcon(trollTab, "CreateButton", {
+					withIcon(trollTabs.walks, "CreateButton", {
 						name = move.name,
 						description = move.description,
 						callback = move.run,
@@ -17251,9 +17271,228 @@ if rayfieldLoaded and Rayfield then
 				end
 				table.insert(trolling.moves, { name = "Stop Animations", icons = { "circle-stop", "square" }, run = function() trolling.stopAnimations() end })
 
-				-- With other players: Headsit, Orbit, Copycat, Bow Down and Glide To use the player picked
-				-- here, which is the one selected on the Players tab too.
-				withIcon(trollTab, "CreateSection", { name = "With other players" }, "users-round", "users")
+				-- Parkour: jump again in mid-air (up to three times, in its settings card), kick off a wall
+				-- you're next to, and dash the way you're going with the dash key (Q to start with), once
+				-- per jump. It all moves your own character, so everyone sees it. Keys are read straight
+				-- from the keyboard each frame, so a game that takes Space for itself doesn't stop it.
+				withIcon(trollTabs.walks, "CreateSection", { name = "Parkour" }, "wind", "footprints")
+				do
+					local parkour = {
+						airJumps = 0, lastWallJump = 0, lastDash = 0, dashUntil = 0, dashVelocity = Vector3.zero,
+						dashedInAir = false, spaceDown = false, dashDown = false, keyName = nil, keyCode = nil,
+					}
+					local wallParams = RaycastParams.new()
+					wallParams.FilterType = Enum.RaycastFilterType.Exclude
+					-- How fast a jump sends you up, going by the humanoid's own jump settings.
+					local function jumpSpeed(humanoid)
+						if humanoid.UseJumpPower then return math.max(humanoid.JumpPower, 40) end
+						return math.max(math.sqrt(2 * workspace.Gravity * humanoid.JumpHeight), 40)
+					end
+					-- Which way a wall right beside you faces (the way off it), or nil with no wall there.
+					local function wallBeside(character, root)
+						wallParams.FilterDescendantsInstances = { character }
+						local look = flat(root.CFrame.LookVector)
+						look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+						local nearest, nearestDistance = nil, math.huge
+						for turn = 0, 7 do
+							local direction = CFrame.Angles(0, turn * math.pi / 4, 0):VectorToWorldSpace(look)
+							local hit = workspace:Raycast(root.Position, direction * 2.6, wallParams)
+							if hit and math.abs(hit.Normal.Y) < 0.3 then
+								local distance = (hit.Position - root.Position).Magnitude
+								if distance < nearestDistance then nearest, nearestDistance = hit.Normal, distance end
+							end
+						end
+						return nearest
+					end
+					-- Whether a key has just gone down: down now, and not on the frame before.
+					local function pressed(field, down)
+						local wasDown = parkour[field]
+						parkour[field] = down
+						return down and not wasDown
+					end
+					local function step()
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return end
+						local now = os.clock()
+						local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
+						if grounded then parkour.airJumps, parkour.dashedInAir = 0, false end
+						if featureSettings.parkourDashKey ~= parkour.keyName then
+							parkour.keyName = featureSettings.parkourDashKey
+							local keyOk, keyCode = pcall(function() return Enum.KeyCode[parkour.keyName] end)
+							parkour.keyCode = keyOk and keyCode or nil
+						end
+						local typing = UserInputService:GetFocusedTextBox() ~= nil
+						local jumpPressed = pressed("spaceDown", not typing and UserInputService:IsKeyDown(Enum.KeyCode.Space))
+						local dashPressed = pressed("dashDown", not typing and parkour.keyCode ~= nil and UserInputService:IsKeyDown(parkour.keyCode))
+						-- Not while sitting, flying, or in one of the tricks that hold you themselves.
+						if humanoid.Sit or humanoid.PlatformStand then return end
+						-- Space in the air: off a wall if you're next to one, or else another jump.
+						if jumpPressed and not grounded then
+							local wall = featureSettings.parkourWallJump and now - parkour.lastWallJump > 0.2 and wallBeside(character, root)
+							if wall then
+								parkour.lastWallJump = now
+								-- Kicking off a wall gives your air jumps back.
+								parkour.airJumps = 0
+								local away = flat(wall)
+								away = away.Magnitude > 0.1 and away.Unit or -flat(root.CFrame.LookVector)
+								humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+								root.AssemblyLinearVelocity = away * 38 + Vector3.new(0, jumpSpeed(humanoid), 0)
+								root.CFrame = CFrame.lookAt(root.Position, root.Position + away)
+							elseif featureSettings.parkourDoubleJump and parkour.airJumps < featureSettings.parkourAirJumps then
+								parkour.airJumps += 1
+								humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+								local velocity = root.AssemblyLinearVelocity
+								root.AssemblyLinearVelocity = Vector3.new(velocity.X, jumpSpeed(humanoid), velocity.Z)
+							end
+						end
+						-- The dash key: a quick burst the way you're moving (or facing), once per jump.
+						if dashPressed and featureSettings.parkourDash and now - parkour.lastDash > 0.6 and (grounded or not parkour.dashedInAir) then
+							local direction = flat(humanoid.MoveDirection)
+							if direction.Magnitude < 0.1 then
+								local camera = workspace.CurrentCamera
+								direction = flat(camera and camera.CFrame.LookVector or root.CFrame.LookVector)
+							end
+							if direction.Magnitude > 0.1 then
+								parkour.lastDash = now
+								parkour.dashUntil = now + 0.18
+								parkour.dashVelocity = direction.Unit * 75
+								if not grounded then parkour.dashedInAir = true end
+							end
+						end
+						if now < parkour.dashUntil then
+							-- Level along the ground; in the air, rising a touch so a dash carries you over a gap.
+							local rise = root.AssemblyLinearVelocity.Y
+							if not grounded then rise = math.max(rise, 4) end
+							root.AssemblyLinearVelocity = parkour.dashVelocity + Vector3.new(0, rise, 0)
+						end
+					end
+					addQuickToggle(trollTabs.walks, "Parkour Mode", "Double jump, kick off walls and dash. Right-click for the moves and the dash key", function(enabled)
+						if not enabled then return afterControls("SpreadCheeksParkour", nil) end
+						claimMovement("Parkour Mode")
+						-- A key already held when it's switched on doesn't count as a press.
+						parkour.spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+						parkour.dashDown = true
+						afterControls("SpreadCheeksParkour", step)
+					end, "wind", "chevrons-up")
+				end
+
+				-- Grapple Hook: hold the grapple key (G to start with) to fire a hook at whatever your mouse
+				-- points at, and hang on for as long as it's held. Swing (to start with) swings you on the
+				-- rope like a pendulum while reeling you in; Pull flies you straight there. The style, the
+				-- key, the range and the pull speed are in its settings card. The rope is only drawn on your
+				-- screen, but everyone sees you fly. The hook moves with what it caught, so it holds on to
+				-- moving platforms, vehicles and players.
+				do
+					local grapple = {
+						part = nil, offset = nil, length = 0, keyDown = false, keyName = nil, keyCode = nil,
+						beam = nil, rootAttachment = nil, hookAttachment = nil,
+					}
+					local grappleParams = RaycastParams.new()
+					grappleParams.FilterType = Enum.RaycastFilterType.Exclude
+					local function letGo()
+						grapple.part = nil
+						for _, field in ipairs({ "beam", "rootAttachment", "hookAttachment" }) do
+							if grapple[field] then
+								grapple[field]:Destroy()
+								grapple[field] = nil
+							end
+						end
+					end
+					-- Where the hook is now, following the part it caught; nil once that part is gone.
+					local function hookPosition()
+						local part = grapple.part
+						if not part or not part.Parent then return nil end
+						return part.CFrame:PointToWorldSpace(grapple.offset)
+					end
+					-- Fires at whatever's under the mouse, within range. Nothing happens on a miss.
+					local function fire(character, humanoid, root)
+						local camera = workspace.CurrentCamera
+						if not camera then return end
+						local mouse = UserInputService:GetMouseLocation()
+						local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
+						grappleParams.FilterDescendantsInstances = { character }
+						-- Far enough to reach the full range from you, wherever the camera is.
+						local reach = featureSettings.grappleRange + (camera.CFrame.Position - root.Position).Magnitude
+						local hit = workspace:Raycast(ray.Origin, ray.Direction * reach, grappleParams)
+						if not hit or (hit.Position - root.Position).Magnitude > featureSettings.grappleRange then return end
+						letGo()
+						grapple.part = hit.Instance
+						grapple.offset = hit.Instance.CFrame:PointToObjectSpace(hit.Position)
+						-- A bit shorter than the gap, so the rope lifts you as it catches.
+						grapple.length = (hit.Position - root.Position).Magnitude * 0.85
+						-- The rope, drawn on your screen only.
+						local rootAttachment = Instance.new("Attachment")
+						rootAttachment.Parent = root
+						local hookAttachment = Instance.new("Attachment")
+						hookAttachment.WorldPosition = hit.Position
+						hookAttachment.Parent = workspace.Terrain
+						local beam = Instance.new("Beam")
+						beam.Attachment0 = rootAttachment
+						beam.Attachment1 = hookAttachment
+						beam.Width0, beam.Width1 = 0.12, 0.12
+						beam.FaceCamera = true
+						beam.Segments = 1
+						beam.LightEmission = 0.4
+						beam.Color = ColorSequence.new(auxiliaryUiTheme.AccentText)
+						beam.Parent = rootAttachment
+						grapple.rootAttachment, grapple.hookAttachment, grapple.beam = rootAttachment, hookAttachment, beam
+						-- Off the ground, so the rope can carry you.
+						if humanoid.FloorMaterial ~= Enum.Material.Air then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
+					end
+					local function step(deltaTime)
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return letGo() end
+						if featureSettings.grappleKey ~= grapple.keyName then
+							grapple.keyName = featureSettings.grappleKey
+							local keyOk, keyCode = pcall(function() return Enum.KeyCode[grapple.keyName] end)
+							grapple.keyCode = keyOk and keyCode or nil
+						end
+						local down = UserInputService:GetFocusedTextBox() == nil and grapple.keyCode ~= nil and UserInputService:IsKeyDown(grapple.keyCode)
+						local blocked = humanoid.Sit or humanoid.PlatformStand
+						if down and not grapple.keyDown and not blocked then
+							fire(character, humanoid, root)
+						elseif (not down and grapple.keyDown) or blocked then
+							letGo()
+						end
+						grapple.keyDown = down
+						local hook = hookPosition()
+						if not hook then return letGo() end
+						-- A new character leaves the old rope behind.
+						if grapple.rootAttachment.Parent ~= root then return letGo() end
+						grapple.hookAttachment.WorldPosition = hook
+						local offset = hook - root.Position
+						local distance = offset.Magnitude
+						local frame = math.max(deltaTime, 1 / 120)
+						if featureSettings.grappleStyle == "Pull" then
+							-- Straight there, then hanging on at the hook.
+							root.AssemblyLinearVelocity = distance > 3 and offset.Unit * math.min(featureSettings.grapplePullSpeed, distance / frame) or Vector3.zero
+							return
+						end
+						-- Swing: reeling in as you go, and the rope only ever pulls, it never pushes.
+						grapple.length = math.max(4, grapple.length - 10 * deltaTime)
+						if distance > grapple.length and distance > 0.1 then
+							local outward = -offset.Unit
+							local velocity = root.AssemblyLinearVelocity
+							local away = velocity:Dot(outward)
+							if away > 0 then velocity -= outward * away end
+							-- And back to the rope's length if you've stretched past it.
+							velocity -= outward * math.min((distance - grapple.length) / frame * 0.5, 60)
+							root.AssemblyLinearVelocity = velocity
+						end
+					end
+					addQuickToggle(trollTabs.walks, "Grapple Hook", "Hold G and point to swing on a rope to anything. Right-click for swing or pull, the key and the range", function(enabled)
+						letGo()
+						if not enabled then return afterControls("SpreadCheeksGrapple", nil) end
+						claimMovement("Grapple Hook")
+						-- A key already held when it's switched on doesn't fire.
+						grapple.keyDown = true
+						afterControls("SpreadCheeksGrapple", step)
+					end, "anchor", "link")
+				end
+
+				-- Player Pranks: the tricks played on someone else use the player picked here, which is the
+				-- one selected on the Players tab too.
+				withIcon(trollTabs.players, "CreateSection", { name = "Your target" }, "crosshair", "user-round")
 				local function findPlayer(name)
 					name = tostring(name or ""):lower()
 					if name == "" then return nil end
@@ -17275,11 +17514,11 @@ if rayfieldLoaded and Rayfield then
 				local function targetFor(feature)
 					local player = currentTarget()
 					if not player then
-						notify(feature, "Pick someone first: use Choose Player or Nearest Player in the Trolling tab.")
+						notify(feature, "Pick someone first: use Choose Player or Nearest Player on the Player Pranks tab.")
 					end
 					return player
 				end
-				local targetText = withIcon(trollTab, "CreateText", {
+				local targetText = withIcon(trollTabs.players, "CreateText", {
 					name = "Target",
 					text = "Nobody picked yet",
 				}, "user-round")
@@ -17294,14 +17533,14 @@ if rayfieldLoaded and Rayfield then
 					end
 					pcall(function() targetText:Set(text) end)
 				end
-				withIcon(trollTab, "CreateButton", {
+				withIcon(trollTabs.players, "CreateButton", {
 					name = "Choose Player",
 					description = "Pick who the tricks below use, by their face and name",
 					callback = function()
 						if menuModules.openPlayerPicker then menuModules.openPlayerPicker() end
 					end,
 				}, "layout-grid", "users-round")
-				withIcon(trollTab, "CreateButton", {
+				withIcon(trollTabs.players, "CreateButton", {
 					name = "Nearest Player",
 					description = "Picks the player closest to you",
 					callback = function()
@@ -17337,6 +17576,7 @@ if rayfieldLoaded and Rayfield then
 				Players.PlayerAdded:Connect(function() task.defer(refreshTargetText) end)
 				Players.PlayerRemoving:Connect(function() task.defer(refreshTargetText) end)
 
+				withIcon(trollTabs.players, "CreateSection", { name = "Stick to them" }, "magnet", "users-round")
 				-- Headsit: you sit on the target's head, or on their back for a piggyback (in its settings
 				-- card), and ride along. Jump to get off.
 				local headsitState = { loop = nil, sitting = false }
@@ -17380,7 +17620,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Headsit"] = setHeadsit
-				addQuickToggle(trollTab, "Headsit", "Sit on your target's head and ride along. Jump to get off. Right-click for a piggyback", setHeadsit, "armchair")
+				addQuickToggle(trollTabs.players, "Headsit", "Sit on your target's head and ride along. Jump to get off. Right-click for a piggyback", setHeadsit, "armchair")
 
 				-- Orbit: you circle round the target. Speed, distance and height are in its settings card.
 				-- You're moved by your velocity rather than teleported each frame, so the movement Roblox
@@ -17499,7 +17739,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Orbit"] = setOrbit
-				addQuickToggle(trollTab, "Orbit", "Circle round your target. Right-click for speed, distance and height", setOrbit, "orbit")
+				addQuickToggle(trollTabs.players, "Orbit", "Circle round your target. Right-click for speed, distance and height", setOrbit, "orbit")
 
 				-- Copycat: plays whatever animations the target is playing, in step with them, and can follow
 				-- them about too (in its settings card). Your own Animate script is off meanwhile, so only
@@ -17596,7 +17836,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Copycat"] = setCopycat
-				addQuickToggle(trollTab, "Copycat", "Copy your target's animations and emotes as they do them. Right-click to follow them too", setCopycat, "copy", "users-round")
+				addQuickToggle(trollTabs.players, "Copycat", "Copy your target's animations and emotes as they do them. Right-click to follow them too", setCopycat, "copy", "users-round")
 
 				-- Bow Down: you bow to the target over and over, facing them from in front, from behind or
 				-- while circling round them. Where, how fast, how low, how far away and kneeling are in its
@@ -17648,8 +17888,9 @@ if rayfieldLoaded and Rayfield then
 					return beginTakeover("Bow Down", bowMode)
 				end
 				targetedSwitches["Bow Down"] = setBowDown
-				addQuickToggle(trollTab, "Bow Down", "Bow down to your target, over and over. Right-click to change how", setBowDown, "crown", "hand")
+				addQuickToggle(trollTabs.players, "Bow Down", "Bow down to your target, over and over. Right-click to change how", setBowDown, "crown", "hand")
 
+				withIcon(trollTabs.players, "CreateSection", { name = "Get to them" }, "send", "navigation")
 				-- Glide To: you fly smoothly over to the target, through walls, and stop just behind them.
 				-- Like Orbit, it moves you by velocity rather than teleporting, so everyone sees the flight
 				-- and the server agrees where you are, and it aims where they'll be once lag catches up. It
@@ -17767,7 +18008,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Glide To"] = setGlide
-				addQuickToggle(trollTab, "Glide To", "Fly smoothly over to your target, through walls, and stop behind them. Right-click for the speed", setGlide, "send", "navigation")
+				addQuickToggle(trollTabs.players, "Glide To", "Fly smoothly over to your target, through walls, and stop behind them. Right-click for the speed", setGlide, "send", "navigation")
 				-- For the Players tab's button and the glideto command. A glide that's under way starts over,
 				-- towards whoever is picked now, without landing first.
 				function trolling.startGlide()
@@ -17844,7 +18085,7 @@ if rayfieldLoaded and Rayfield then
 					end
 					nextStop()
 				end
-				addQuickToggle(trollTab, "Server Tour", "Glide over to everyone in the server, one at a time, and wave at each of them", setServerTour, "map", "plane")
+				addQuickToggle(trollTabs.players, "Server Tour", "Glide over to everyone in the server, one at a time, and wave at each of them", setServerTour, "map", "plane")
 
 				-- Walking after someone, for Weeping Angel and Bodyguard: round walls and up stairs by
 				-- Roblox's pathfinding (jumping where the path needs it), straight there while a path is
@@ -18018,6 +18259,7 @@ if rayfieldLoaded and Rayfield then
 					return follower
 				end
 
+				withIcon(trollTabs.players, "CreateSection", { name = "Follow them about" }, "footprints", "ghost")
 				-- Weeping Angel: you creep up on your target, but the moment they turn towards you (with
 				-- nothing in the way) you freeze mid-step, and creep on once they look away. Close up, you
 				-- wait frozen right by them. If they climb up out of reach, you float up after them
@@ -18107,7 +18349,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Weeping Angel"] = setWeepingAngel
-				addQuickToggle(trollTab, "Weeping Angel", "Creep up on your target, freezing mid-step whenever they turn round to look", setWeepingAngel, "ghost", "eye")
+				addQuickToggle(trollTabs.players, "Weeping Angel", "Creep up on your target, freezing mid-step whenever they turn round to look", setWeepingAngel, "ghost", "eye")
 
 				-- Bodyguard: you stick by your target's side like security, on the side picked in its
 				-- settings card. When anyone else gets within range of them you step in between and stare
@@ -18174,7 +18416,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Bodyguard"] = setBodyguard
-				addQuickToggle(trollTab, "Bodyguard", "Stick by your target like security and stare down anyone who gets close. Right-click for where you stand", setBodyguard, "shield-check", "shield")
+				addQuickToggle(trollTabs.players, "Bodyguard", "Stick by your target like security and stare down anyone who gets close. Right-click for where you stand", setBodyguard, "shield-check", "shield")
 
 				-- Nothing Personal: you stand just behind your target, and whenever they turn round to look
 				-- at you (the same check as Weeping Angel), you vanish and reappear right behind them again,
@@ -18257,7 +18499,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Nothing Personal"] = setNothingPersonal
-				addQuickToggle(trollTab, "Nothing Personal", "Whenever your target turns to look at you, you vanish and reappear right behind them", setNothingPersonal, "zap", "ghost")
+				addQuickToggle(trollTabs.players, "Nothing Personal", "Whenever your target turns to look at you, you vanish and reappear right behind them", setNothingPersonal, "zap", "ghost")
 
 				-- Hype Man: you hang about in front of your target, off to one side and facing them, and
 				-- every time they jump or do an emote you cheer them on with a random cheer. What sets you off
@@ -18370,13 +18612,13 @@ if rayfieldLoaded and Rayfield then
 					end)
 				end
 				targetedSwitches["Hype Man"] = setHypeMan
-				addQuickToggle(trollTab, "Hype Man", "Stand by your target and cheer every time they jump or do an emote. Right-click for what sets you off", setHypeMan, "party-popper", "megaphone")
+				addQuickToggle(trollTabs.players, "Hype Man", "Stand by your target and cheer every time they jump or do an emote. Right-click for what sets you off", setHypeMan, "party-popper", "megaphone")
 
 				-- Only you can see: these change your own screen and nobody else's.
-				withIcon(trollTab, "CreateSection", { name = "Only you can see" }, "eye", "monitor")
+				withIcon(trollTabs.screen, "CreateSection", { name = "Only you can see these" }, "eye", "monitor")
 				-- Disco Mode: a colour tint that cycles through the rainbow, with a flash on every beat.
 				local discoState = { loop = nil, effect = nil }
-				addQuickToggle(trollTab, "Disco Mode", "Party lights for your screen", function(enabled)
+				addQuickToggle(trollTabs.screen, "Disco Mode", "Party lights for your screen", function(enabled)
 					if discoState.loop then
 						discoState.loop:Disconnect()
 						discoState.loop = nil
@@ -18468,7 +18710,7 @@ if rayfieldLoaded and Rayfield then
 						end
 					end
 				end
-				addQuickToggle(trollTab, "Big Heads", "Gives everyone else giant heads. Right-click for the size", function(enabled)
+				addQuickToggle(trollTabs.screen, "Big Heads", "Gives everyone else giant heads. Right-click for the size", function(enabled)
 					bigHeadsState.enabled = enabled
 					if bigHeadsState.stop then
 						bigHeadsState.stop()
@@ -18546,7 +18788,7 @@ if rayfieldLoaded and Rayfield then
 						task.defer(pcall, noobify, object)
 					end))
 				end
-				addQuickToggle(trollTab, "Noob Mode", "Everyone else looks like a classic noob", function(enabled)
+				addQuickToggle(trollTabs.screen, "Noob Mode", "Everyone else looks like a classic noob", function(enabled)
 					noobState.enabled = enabled
 					if noobState.stop then
 						noobState.stop()
@@ -18608,11 +18850,11 @@ if rayfieldLoaded and Rayfield then
 						cameraFx.lastSet = camera.CFrame
 					end)
 				end
-				addQuickToggle(trollTab, "Upside Down", "Turns your view upside down", function(enabled)
+				addQuickToggle(trollTabs.screen, "Upside Down", "Turns your view upside down", function(enabled)
 					cameraFx.flip = enabled
 					updateCameraFx()
 				end, "flip-vertical", "arrow-up-down")
-				addQuickToggle(trollTab, "Drunk Vision", "A wobbly, blurry view", function(enabled)
+				addQuickToggle(trollTabs.screen, "Drunk Vision", "A wobbly, blurry view", function(enabled)
 					cameraFx.drunk = enabled
 					if cameraFx.blur then
 						cameraFx.blur:Destroy()
@@ -18627,7 +18869,7 @@ if rayfieldLoaded and Rayfield then
 					end
 					updateCameraFx()
 				end, "wine", "beer")
-				addQuickToggle(trollTab, "Earthquake", "Shakes your screen", function(enabled)
+				addQuickToggle(trollTabs.screen, "Earthquake", "Shakes your screen", function(enabled)
 					cameraFx.quake = enabled
 					updateCameraFx()
 				end, "activity", "vibrate")
@@ -18691,7 +18933,7 @@ if rayfieldLoaded and Rayfield then
 					saveFeatureSettings()
 					attachTrail()
 				end
-				addQuickToggle(trollTab, "Trail", "A rainbow, sparkle or fire trail follows you around. Right-click for the look", function(enabled)
+				addQuickToggle(trollTabs.screen, "Trail", "A rainbow, sparkle or fire trail follows you around. Right-click for the look", function(enabled)
 					trailState.enabled = enabled
 					attachTrail()
 				end, "sparkles", "wand-sparkles")
@@ -18998,6 +19240,78 @@ if rayfieldLoaded and Rayfield then
 							},
 						}, 1)
 					end
+					local parkourCard = cardFor("Parkour Mode")
+					if parkourCard then
+						local function parkourSetting(text, key)
+							return {
+								text = text,
+								get = function() return featureSettings[key] == true end,
+								set = function(on)
+									featureSettings[key] = on
+									saveFeatureSettings()
+								end,
+							}
+						end
+						parkourCard.addSectionLabel("MOVES", "wind", "footprints")
+						parkourCard.addSwitchGrid({
+							parkourSetting("Double jump", "parkourDoubleJump"),
+							parkourSetting("Wall jumps", "parkourWallJump"),
+							parkourSetting("Dash", "parkourDash"),
+						})
+						parkourCard.addSlider({
+							text = "Jumps in the air",
+							icon = { "chevrons-up" },
+							min = 1, max = 3, step = 1,
+							get = function() return featureSettings.parkourAirJumps end,
+							set = function(value) featureSettings.parkourAirJumps = value end,
+							commit = saveFeatureSettings,
+							format = function(value)
+								value = math.floor(value + 0.5)
+								return value == 1 and "1 (double jump)" or value == 2 and "2 (triple jump)" or tostring(value)
+							end,
+						})
+						parkourCard.addSectionLabel("DASH KEY", "keyboard")
+						addChoiceGrid(parkourCard, { "Q", "E", "F", "R", "C", "X", "Z", "V" }, 4, function() return featureSettings.parkourDashKey end, function(key)
+							featureSettings.parkourDashKey = key
+							saveFeatureSettings()
+						end)
+						parkourCard.addHint("Press Space in the air to jump again, or to kick off a wall you're touching. The dash shoots you the way you're moving, once per jump. Pick a key the game doesn't use; the dashkey command takes any key.")
+					end
+					local grappleCard = cardFor("Grapple Hook")
+					if grappleCard then
+						grappleCard.addSectionLabel("STYLE", "anchor", "link")
+						addSettingChoice(grappleCard, "grappleStyle", { "Swing", "Pull" })
+						grappleCard.addHint(function()
+							if featureSettings.grappleStyle == "Pull" then
+								return "Flies you straight to the hook and hangs you there until you let go."
+							end
+							return "Swings you on the rope like a pendulum, reeling you in as you go."
+						end)
+						grappleCard.addSlider({
+							text = "Range",
+							icon = { "ruler", "move-horizontal" },
+							min = 50, max = 500, step = 10,
+							get = function() return featureSettings.grappleRange end,
+							set = function(value) featureSettings.grappleRange = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs" end,
+						})
+						grappleCard.addSlider({
+							text = "Pull speed",
+							icon = { "gauge" },
+							min = 30, max = 150, step = 5,
+							get = function() return featureSettings.grapplePullSpeed end,
+							set = function(value) featureSettings.grapplePullSpeed = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs/s" end,
+						})
+						grappleCard.addSectionLabel("KEY", "keyboard")
+						addChoiceGrid(grappleCard, { "G", "E", "F", "R", "T", "X", "Z", "V" }, 4, function() return featureSettings.grappleKey end, function(key)
+							featureSettings.grappleKey = key
+							saveFeatureSettings()
+						end)
+						grappleCard.addHint("Hold it and point your mouse at what to grab; let go to drop off. Pick a key the game doesn't use; the grapplekey command takes any key.")
+					end
 					local guardCard = cardFor("Bodyguard")
 					if guardCard then
 						guardCard.addSectionLabel("YOUR POST", "shield-check", "shield")
@@ -19163,7 +19477,7 @@ if rayfieldLoaded and Rayfield then
 				end
 			end)
 			if not built then
-				warn("[SpreadCheeksGUI] Some of the Trolling tab couldn't be added: " .. tostring(problem))
+				warn("[SpreadCheeksGUI] Some of the trolling tabs couldn't be added: " .. tostring(problem))
 			end
 		end
 
@@ -21603,7 +21917,7 @@ if rayfieldLoaded and Rayfield then
 		if not featureSettingsOk then
 			warn("[SpreadCheeksGUI] Feature settings couldn't be added: " .. tostring(featureSettingsError))
 		end
-		-- The Trolling switches' settings cards (see the Trolling tab, further up).
+		-- The Trolling switches' settings cards (see the trolling tabs, further up).
 		if trolling.buildSettings then
 			local trollingSettingsOk, trollingSettingsError = pcall(trolling.buildSettings, createSettingsCard)
 			if not trollingSettingsOk then
@@ -22970,7 +23284,7 @@ if rayfieldLoaded and Rayfield then
 				locatedPlayerName = name
 			end
 		end
-		-- The Trolling tab picks its target through this same selection.
+		-- Player Pranks picks its target through this same selection.
 		menuModules.selectPlayer = selectPlayer
 		function menuModules.selectedPlayerName()
 			return selectedPlayerName
@@ -23300,7 +23614,7 @@ if rayfieldLoaded and Rayfield then
 			Players.PlayerAdded:Connect(refreshFaceCards)
 			Players.PlayerRemoving:Connect(refreshFaceCards)
 			refreshFaceCards()
-			-- The Trolling tab's Choose Player button opens it too.
+			-- The Choose Player button on Player Pranks opens it too.
 			function menuModules.openPlayerPicker()
 				refreshFaceCards()
 				searchInput.Text = ""
@@ -23381,7 +23695,7 @@ if rayfieldLoaded and Rayfield then
 		}, "navigation")
 		withIcon(playerTab, "CreateButton", {
 			name = "Glide to selected player",
-			description = "Fly smoothly over to them instead of teleporting. Its speed is in Trolling, under Glide To",
+			description = "Fly smoothly over to them instead of teleporting. Its speed is on the Player Pranks tab, under Glide To",
 			callback = function()
 				if trolling.startGlide then trolling.startGlide() end
 			end,
@@ -28131,9 +28445,11 @@ if rayfieldLoaded and Rayfield then
 
 			-- Trolling. (Spin, Headsit, Orbit, Swim, Trip and Fakeout already have Infinite Yield commands of
 			-- those names.)
-			describe("trolling", "Opens the menu on the Trolling tab")
+			describe("trolling", "Opens the menu on the trolling tabs, starting with Emotes")
 			addcmd("trolling", {}, function() openTab(trollTab) end)
-			-- Picks the Trolling tab's target from a typed name, for the commands that take one.
+			describe("pranks", "Opens the menu on Player Pranks, where you pick who the tricks are played on")
+			addcmd("pranks", {}, function() openTab(trollTabs.players) end)
+			-- Picks the Player Pranks target from a typed name, for the commands that take one.
 			local function chooseTarget(args, speaker, feature)
 				if not args[1] then return true end
 				local names = getPlayer(args[1], speaker)
@@ -28165,12 +28481,12 @@ if rayfieldLoaded and Rayfield then
 				trolling.setAnimationSpeed(speed)
 				notify("Animation Speed", tostring(trolling.animSpeed) .. "×", 2)
 			end)
-			describe("emoteloop [emote]", "Loops one of the Trolling tab's " .. #(trolling.emoteNames or {}) .. " emotes, like emoteloop floss dance (with no name, the last one picked)")
+			describe("emoteloop [emote]", "Loops one of the " .. #(trolling.emoteNames or {}) .. " emotes on the Emotes tab, like emoteloop floss dance (with no name, the last one picked)")
 			describe("unemoteloop", "Stops the looping emote")
 			addcmd("emoteloop", {}, function(args)
 				local name = getstring(1, args)
 				if name ~= "" and (not trolling.chooseEmote or not trolling.chooseEmote(name)) then
-					return notify("Emote", "There's no emote called " .. name .. ". They're all in the Trolling tab's Pick an Emote list.", 6)
+					return notify("Emote", "There's no emote called " .. name .. ". They're all in the Pick an Emote list on the Emotes tab.", 6)
 				end
 				setSwitch("Emote", true)
 			end)
@@ -28216,6 +28532,49 @@ if rayfieldLoaded and Rayfield then
 				"Every time you land, you bounce back up", "Stops the bouncing")
 			addSwitchCommands("Flip Every Jump", { { "flipjumps" }, { "unflipjumps" }, "toggleflipjumps" },
 				"Every jump comes with a random flip", "Jumps are plain again")
+			addSwitchCommands("Parkour Mode", { { "parkour" }, { "unparkour" }, "toggleparkour" },
+				"Double jump, kick off walls and dash with the dash key (Q to start with)", "Turns Parkour Mode off")
+			describe("dashkey [key]", "The key Parkour Mode dashes with, like dashkey e")
+			addcmd("dashkey", {}, function(args)
+				local typed = firstArgument(args)
+				local key = nil
+				for _, keyCode in ipairs(Enum.KeyCode:GetEnumItems()) do
+					if keyCode.Name:lower() == typed and not reservedKeys[keyCode] and not isMenuToggleKey(keyCode) and keyCode ~= Enum.KeyCode.Space then
+						key = keyCode.Name
+						break
+					end
+				end
+				if not key then return notify("Parkour Mode", "Give a key, like dashkey e") end
+				featureSettings.parkourDashKey = key
+				saveFeatureSettings()
+				notify("Parkour Mode", "Dash with " .. key, 2.5)
+			end)
+			addSwitchCommands("Grapple Hook", { { "grapple", "grapplehook" }, { "ungrapple", "ungrapplehook" }, "togglegrapple" },
+				"Hold the grapple key (G to start with) and point to swing on a rope to anything", "Puts the grapple hook away", "the grapple hook")
+			describe("grapplekey [key]", "The key you hold for the Grapple Hook, like grapplekey f")
+			addcmd("grapplekey", {}, function(args)
+				local typed = firstArgument(args)
+				local key = nil
+				for _, keyCode in ipairs(Enum.KeyCode:GetEnumItems()) do
+					if keyCode.Name:lower() == typed and not reservedKeys[keyCode] and not isMenuToggleKey(keyCode) then
+						key = keyCode.Name
+						break
+					end
+				end
+				if not key then return notify("Grapple Hook", "Give a key, like grapplekey f") end
+				featureSettings.grappleKey = key
+				saveFeatureSettings()
+				notify("Grapple Hook", "Hold " .. key .. " to grapple", 2.5)
+			end)
+			describe("grapplestyle [swing/pull]", "Whether the Grapple Hook swings you on the rope or pulls you straight in")
+			addcmd("grapplestyle", {}, function(args)
+				local styles = { swing = "Swing", pull = "Pull" }
+				local style = styles[firstArgument(args)]
+				if not style then return notify("Grapple Hook", "Choose swing or pull, like grapplestyle pull") end
+				featureSettings.grappleStyle = style
+				saveFeatureSettings()
+				notify("Grapple Hook", style, 2)
+			end)
 
 			-- Body tricks.
 			addSwitchCommands("Fake Dead", { { "fakedead", "playdead" }, { "unfakedead", "unplaydead" }, "togglefakedead" },
@@ -28280,13 +28639,13 @@ if rayfieldLoaded and Rayfield then
 			addcmd("launch", {}, function() if trolling.launch then trolling.launch() end end)
 
 			-- With other players.
-			describe("copycat [player]", "Copies a player's animations and emotes as they do them (the Trolling tab's target if you leave the name out)")
+			describe("copycat [player]", "Copies a player's animations and emotes as they do them (your Player Pranks target if you leave the name out)")
 			describe("uncopycat", "Stops copying")
 			addcmd("copycat", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Copycat") then setSwitch("Copycat", true) end
 			end)
 			addcmd("uncopycat", {}, function() setSwitch("Copycat", false) end)
-			describe("bowdown [player]", "Bows down to a player, over and over (the Trolling tab's target if you leave the name out)")
+			describe("bowdown [player]", "Bows down to a player, over and over (your Player Pranks target if you leave the name out)")
 			describe("unbowdown", "Stops bowing")
 			addcmd("bowdown", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Bow Down") then setSwitch("Bow Down", true) end
@@ -28301,7 +28660,7 @@ if rayfieldLoaded and Rayfield then
 				saveFeatureSettings()
 				notify("Bow Down", spot, 2)
 			end)
-			describe("glideto [player]", "Flies you smoothly over to a player, through walls, and stops behind them (the Trolling tab's target if you leave the name out)")
+			describe("glideto [player]", "Flies you smoothly over to a player, through walls, and stops behind them (your Player Pranks target if you leave the name out)")
 			describe("unglideto", "Stops gliding where you are")
 			addcmd("glideto", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Glide To") and trolling.startGlide then trolling.startGlide() end
@@ -28317,13 +28676,13 @@ if rayfieldLoaded and Rayfield then
 			end)
 			addSwitchCommands("Server Tour", { { "servertour", "tour" }, { "unservertour", "untour" }, "toggleservertour" },
 				"Glide over to everyone in the server, one at a time, and wave at each of them", "Ends the tour where you are", "the Server Tour")
-			describe("weepingangel [player]", "Creep up on a player, freezing whenever they turn round to look (the Trolling tab's target if you leave the name out)")
+			describe("weepingangel [player]", "Creep up on a player, freezing whenever they turn round to look (your Player Pranks target if you leave the name out)")
 			describe("unweepingangel", "Stops the creeping")
 			addcmd("weepingangel", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Weeping Angel") then setSwitch("Weeping Angel", true) end
 			end)
 			addcmd("unweepingangel", {}, function() setSwitch("Weeping Angel", false) end)
-			describe("bodyguard [player]", "Stick by a player like security and stare down anyone who gets close (the Trolling tab's target if you leave the name out)")
+			describe("bodyguard [player]", "Stick by a player like security and stare down anyone who gets close (your Player Pranks target if you leave the name out)")
 			describe("unbodyguard", "Off duty")
 			addcmd("bodyguard", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Bodyguard") then setSwitch("Bodyguard", true) end
@@ -28338,13 +28697,13 @@ if rayfieldLoaded and Rayfield then
 				saveFeatureSettings()
 				notify("Bodyguard", side, 2)
 			end)
-			describe("nothingpersonal [player]", "Whenever a player turns to look at you, you vanish and reappear right behind them (the Trolling tab's target if you leave the name out)")
+			describe("nothingpersonal [player]", "Whenever a player turns to look at you, you vanish and reappear right behind them (your Player Pranks target if you leave the name out)")
 			describe("unnothingpersonal", "Stops the blinking")
 			addcmd("nothingpersonal", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Nothing Personal") then setSwitch("Nothing Personal", true) end
 			end)
 			addcmd("unnothingpersonal", {}, function() setSwitch("Nothing Personal", false) end)
-			describe("hypeman [player]", "Stand by a player and cheer every time they jump or do an emote (the Trolling tab's target if you leave the name out)")
+			describe("hypeman [player]", "Stand by a player and cheer every time they jump or do an emote (your Player Pranks target if you leave the name out)")
 			describe("unhypeman", "Stops the cheering")
 			addcmd("hypeman", {}, function(args, speaker)
 				if chooseTarget(args, speaker, "Hype Man") then setSwitch("Hype Man", true) end
@@ -28954,7 +29313,7 @@ if rayfieldLoaded and Rayfield then
 				if executorName then table.insert(details, executorName) end
 				table.insert(details, session .. " on this server")
 				welcomeDetail.Text = table.concat(details, "  ·  ")
-				serverDetail.Text = "Server up " .. formatDuration(workspace.DistributedGameTime) .. "  ·  " .. #cmds .. " commands"
+				serverDetail.Text = "Place " .. game.PlaceId .. "  ·  " .. #cmds .. " commands"
 
 				local keybinds = 0
 				for _, entry in ipairs(quickToggles) do
