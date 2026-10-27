@@ -18692,7 +18692,7 @@ if rayfieldLoaded and Rayfield then
 						end
 						follower.collisions = nil
 						-- Walking again from here, with a new path.
-						follower.waypoints, follower.goal, follower.noPath = nil, nil, false
+						follower.waypoints, follower.goal, follower.noPath, follower.farDrift = nil, nil, false, false
 						follower.lastPosition = nil
 						local humanoid = follower.humanoid
 						if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
@@ -18786,6 +18786,11 @@ if rayfieldLoaded and Rayfield then
 								stopDrift()
 								return true
 							end
+							-- Floated over for being far off: within landWithin, it walks the rest.
+							if follower.farDrift and follower.landWithin and distance < follower.landWithin then
+								stopDrift()
+								return false
+							end
 							-- Never faster than reaches the spot this frame, so it doesn't overshoot.
 							root.AssemblyLinearVelocity = offset.Unit * math.min(follower.driftSpeed, distance / math.max(deltaTime, 1 / 120))
 							local heading = flat(offset)
@@ -18799,8 +18804,10 @@ if rayfieldLoaded and Rayfield then
 							follower.lastPosition, follower.lastMoveAt, follower.hopped = root.Position, now, false
 							return arrived
 						end
-						-- Too far to walk, or no way there on foot: float there instead.
+						-- Too far to walk, or no way there on foot: float there instead. (farDrift: floated
+						-- for being far, so it can land once it's within landWithin.)
 						if follower.noPath or (follower.driftBeyond and offset.Magnitude > follower.driftBeyond) then
+							follower.farDrift = not follower.noPath
 							startDrift(character)
 							return false
 						end
@@ -18820,6 +18827,7 @@ if rayfieldLoaded and Rayfield then
 						if not follower.lastPosition or (root.Position - follower.lastPosition).Magnitude > 1.5 then
 							follower.lastPosition, follower.lastMoveAt, follower.hopped = root.Position, now, false
 						elseif now - follower.lastMoveAt > 2 then
+							follower.farDrift = false
 							startDrift(character)
 						elseif now - follower.lastMoveAt > 0.8 and not follower.hopped then
 							follower.hopped = true
@@ -18834,9 +18842,13 @@ if rayfieldLoaded and Rayfield then
 				-- Weeping Angel: you creep up on your target, but the moment they turn towards you (with
 				-- nothing in the way) you freeze mid-step, and creep on once they look away. Close up, you
 				-- wait frozen right by them. If they climb up out of reach, you float up after them
-				-- (freezing in mid-air when they look). Your own keys don't move you while it's on.
+				-- (freezing in mid-air when they look). From far off (spectating someone across the map,
+				-- say) you fly over quickly, out of their sight, and creep the last stretch on foot. Your
+				-- own keys don't move you while it's on.
 				local angelState = { frozen = false, animate = nil }
 				local angelFollower = newFollower()
+				angelFollower.driftBeyond = 60
+				angelFollower.landWithin = 40
 				local angelParams = RaycastParams.new()
 				angelParams.FilterType = Enum.RaycastFilterType.Exclude
 				-- Frozen, your animations stop where they are. Roblox's Animate script is paused as well,
@@ -18867,11 +18879,12 @@ if rayfieldLoaded and Rayfield then
 						end
 					end
 				end
-				-- Whether they could see you: you're within 60 degrees of the way they face, and there's no
-				-- wall in between.
+				-- Whether they could see you: you're within 60 degrees of the way they face, no more than 120
+				-- studs off (any further and they couldn't make you out), and there's no wall in between.
 				local function angelSeen(theirCharacter, theirRoot, character, root)
 					local facing = flat(theirRoot.CFrame.LookVector)
 					local toMe = flat(root.Position - theirRoot.Position)
+					if toMe.Magnitude > 120 then return false end
 					if facing.Magnitude < 0.1 or toMe.Magnitude < 0.1 then return true end
 					if facing.Unit:Dot(toMe.Unit) < 0.5 then return false end
 					local theirHead = theirCharacter:FindFirstChild("Head")
@@ -18913,8 +18926,10 @@ if rayfieldLoaded and Rayfield then
 						-- Stock still while they're watching, and once you're right by them.
 						local still = close or angelSeen(theirCharacter, theirRoot, character, root)
 						setAngelFrozen(still)
-						-- Headed for just your side of them.
+						-- Headed for just your side of them: flying fast while you're well out of sight, and
+						-- slowly once you're near enough for it to be creepy.
 						local side = fromThem.Magnitude > 0.1 and fromThem.Unit or -flat(theirRoot.CFrame.LookVector)
+						angelFollower.driftSpeed = fromThem.Magnitude > 120 and 80 or 25
 						angelFollower.ignore = theirCharacter
 						angelFollower.step(deltaTime, character, humanoid, root, theirRoot.Position + side * 3, 1.5, still)
 					end)
@@ -19187,12 +19202,13 @@ if rayfieldLoaded and Rayfield then
 
 				-- Echo: you do exactly what your target did a moment ago (2 seconds to start with, in its
 				-- settings card): the same path, the same turns and the same jumps, like a delayed shadow.
-				-- Starting far from them, you walk or fly over to catch up first. Your own keys don't move
-				-- you while it's on.
+				-- While it waits for the first moment to copy, you go to where they were then. Off their
+				-- path by more than a few studs (starting far away, or knocked off it), you fly back onto it,
+				-- faster than anyone runs, so you always catch up. Your own keys don't move you while it's on.
 				do
 					local echoFollower = newFollower()
-					echoFollower.driftSpeed = 50
-					echoFollower.driftBeyond = 40
+					echoFollower.driftSpeed = 60
+					echoFollower.driftBeyond = 8
 					local echo = { samples = {}, lastSample = 0, wasJumping = false, catchingUp = false }
 					local function setEcho(enabled)
 						afterControls("SpreadCheeksEcho", nil)
@@ -19222,7 +19238,9 @@ if rayfieldLoaded and Rayfield then
 							-- What they're doing now, twenty times a second, to do later.
 							if theirRoot and now - echo.lastSample >= 0.05 then
 								echo.lastSample = now
-								local jumping = theirHumanoid ~= nil and theirHumanoid:GetState() == Enum.HumanoidStateType.Jumping
+								-- Other players' jump state doesn't always reach you, so rising fast counts too.
+								local jumping = theirRoot.AssemblyLinearVelocity.Y > 10
+									or (theirHumanoid ~= nil and theirHumanoid:GetState() == Enum.HumanoidStateType.Jumping)
 								table.insert(echo.samples, {
 									at = now, position = theirRoot.Position, yaw = yawOf(theirRoot.CFrame.LookVector),
 									jump = jumping and not echo.wasJumping,
@@ -19237,16 +19255,18 @@ if rayfieldLoaded and Rayfield then
 								if table.remove(samples, 1).jump then jump = true end
 							end
 							local current, upcoming = samples[1], samples[2]
-							-- Too soon to copy anything yet: wait where you are.
-							if not current or current.at > playTime then
+							-- Nothing of theirs yet (they're respawning, say): wait where you are.
+							if not current then
 								humanoid:Move(Vector3.zero, false)
 								humanoid.Jump = false
 								return
 							end
+							-- Too soon to copy anything: over to where they were, ready to start from there.
+							if current.at > playTime then upcoming = nil end
 							local alpha = upcoming and math.clamp((playTime - current.at) / math.max(upcoming.at - current.at, 0.001), 0, 1) or 0
 							local wanted = upcoming and current.position:Lerp(upcoming.position, alpha) or current.position
 							local offset = wanted - root.Position
-							-- A long way off: walk (or fly) over first.
+							-- Off their path: fly back onto it first.
 							if offset.Magnitude > 8 then
 								echo.catchingUp = true
 								echoFollower.ignore = theirCharacter
@@ -29653,8 +29673,30 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			local menuVersion = "2026.10.27.3"
+			local menuVersion = "2026.10.27.4"
 			local releaseNotes = {
+				{
+					title = "The Parts Update", date = "27 October 2026",
+					notes = {
+						{ "Parts tab", "Trolling menu. 13 tricks with the loose parts your game lets you move, one at a time. The parts keep clear of every player." },
+						{ "Part Tornado", "Parts tab. Swirl loose parts round your target in a ring, sphere, helix, spiral or wave." },
+						{ "Part Halo", "Parts tab. A ring of parts spinning over your target's head." },
+						{ "Part Art", "Parts tab. A heart, smiley or star made of parts, in the air in front of your target." },
+						{ "Part Snake", "Parts tab. A line of parts slithering along behind your target." },
+						{ "Telekinesis", "Parts tab. Hold T and point at a part to pick it up and carry it; scroll to move it nearer or further." },
+						{ "Part Pets", "Parts tab. Parts follow you around like pets." },
+						{ "Magic Carpet", "Parts tab. Ride a part: walk to fly along, Space to go up, Ctrl or Q to come down." },
+						{ "Part Stairs", "Parts tab. Walk up stairs of parts into the sky; Ctrl or Q to come back down." },
+						{ "Part Shield", "Parts tab. Parts swirl round you like a force field." },
+						{ "Zero Gravity", "Parts tab. Loose parts round you float up and drift, like in space." },
+						{ "Part Fountain", "Parts tab. Parts shoot up from over your head and rain down round you." },
+						{ "Blender", "Parts tab. Loose parts round you lift up and spin on the spot." },
+						{ "Show Movable Parts", "Parts tab. Boxes round the parts the tricks can use: green ones are yours to move now." },
+						{ "Troll Panel settings", "Change every prank's and trick's settings right in the Troll Panel, which also has a Parts tab now." },
+						{ "Shift+Click", "Shift+click a player to spectate them and open their Troll Panel." },
+						{ "Config keybinds", "Fixed: loading a config now swaps your keybinds to that config's keys." },
+					},
+				},
 				{
 					title = "The Troll Panel", date = "27 October 2026",
 					notes = {
