@@ -14757,6 +14757,8 @@ if rayfieldLoaded and Rayfield then
 			objectEspRange = 500, objectEspMatch = "Contains",
 			-- The Troll Panel (shown while you spectate someone) and its position, and Ctrl+Click Select.
 			trollPanel = true, trollPanelX = -1, trollPanelY = -1, ctrlClickSelect = true,
+			-- Part Tornado: how far from your target the parts swirl, how fast, and how high (studs).
+			trollTornadoRadius = 12, trollTornadoSpeed = 4, trollTornadoHeight = 3,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14773,6 +14775,7 @@ if rayfieldLoaded and Rayfield then
 			safeTeleportSpeed = { 30, 300 }, collectRange = { 25, 1000 }, collectSpeed = { 20, 150 }, recordSpeed = { 0.5, 3 },
 			aimbotPredictTime = { 0, 0.5 }, hitboxSize = { 2, 25 }, zoomFov = { 5, 60 }, timeOfDayHour = { 0, 24 }, warnHealthAt = { 10, 60 },
 			trollLagStrength = { 1, 10 }, trollEchoDelay = { 0.5, 5 }, speedHackSpeed = { 16, 300 }, clickerCps = { 1, 30 }, objectEspRange = { 50, 3000 },
+			trollTornadoRadius = { 6, 40 }, trollTornadoSpeed = { 1, 10 }, trollTornadoHeight = { 0, 20 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -18107,7 +18110,7 @@ if rayfieldLoaded and Rayfield then
 						callback = spectateTarget,
 					}, "eye", "video"))
 				end
-				addRememberedToggle(trollTabs.players, "Troll Panel", "trollPanel", "trollPanel", "While you spectate someone, a panel of pranks, emotes, moves and tools just for them", "drama", "layout-grid")
+				addRememberedToggle(trollTabs.players, "Troll Panel", "trollPanel", "trollPanel", "While you spectate someone, a panel of pranks, emotes, moves and tools just for them. Shift+click a player to spectate them and open it", "drama", "layout-grid")
 
 				-- Picking someone else moves whichever of these are on over to them.
 				local targetedSwitches = {}
@@ -19291,6 +19294,122 @@ if rayfieldLoaded and Rayfield then
 					addQuickToggle(trollTabs.players, "Stare", "Keep staring right at your target wherever they go, while you walk about as normal", setStare, "eye", "scan-eye")
 				end
 
+				-- Part Tornado: every loose part you're able to move is pulled over to your target and swirled
+				-- round them like a tornado, at the distance in its settings card, so it circles them rather
+				-- than landing on them. Each part goes round from the side it came in on, so none fly through
+				-- them. Switching it off drops the parts where they are. Only parts your game lets your client
+				-- move can be pulled (loose ones near you, in most games), so some games have none.
+				do
+					-- parts[part] = where it is in the swirl: its angle round them, and its own height and gap.
+					local tornado = { loop = nil, parts = {}, count = 0, added = nil, serial = 0 }
+					local function movable(part)
+						if not part:IsA("BasePart") or part.Anchored or part.AssemblyRootPart ~= part then return false end
+						if part.AssemblyMass > 500 or part:IsGrounded() then return false end
+						-- Nothing that's part of someone (a player or a character the game runs).
+						local model = part:FindFirstAncestorWhichIsA("Model")
+						while model do
+							if model:FindFirstChildOfClass("Humanoid") then return false end
+							model = model:FindFirstAncestorWhichIsA("Model")
+						end
+						return true
+					end
+					local function add(part)
+						if tornado.parts[part] or tornado.count >= 150 or not movable(part) then return end
+						tornado.parts[part] = {}
+						tornado.count += 1
+					end
+					local function stopTornado()
+						tornado.serial += 1
+						if tornado.loop then
+							tornado.loop:Disconnect()
+							tornado.loop = nil
+						end
+						if tornado.added then
+							tornado.added:Disconnect()
+							tornado.added = nil
+						end
+						-- Dropped where they are.
+						for part in pairs(tornado.parts) do
+							if part.Parent and not part.Anchored then
+								pcall(function()
+									part.AssemblyLinearVelocity = Vector3.zero
+									part.AssemblyAngularVelocity = Vector3.zero
+								end)
+							end
+						end
+						table.clear(tornado.parts)
+						tornado.count = 0
+					end
+					local function setTornado(enabled)
+						stopTornado()
+						if not enabled then return end
+						local target = targetFor("Part Tornado")
+						if not target then return false end
+						local serial = tornado.serial
+						-- The parts nearest you first, as those are the ones your client is most likely to be
+						-- in charge of; a few thousand looked at a frame, so it doesn't freeze the game.
+						task.spawn(function()
+							local _, _, root = myCharacter()
+							local from = root and root.Position or workspace.CurrentCamera.CFrame.Position
+							local found = {}
+							for index, part in ipairs(workspace:GetDescendants()) do
+								if index % 4000 == 0 then
+									task.wait()
+									if tornado.serial ~= serial then return end
+								end
+								if part:IsA("BasePart") and not part.Anchored then table.insert(found, part) end
+							end
+							table.sort(found, function(left, right)
+								return (left.Position - from).Magnitude < (right.Position - from).Magnitude
+							end)
+							for _, part in ipairs(found) do
+								if tornado.serial ~= serial or tornado.count >= 150 then break end
+								if part.Parent then add(part) end
+							end
+							notify("Part Tornado", tornado.count == 0 and "No loose parts here to pull." or ("Pulling " .. tornado.count .. (tornado.count == 1 and " part" or " parts") .. " over to " .. menuModules.nameOf(target)), 3)
+						end)
+						tornado.added = workspace.DescendantAdded:Connect(function(part)
+							if part:IsA("BasePart") then task.defer(add, part) end
+						end)
+						tornado.loop = RunService.Heartbeat:Connect(function(deltaTime)
+							if not target.Parent then
+								notify("Part Tornado", menuModules.nameOf(target) .. " left the server")
+								return switchOff("Part Tornado")
+							end
+							local theirRoot = target.Character and getRoot(target.Character)
+							if not theirRoot then return end
+							-- Asking to be in charge of loose parts further away, where the executor allows it.
+							if sethidden then pcall(sethidden, localPlayer, "SimulationRadius", 1e9) end
+							local center = theirRoot.Position
+							local frame = math.max(deltaTime, 1 / 120)
+							for part, place in pairs(tornado.parts) do
+								if not part.Parent or part.Anchored then
+									tornado.parts[part] = nil
+									tornado.count -= 1
+								else
+									if not place.angle then
+										local outward = part.Position - center
+										place.angle = math.atan2(outward.Z, outward.X)
+										place.lift = math.random() * 8 - 2
+										place.gap = math.random() * 3
+									end
+									place.angle += deltaTime * featureSettings.trollTornadoSpeed * 0.5
+									local radius = featureSettings.trollTornadoRadius + place.gap
+									local goal = center + Vector3.new(math.cos(place.angle) * radius, featureSettings.trollTornadoHeight + place.lift, math.sin(place.angle) * radius)
+									local velocity = (goal - part.Position) / frame
+									if velocity.Magnitude > 150 then velocity = velocity.Unit * 150 end
+									pcall(function()
+										part.AssemblyLinearVelocity = velocity
+										part.AssemblyAngularVelocity = Vector3.new(0, 3, 0)
+									end)
+								end
+							end
+						end)
+					end
+					targetedSwitches["Part Tornado"] = setTornado
+					addQuickToggle(trollTabs.players, "Part Tornado", "Pull every loose part you can over to your target and swirl it round them like a tornado. Right-click for the size and speed", setTornado, "tornado", "boxes")
+				end
+
 				-- Only you can see: these change your own screen and nobody else's.
 				withIcon(trollTabs.screen, "CreateSection", { name = "Only you can see these" }, "eye", "monitor")
 				-- Disco Mode: a colour tint that cycles through the rainbow, with a flash on every beat.
@@ -19839,6 +19958,38 @@ if rayfieldLoaded and Rayfield then
 						})
 						echoCard.addHint("Longer makes it creepier: they'll look round and see you doing what they did ages ago.")
 						echoCard.refresh()
+					end
+					local tornadoCard = cardFor("Part Tornado")
+					if tornadoCard then
+						tornadoCard.addSectionLabel("TORNADO", "tornado")
+						tornadoCard.addSlider({
+							text = "Distance from them",
+							icon = { "ruler" },
+							min = 6, max = 40, step = 1,
+							get = function() return featureSettings.trollTornadoRadius end,
+							set = function(value) featureSettings.trollTornadoRadius = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs" end,
+						})
+						tornadoCard.addSlider({
+							text = "Spin speed",
+							icon = { "gauge" },
+							min = 1, max = 10, step = 0.5,
+							get = function() return featureSettings.trollTornadoSpeed end,
+							set = function(value) featureSettings.trollTornadoSpeed = value end,
+							commit = saveFeatureSettings,
+						})
+						tornadoCard.addSlider({
+							text = "Height",
+							icon = { "arrow-up-down" },
+							min = 0, max = 20, step = 1,
+							get = function() return featureSettings.trollTornadoHeight end,
+							set = function(value) featureSettings.trollTornadoHeight = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs" end,
+						})
+						tornadoCard.addHint("Up to 150 parts, nearest you first. Only loose parts your game lets you move will come, so in some games nothing does.")
+						tornadoCard.refresh()
 					end
 					local spinCard = cardFor("Spin")
 					if spinCard then
@@ -26367,7 +26518,8 @@ if rayfieldLoaded and Rayfield then
 				end
 				switches["Aimbot"] = aimbotState.enabled == true
 				switches["Keybind List"] = featureSettings.keybindList == true
-				return { version = 1, savedAt = os.time(), features = features, esp = esp, keys = keys, switches = switches }
+				-- Version 2: keys lists every key box, with "" for none (see applyConfig).
+				return { version = 2, savedAt = os.time(), features = features, esp = esp, keys = keys, switches = switches }
 			end
 
 			-- Puts a config's settings in place, and (withSwitches) turns switches on and off to match.
@@ -26410,11 +26562,23 @@ if rayfieldLoaded and Rayfield then
 					local boxes = {}
 					for _, entry in ipairs(quickToggles) do table.insert(boxes, { entry = entry, name = entry.name }) end
 					for _, action in ipairs(quickActions) do table.insert(boxes, { entry = action, name = "action:" .. action.name }) end
-					-- Keys the config doesn't mention (on switches and moves added since it was saved) stay
-					-- as they are, unless the config gives that key to something else.
+					-- Configs saved since every key box was listed ("" for no key) leave a box they don't
+					-- mention as it is, as it's on a switch or move added since, unless they give its key
+					-- to something else. Older configs only listed the keys that were set, so in those
+					-- a box that isn't listed has no key.
+					local complete = (tonumber(config.version) or 1) >= 2
+					if not complete then
+						for _, listed in pairs(config.keys) do
+							if listed == "" then
+								complete = true
+								break
+							end
+						end
+					end
 					local given = {}
 					for _, box in ipairs(boxes) do
 						local keyName = config.keys[box.name]
+						if keyName == nil and not complete then keyName = "" end
 						if keyName ~= nil then
 							local keyOk, keyCode = pcall(function() return Enum.KeyCode[keyName] end)
 							local usable = not box.entry.noKeybind and type(keyName) == "string" and keyOk and keyCode and not reservedKeys[keyCode]
@@ -31848,7 +32012,8 @@ if rayfieldLoaded and Rayfield then
 			listPadding.Parent = list
 
 			-- Buttons. Those that switch something on and off have isOn, and show the accent while on.
-			local tabs, tabPills, buttons = {}, {}, {}
+			-- settingPainters draw the settings (sliders, choices and switches) as they are now.
+			local tabs, tabPills, buttons, settingPainters = {}, {}, {}, {}
 			local function paint()
 				local theme = auxiliaryUiTheme
 				local player = shown.player
@@ -31862,6 +32027,7 @@ if rayfieldLoaded and Rayfield then
 					pill.BackgroundColor3 = selected and theme.Accent or theme.Inset
 					pill.TextColor3 = selected and theme.OnAccent or theme.SubText
 				end
+				for _, painter in ipairs(settingPainters) do painter() end
 			end
 			table.insert(auxiliaryUiThemeListeners, paint)
 			local function newTab(name, order)
@@ -31954,6 +32120,242 @@ if rayfieldLoaded and Rayfield then
 				return item
 			end
 
+			-- Settings, the same ones as each trick's settings card in the menu. area is a tab-like
+			-- { frame, order } they're drawn into.
+			local dragging = nil
+			local function addChoice(area, item)
+				local caption = makeText(area.frame, Enum.Font.Gotham, 12, "Text")
+				caption.LayoutOrder = nextIn(area)
+				caption.Size = UDim2.new(1, 0, 0, 16)
+				caption.Text = item.label
+				local cells = grid(area, #item.options == 4 and 2 or math.min(#item.options, 3))
+				local pills = {}
+				for _, option in ipairs(item.options) do
+					cells.count += 1
+					local pill = Instance.new("TextButton")
+					pill.LayoutOrder = cells.count
+					pill.AutoButtonColor = false
+					pill.BorderSizePixel = 0
+					pill.Font = Enum.Font.GothamMedium
+					pill.Text = option
+					pill.TextSize = 12
+					pill.TextTruncate = Enum.TextTruncate.AtEnd
+					addCorner(pill, UDim.new(0, 8))
+					pill.Parent = cells.frame
+					pill.Activated:Connect(function()
+						item.set(option)
+						paint()
+					end)
+					pills[option] = pill
+				end
+				table.insert(settingPainters, function()
+					local theme = auxiliaryUiTheme
+					local current = item.get()
+					for option, pill in pairs(pills) do
+						local selected = option == current
+						pill.BackgroundColor3 = selected and theme.Accent or theme.Card
+						pill.TextColor3 = selected and theme.OnAccent or theme.SubText
+					end
+				end)
+			end
+			-- The value at a point along a slider's track, on its steps.
+			local function sliderValue(item, x, track)
+				local fraction = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
+				local value = item.min + math.floor(fraction * (item.max - item.min) / item.step + 0.5) * item.step
+				return math.clamp(tonumber(string.format("%.4f", value)), item.min, item.max)
+			end
+			local function addSlider(area, item)
+				local holder = Instance.new("Frame")
+				holder.LayoutOrder = nextIn(area)
+				holder.Size = UDim2.new(1, 0, 0, 40)
+				holder.BackgroundTransparency = 1
+				holder.Parent = area.frame
+				local caption = makeText(holder, Enum.Font.Gotham, 12, "Text")
+				caption.Size = UDim2.new(1, -90, 0, 18)
+				caption.Text = item.label
+				local valueLabel = makeText(holder, Enum.Font.GothamMedium, 12, "SubText")
+				valueLabel.AnchorPoint = Vector2.new(1, 0)
+				valueLabel.Position = UDim2.fromScale(1, 0)
+				valueLabel.Size = UDim2.fromOffset(90, 18)
+				valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+				local track = Instance.new("Frame")
+				track.Position = UDim2.fromOffset(0, 26)
+				track.Size = UDim2.new(1, 0, 0, 6)
+				track.BorderSizePixel = 0
+				bindAuxiliaryUiColor(track, "BackgroundColor3", "Inset")
+				addCorner(track, UDim.new(1, 0))
+				track.Parent = holder
+				local fill = Instance.new("Frame")
+				fill.BorderSizePixel = 0
+				bindAuxiliaryUiColor(fill, "BackgroundColor3", "Accent")
+				addCorner(fill, UDim.new(1, 0))
+				fill.Parent = track
+				local knob = Instance.new("Frame")
+				knob.AnchorPoint = Vector2.new(0.5, 0.5)
+				knob.Size = UDim2.fromOffset(12, 12)
+				knob.BorderSizePixel = 0
+				knob.BackgroundColor3 = Color3.new(1, 1, 1)
+				knob.ZIndex = 2
+				addCorner(knob, UDim.new(1, 0))
+				local knobStroke = Instance.new("UIStroke")
+				knobStroke.Thickness = 2
+				bindAuxiliaryUiColor(knobStroke, "Color", "Accent")
+				knobStroke.Parent = knob
+				knob.Parent = track
+				-- A taller see-through strip over the track, so it's easy to grab.
+				local grab = Instance.new("TextButton")
+				grab.Position = UDim2.fromOffset(-6, 18)
+				grab.Size = UDim2.new(1, 12, 0, 22)
+				grab.BackgroundTransparency = 1
+				grab.AutoButtonColor = false
+				grab.Text = ""
+				grab.ZIndex = 3
+				grab.Parent = holder
+				grab.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+						dragging = { item = item, track = track }
+						item.set(sliderValue(item, input.Position.X, track))
+						paint()
+					end
+				end)
+				table.insert(settingPainters, function()
+					local current = math.clamp(tonumber(item.get()) or item.min, item.min, item.max)
+					local fraction = (current - item.min) / (item.max - item.min)
+					fill.Size = UDim2.fromScale(fraction, 1)
+					knob.Position = UDim2.fromScale(fraction, 0.5)
+					valueLabel.Text = item.format(current)
+				end)
+			end
+			local function addSwitch(area, item)
+				local cell = Instance.new("TextButton")
+				cell.LayoutOrder = nextIn(area)
+				cell.Size = UDim2.new(1, 0, 0, 30)
+				cell.AutoButtonColor = false
+				cell.BorderSizePixel = 0
+				cell.Text = ""
+				bindAuxiliaryUiColor(cell, "BackgroundColor3", "Inset")
+				addCorner(cell, UDim.new(0, 8))
+				cell.Parent = area.frame
+				local caption = makeText(cell, Enum.Font.Gotham, 12, "Text")
+				caption.Position = UDim2.fromOffset(10, 0)
+				caption.Size = UDim2.new(1, -60, 1, 0)
+				caption.Text = item.label
+				local track = Instance.new("Frame")
+				track.AnchorPoint = Vector2.new(1, 0.5)
+				track.Position = UDim2.new(1, -8, 0.5, 0)
+				track.Size = UDim2.fromOffset(34, 18)
+				track.BorderSizePixel = 0
+				addCorner(track, UDim.new(1, 0))
+				track.Parent = cell
+				local knob = Instance.new("Frame")
+				knob.AnchorPoint = Vector2.new(0, 0.5)
+				knob.Size = UDim2.fromOffset(14, 14)
+				knob.BorderSizePixel = 0
+				addCorner(knob, UDim.new(1, 0))
+				knob.Parent = track
+				cell.Activated:Connect(function()
+					item.set(not item.get())
+					paint()
+				end)
+				table.insert(settingPainters, function()
+					local theme = auxiliaryUiTheme
+					local on = item.get() == true
+					track.BackgroundColor3 = on and theme.Accent or theme.Card
+					knob.BackgroundColor3 = on and Color3.new(1, 1, 1) or theme.SubText
+					knob.Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+				end)
+			end
+			-- Dragging a slider, wherever the pointer goes; the setting is saved once it's let go.
+			table.insert(panel.connections, UserInputService.InputChanged:Connect(function(input)
+				if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+					dragging.item.set(sliderValue(dragging.item, input.Position.X, dragging.track))
+					paint()
+				end
+			end))
+			table.insert(panel.connections, UserInputService.InputEnded:Connect(function(input)
+				if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+					dragging = nil
+					saveFeatureSettings()
+				end
+			end))
+			-- A tab's settings: a pill for each trick, and the picked one's settings under them. Returns a
+			-- function that shows a trick's settings (when it's switched on, say).
+			local function settingsSection(tab, defs)
+				sectionLabel(tab, "SETTINGS")
+				local pills = grid(tab, 3)
+				local areas, picked = {}, defs[1].name
+				for _, def in ipairs(defs) do
+					local frame = Instance.new("Frame")
+					frame.LayoutOrder = nextIn(tab)
+					frame.Size = UDim2.fromScale(1, 0)
+					frame.AutomaticSize = Enum.AutomaticSize.Y
+					frame.BackgroundTransparency = 1
+					frame.Visible = def.name == picked
+					frame.Parent = tab.frame
+					local layout = Instance.new("UIListLayout")
+					layout.Padding = UDim.new(0, 6)
+					layout.SortOrder = Enum.SortOrder.LayoutOrder
+					layout.Parent = frame
+					local area = { frame = frame, order = 0 }
+					for _, item in ipairs(def.items) do
+						if item.kind == "choice" then
+							addChoice(area, item)
+						elseif item.kind == "slider" then
+							addSlider(area, item)
+						else
+							addSwitch(area, item)
+						end
+					end
+					areas[def.name] = frame
+				end
+				local function show(name)
+					if not areas[name] then return end
+					picked = name
+					for areaName, frame in pairs(areas) do frame.Visible = areaName == name end
+					paint()
+				end
+				for _, def in ipairs(defs) do
+					button(pills, def.name, function() show(def.name) end, function() return picked == def.name end)
+				end
+				return show
+			end
+			-- The settings themselves, saved in featureSettings like the cards save them.
+			local function formatFor(step, unit)
+				return function(value)
+					local text = step < 0.1 and string.format("%.2f", value) or step < 1 and string.format("%.1f", value) or tostring(math.floor(value + 0.5))
+					return text .. (unit or "")
+				end
+			end
+			local function choiceOf(label, key, options)
+				return {
+					kind = "choice", label = label, options = options,
+					get = function() return featureSettings[key] end,
+					set = function(value)
+						featureSettings[key] = value
+						saveFeatureSettings()
+					end,
+				}
+			end
+			-- apply, when given, sets the value itself (for settings that take effect straight away).
+			local function sliderOf(label, key, min, max, step, unit, apply)
+				return {
+					kind = "slider", label = label, min = min, max = max, step = step, format = formatFor(step, unit),
+					get = function() return featureSettings[key] end,
+					set = apply or function(value) featureSettings[key] = value end,
+				}
+			end
+			local function switchOf(label, key)
+				return {
+					kind = "switch", label = label,
+					get = function() return featureSettings[key] == true end,
+					set = function(on)
+						featureSettings[key] = on
+						saveFeatureSettings()
+					end,
+				}
+			end
+			local showPrankSettings, showTrickSettings = nil, nil
+
 			-- Makes player the Player Pranks target, if they aren't already.
 			local function isTarget(player)
 				return menuModules.selectedPlayerName ~= nil and menuModules.selectedPlayerName() == player.Name
@@ -31963,7 +32365,8 @@ if rayfieldLoaded and Rayfield then
 					menuModules.selectPlayer(player.Name, menuModules.labelOf(player, "  "))
 				end
 			end
-			-- A Player Pranks trick, on them: on makes them your target first; on for them, it goes off.
+			-- A Player Pranks trick, on them: on makes them your target first, and shows its settings; on
+			-- for them, it goes off.
 			local function prankSwitch(cells, name)
 				button(cells, name, function(player)
 					local entry = quickToggleByName[name]
@@ -31973,17 +32376,20 @@ if rayfieldLoaded and Rayfield then
 					else
 						makeTarget(player)
 						setQuickToggle(entry, true)
+						if showPrankSettings then showPrankSettings(name) end
 					end
 				end, function(player)
 					local entry = quickToggleByName[name]
 					return entry ~= nil and entry.state and isTarget(player)
 				end)
 			end
-			-- One of your own switches.
+			-- One of your own switches; switching it on shows its settings.
 			local function selfSwitch(cells, name)
 				button(cells, name, function()
 					local entry = quickToggleByName[name]
-					if entry then setQuickToggle(entry, not entry.state) end
+					if not entry then return end
+					setQuickToggle(entry, not entry.state)
+					if entry.state and showTrickSettings then showTrickSettings(name) end
 				end, function()
 					local entry = quickToggleByName[name]
 					return entry ~= nil and entry.state
@@ -32057,7 +32463,7 @@ if rayfieldLoaded and Rayfield then
 			end
 
 			-- Pranks: the Player Pranks tricks, on them.
-			local prankNames = { "Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare", "Glide To" }
+			local prankNames = { "Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare", "Glide To", "Part Tornado" }
 			local pranks = newTab("Pranks", 1)
 			sectionLabel(pranks, "ON THEM  ·  CLICK AGAIN TO STOP")
 			local prankCells = grid(pranks, 2)
@@ -32071,7 +32477,39 @@ if rayfieldLoaded and Rayfield then
 					if entry and entry.state then setQuickToggle(entry, false) end
 				end
 			end)
-			hint(pranks, "These make them your Player Pranks target. Right-click a trick on the Player Pranks tab for its settings.")
+			showPrankSettings = settingsSection(pranks, {
+				{ name = "Orbit", items = {
+					sliderOf("Speed", "trollOrbitSpeed", 1, 10, 0.5),
+					sliderOf("Distance", "trollOrbitDistance", 3, 25, 1, " studs"),
+					sliderOf("Height", "trollOrbitHeight", -5, 15, 1, " studs"),
+				} },
+				{ name = "Headsit", items = { choiceOf("Sit on their", "trollSitSpot", { "Head", "Back" }) } },
+				{ name = "Copycat", items = { choiceOf("Follow them", "trollCopyFollow", { "Off", "Behind", "Beside" }) } },
+				{ name = "Bow Down", items = {
+					choiceOf("Where", "trollBowSpot", { "In front", "Behind", "Around them" }),
+					sliderOf("Speed", "trollBowSpeed", 1, 10, 0.5),
+					sliderOf("How low", "trollBowDepth", 20, 90, 5, "°"),
+					sliderOf("Distance", "trollBowDistance", 2, 15, 0.5, " studs"),
+					switchOf("Kneel down", "trollBowKneel"),
+				} },
+				{ name = "Bodyguard", items = {
+					choiceOf("Your post", "trollGuardSide", { "Right", "Left", "Behind", "In front" }),
+					sliderOf("Step in within", "trollGuardRange", 4, 40, 1, " studs"),
+				} },
+				{ name = "Nothing Personal", items = {
+					sliderOf("Distance behind them", "trollBlinkDistance", 2, 8, 0.5, " studs"),
+					sliderOf("Time between blinks", "trollBlinkCooldown", 0.1, 2, 0.05, " s"),
+				} },
+				{ name = "Hype Man", items = { switchOf("Cheer when they jump", "trollHypeJump"), switchOf("Cheer when they do an emote", "trollHypeEmote") } },
+				{ name = "Echo", items = { sliderOf("How far behind", "trollEchoDelay", 0.5, 5, 0.5, " s") } },
+				{ name = "Glide To", items = { sliderOf("Speed", "trollGlideSpeed", 10, 200, 5, " studs/s") } },
+				{ name = "Part Tornado", items = {
+					sliderOf("Distance from them", "trollTornadoRadius", 6, 40, 1, " studs"),
+					sliderOf("Spin speed", "trollTornadoSpeed", 1, 10, 0.5),
+					sliderOf("Height", "trollTornadoHeight", 0, 20, 1, " studs"),
+				} },
+			})
+			hint(pranks, "These make them your Player Pranks target. Switching one on shows its settings; they're the same settings as right-clicking it in the menu.")
 
 			-- Emotes: you turn to face them, then play it once.
 			local emotes = newTab("Emotes", 2)
@@ -32105,11 +32543,34 @@ if rayfieldLoaded and Rayfield then
 			local bodyCells = grid(moves, 3)
 			for _, name in ipairs({
 				"Emote", "Fake Dead", "Ragdoll", "Fake Lag", "Vibrate", "Spin", "Statue", "Handstand", "Crawl", "Helicopter",
-				"Superman", "Marble Ball", "Moonwalk", "Zoomies", "Bunny Hop", "Wall Walk",
+				"Superman", "Marble Ball", "Roomba", "Moonwalk", "Zoomies", "Bunny Hop", "Wall Walk",
 			}) do
 				if quickToggleByName[name] then selfSwitch(bodyCells, name) end
 			end
-			hint(moves, "Emote loops the emote picked on the Emotes tab.")
+			showTrickSettings = settingsSection(moves, {
+				{ name = "Fake Lag", items = {
+					choiceOf("Style", "trollLagStyle", { "Stutter", "Rubber-band", "Glitch", "Spikes", "Mixed" }),
+					sliderOf("Strength", "trollLagStrength", 1, 10, 1),
+					switchOf("Only while moving", "trollLagMoving"),
+				} },
+				{ name = "Fake Dead", items = { choiceOf("Pose", "trollDeadPose", { "On your back", "Face down" }) } },
+				{ name = "Spin", items = {
+					sliderOf("Speed", "trollSpinSpeed", 1, 100, 1, nil, function(value)
+						if trolling.setSpinSpeed then trolling.setSpinSpeed(value) end
+					end),
+				} },
+				{ name = "Crawl", items = { choiceOf("Style", "trollCrawlStyle", { "Worm", "Belly Slide", "Log Roll" }) } },
+				{ name = "Helicopter", items = { sliderOf("Hover height", "trollHeliHeight", 3, 30, 1, " studs") } },
+				{ name = "Marble Ball", items = {
+					sliderOf("Speed", "trollMarbleSpeed", 20, 300, 5),
+					sliderOf("Jump", "trollMarbleJump", 0, 250, 5),
+					sliderOf("Ball size", "trollMarbleSize", 3, 10, 0.5, " studs", function(value)
+						if trolling.setMarbleSize then trolling.setMarbleSize(value) end
+					end),
+				} },
+				{ name = "Roomba", items = { sliderOf("Speed", "trollRoombaSpeed", 4, 30, 1, " studs/s") } },
+			})
+			hint(moves, "Emote loops the emote picked on the Emotes tab. Switching a trick on shows its settings.")
 
 			-- Tools: getting to them, watching them, and about them.
 			local tools = newTab("Tools", 4)
@@ -32207,16 +32668,21 @@ if rayfieldLoaded and Rayfield then
 					shown.enabled = on
 					refresh()
 				end,
+				-- Brings it up straight away (for Shift+click) rather than at the next check.
+				refresh = refresh,
 			}
 		end)
 
 		------------------------------------------------------------------------------------------
-		-- Ctrl+Click Select: hold Ctrl and click a player (or near one) to make them your target, for the
-		-- Player Pranks tricks, the Players tab and the commands. A flash shows who you picked. While you
-		-- spectate, it watches them instead, so the Troll Panel follows.
+		-- Ctrl+Click Select and Shift+click. Hold Ctrl and click a player (or near one) to make them your
+		-- target, for the Player Pranks tricks, the Players tab and the commands; while you spectate, it
+		-- watches them instead, so the Troll Panel follows. Hold Shift and click someone to spectate them,
+		-- which brings up their Troll Panel (while the Troll Panel switch is on). A flash shows who you
+		-- picked.
 		safeBuild("Ctrl+Click Select", function()
 			local localPlayer = Players.LocalPlayer
-			local clicking = { connection = nil }
+			-- ctrl: whether the Ctrl+Click Select switch is on.
+			local clicking = { ctrl = false }
 			local clickParams = RaycastParams.new()
 			clickParams.FilterType = Enum.RaycastFilterType.Exclude
 			-- The player at a point on the screen: the one whose character is under it, or else whoever's
@@ -32258,28 +32724,38 @@ if rayfieldLoaded and Rayfield then
 				TweenService:Create(highlight, TweenInfo.new(0.9), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
 				task.delay(1, function() highlight:Destroy() end)
 			end
-			local function setEnabled(on)
-				if clicking.connection then
-					clicking.connection:Disconnect()
-					clicking.connection = nil
-				end
-				if not on then return end
-				clicking.connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-					if input.UserInputType ~= Enum.UserInputType.MouseButton1 or gameProcessed then return end
-					if not (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)) then return end
-					if UserInputService:GetFocusedTextBox() or pointerOverMenu() then return end
-					local player = playerAt(UserInputService:GetMouseLocation())
-					if not player then return end
-					if menuModules.selectPlayer then menuModules.selectPlayer(player.Name, menuModules.labelOf(player, "  ")) end
-					flash(player)
-					local watching = typeof(viewing) == "Instance" and viewing:IsA("Player") and viewing ~= localPlayer
-					if watching and viewing ~= player and menuModules.spectateBar and menuModules.spectateBar.watch then
-						menuModules.spectateBar.watch(player)
-					end
-					notify("Target", menuModules.nameOf(player) .. " is your target", 2)
-				end)
+			local function held(left, right)
+				return UserInputService:IsKeyDown(left) or UserInputService:IsKeyDown(right)
 			end
-			menuModules.ctrlClickSelect = { setEnabled = setEnabled }
+			-- One listener for both, kept in the shared environment so running the script again drops the
+			-- old one.
+			if sharedEnv.SpreadCheeksPlayerClicks then
+				pcall(function() sharedEnv.SpreadCheeksPlayerClicks:Disconnect() end)
+			end
+			sharedEnv.SpreadCheeksPlayerClicks = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if input.UserInputType ~= Enum.UserInputType.MouseButton1 or gameProcessed then return end
+				local ctrl = clicking.ctrl and held(Enum.KeyCode.LeftControl, Enum.KeyCode.RightControl)
+				local shift = not ctrl and featureSettings.trollPanel and held(Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift)
+				if not ctrl and not shift then return end
+				if UserInputService:GetFocusedTextBox() or pointerOverMenu() then return end
+				local player = playerAt(UserInputService:GetMouseLocation())
+				if not player then return end
+				if menuModules.selectPlayer then menuModules.selectPlayer(player.Name, menuModules.labelOf(player, "  ")) end
+				flash(player)
+				local canWatch = menuModules.spectateBar and menuModules.spectateBar.watch
+				if shift then
+					-- Watching them is what brings their Troll Panel up.
+					if viewing ~= player and canWatch then menuModules.spectateBar.watch(player) end
+					if menuModules.trollPanel and menuModules.trollPanel.refresh then menuModules.trollPanel.refresh() end
+					return
+				end
+				local watching = typeof(viewing) == "Instance" and viewing:IsA("Player") and viewing ~= localPlayer
+				if watching and viewing ~= player and canWatch then menuModules.spectateBar.watch(player) end
+				notify("Target", menuModules.nameOf(player) .. " is your target", 2)
+			end)
+			menuModules.ctrlClickSelect = {
+				setEnabled = function(on) clicking.ctrl = on end,
+			}
 		end)
 
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
@@ -33260,6 +33736,12 @@ if rayfieldLoaded and Rayfield then
 				if chooseTarget(args, speaker, "Stare") then setSwitch("Stare", true) end
 			end)
 			addcmd("unstaredown", {}, function() setSwitch("Stare", false) end)
+			describe("parttornado / tpparts [player]", "Pull every loose part you can over to a player and swirl it round them (your Player Pranks target if you leave the name out)")
+			describe("unparttornado / untpparts", "Drops the parts where they are")
+			addcmd("parttornado", { "tpparts" }, function(args, speaker)
+				if chooseTarget(args, speaker, "Part Tornado") then setSwitch("Part Tornado", true) end
+			end)
+			addcmd("unparttornado", { "untpparts" }, function() setSwitch("Part Tornado", false) end)
 
 			-- Spectating.
 			describe("spectatetarget", "Watches your Player Pranks target, with the Troll Panel of pranks just for them")
@@ -33268,7 +33750,7 @@ if rayfieldLoaded and Rayfield then
 				if action then action.run() end
 			end)
 			addSwitchCommands("Troll Panel", { { "trollpanel" }, { "untrollpanel" }, "toggletrollpanel" },
-				"While you spectate someone, shows a panel of pranks and tools just for them", "Stops the panel showing", "the Troll Panel")
+				"While you spectate someone (Shift+click them to), shows a panel of pranks and tools just for them", "Stops the panel showing, and Shift+click opening it", "the Troll Panel")
 			addSwitchCommands("Ctrl+Click Select", { { "ctrlclickselect" }, { "unctrlclickselect" }, "togglectrlclickselect" },
 				"Hold Ctrl and click a player to make them your target", "Ctrl+click does nothing again")
 
