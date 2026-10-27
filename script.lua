@@ -14759,6 +14759,17 @@ if rayfieldLoaded and Rayfield then
 			trollPanel = true, trollPanelX = -1, trollPanelY = -1, ctrlClickSelect = true,
 			-- Part Tornado: how far from your target the parts swirl, how fast, and how high (studs).
 			trollTornadoRadius = 12, trollTornadoSpeed = 4, trollTornadoHeight = 3,
+			-- The Parts tab: the tornado's shape ("Ring", "Sphere", "Helix", "Spiral" or "Wave"); the
+			-- halo's size, speed and height (studs); Part Art's picture ("Heart", "Smiley" or "Star"),
+			-- size and height; the snake's length (parts) and gap; Telekinesis's key; how many pets and
+			-- how far behind; the carpet's speed; how many stairs and their rise; the shield's shape,
+			-- size and speed; how high Zero Gravity floats parts and how far it reaches; the fountain's
+			-- power and how many; the Blender's speed and reach; and how far Show Movable Parts looks.
+			trollTornadoShape = "Ring", partHaloRadius = 2.5, partHaloSpeed = 3, partHaloHeight = 1.5,
+			partArtShape = "Heart", partArtSize = 10, partArtHeight = 8, partSnakeLength = 20, partSnakeGap = 2.5,
+			partGrabKey = "T", partPetCount = 6, partPetDistance = 5, partCarpetSpeed = 40, partStairCount = 6, partStairRise = 1,
+			partShieldShape = "Ring", partShieldRadius = 8, partShieldSpeed = 4, partFloatHeight = 15, partFloatRange = 120,
+			partFountainPower = 50, partFountainCount = 30, partBlenderSpeed = 20, partBlenderRange = 120, partShowRange = 150,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14776,6 +14787,11 @@ if rayfieldLoaded and Rayfield then
 			aimbotPredictTime = { 0, 0.5 }, hitboxSize = { 2, 25 }, zoomFov = { 5, 60 }, timeOfDayHour = { 0, 24 }, warnHealthAt = { 10, 60 },
 			trollLagStrength = { 1, 10 }, trollEchoDelay = { 0.5, 5 }, speedHackSpeed = { 16, 300 }, clickerCps = { 1, 30 }, objectEspRange = { 50, 3000 },
 			trollTornadoRadius = { 6, 40 }, trollTornadoSpeed = { 1, 10 }, trollTornadoHeight = { 0, 20 },
+			partHaloRadius = { 1.5, 5 }, partHaloSpeed = { 1, 10 }, partHaloHeight = { 0.5, 5 }, partArtSize = { 4, 25 }, partArtHeight = { 2, 30 },
+			partSnakeLength = { 5, 40 }, partSnakeGap = { 1.5, 6 }, partPetCount = { 1, 15 }, partPetDistance = { 3, 12 }, partCarpetSpeed = { 10, 120 },
+			partStairCount = { 3, 12 }, partStairRise = { 0.5, 2 }, partShieldRadius = { 5, 25 }, partShieldSpeed = { 1, 10 },
+			partFloatHeight = { 5, 40 }, partFloatRange = { 30, 400 }, partFountainPower = { 20, 120 }, partFountainCount = { 5, 60 },
+			partBlenderSpeed = { 5, 50 }, partBlenderRange = { 30, 400 }, partShowRange = { 50, 500 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15368,6 +15384,7 @@ if rayfieldLoaded and Rayfield then
 		trollTabs.walks = withIcon(window, "CreateTab", { name = "Walks & Moves" }, "footprints")
 		trollTabs.tricks = withIcon(window, "CreateTab", { name = "Body Tricks" }, "person-standing", "accessibility")
 		trollTabs.players = withIcon(window, "CreateTab", { name = "Player Pranks" }, "drama", "laugh", "users-round")
+		trollTabs.parts = withIcon(window, "CreateTab", { name = "Parts" }, "boxes", "tornado")
 		trollTabs.screen = withIcon(window, "CreateTab", { name = "Screen Effects" }, "monitor", "eye")
 		-- The first of them, which the trolling command opens.
 		local trollTab = trollTabs.emotes
@@ -19294,120 +19311,719 @@ if rayfieldLoaded and Rayfield then
 					addQuickToggle(trollTabs.players, "Stare", "Keep staring right at your target wherever they go, while you walk about as normal", setStare, "eye", "scan-eye")
 				end
 
-				-- Part Tornado: every loose part you're able to move is pulled over to your target and swirled
-				-- round them like a tornado, at the distance in its settings card, so it circles them rather
-				-- than landing on them. Each part goes round from the side it came in on, so none fly through
-				-- them. Switching it off drops the parts where they are. Only parts your game lets your client
-				-- move can be pulled (loose ones near you, in most games), so some games have none.
+				-- Parts (the Parts tab): loose parts your game lets you move, pulled into tricks and shapes.
+				-- One parts trick has the parts at a time, so switching one on switches the others off. Each
+				-- trick says where every part should be, and the parts are moved there by their velocity,
+				-- which everyone sees as long as your client is in charge of them (in most games, loose parts
+				-- near you). Parts keep a few studs away from every other player, so nobody gets hit or boxed
+				-- in. Built in a function of its own, as it has a lot of parts of its own.
 				do
-					-- parts[part] = where it is in the swirl: its angle round them, and its own height and gap.
-					local tornado = { loop = nil, parts = {}, count = 0, added = nil, serial = 0 }
-					local function movable(part)
-						if not part:IsA("BasePart") or part.Anchored or part.AssemblyRootPart ~= part then return false end
-						if part.AssemblyMass > 500 or part:IsGrounded() then return false end
-						-- Nothing that's part of someone (a player or a character the game runs).
-						local model = part:FindFirstAncestorWhichIsA("Model")
-						while model do
-							if model:FindFirstChildOfClass("Humanoid") then return false end
-							model = model:FindFirstAncestorWhichIsA("Model")
+					local partsBuilt, partsProblem = pcall(function()
+						trollTabs.parts:CreateText({
+							text = "These move the loose parts your game lets you move (usually ones near you), and everyone sees them. One at a time. Parts keep a few studs away from every player, so nobody gets hit or boxed in. Show Movable Parts shows which parts they can use.",
+						})
+						local partNames = {
+							"Part Tornado", "Part Halo", "Part Art", "Part Snake", "Telekinesis", "Part Pets", "Magic Carpet",
+							"Part Stairs", "Part Shield", "Zero Gravity", "Part Fountain", "Blender",
+						}
+						for index, first in ipairs(partNames) do
+							for later = index + 1, #partNames do clash(first, partNames[later]) end
 						end
-						return true
-					end
-					local function add(part)
-						if tornado.parts[part] or tornado.count >= 150 or not movable(part) then return end
-						tornado.parts[part] = {}
-						tornado.count += 1
-					end
-					local function stopTornado()
-						tornado.serial += 1
-						if tornado.loop then
-							tornado.loop:Disconnect()
-							tornado.loop = nil
+						-- The carpet carries you about, so the tricks that move you clash with it too.
+						for _, takeover in ipairs(takeoverSwitches) do clash("Magic Carpet", takeover) end
+
+						-- items: { part, and whatever its trick keeps on it } for each part it has; has: the
+						-- same parts as a set.
+						local engine = { items = {}, has = {}, limit = 0, mode = nil, loop = nil, added = nil, serial = 0 }
+						local function movable(part)
+							if not part:IsA("BasePart") or part.Anchored or part.AssemblyRootPart ~= part then return false end
+							if part.AssemblyMass > 500 or part:IsGrounded() then return false end
+							-- Nothing that's part of a character, a player's or one the game runs.
+							local model = part:FindFirstAncestorWhichIsA("Model")
+							while model do
+								if model:FindFirstChildOfClass("Humanoid") then return false end
+								model = model:FindFirstAncestorWhichIsA("Model")
+							end
+							return true
 						end
-						if tornado.added then
-							tornado.added:Disconnect()
-							tornado.added = nil
+						local function addPart(part)
+							if engine.has[part] or #engine.items >= engine.limit or not movable(part) then return end
+							engine.has[part] = true
+							table.insert(engine.items, { part = part })
 						end
-						-- Dropped where they are.
-						for part in pairs(tornado.parts) do
-							if part.Parent and not part.Anchored then
-								pcall(function()
-									part.AssemblyLinearVelocity = Vector3.zero
-									part.AssemblyAngularVelocity = Vector3.zero
-								end)
+						-- Lets go of the parts, dropped where they are.
+						local function stopParts()
+							engine.serial += 1
+							if engine.loop then
+								engine.loop:Disconnect()
+								engine.loop = nil
 							end
-						end
-						table.clear(tornado.parts)
-						tornado.count = 0
-					end
-					local function setTornado(enabled)
-						stopTornado()
-						if not enabled then return end
-						local target = targetFor("Part Tornado")
-						if not target then return false end
-						local serial = tornado.serial
-						-- The parts nearest you first, as those are the ones your client is most likely to be
-						-- in charge of; a few thousand looked at a frame, so it doesn't freeze the game.
-						task.spawn(function()
-							local _, _, root = myCharacter()
-							local from = root and root.Position or workspace.CurrentCamera.CFrame.Position
-							local found = {}
-							for index, part in ipairs(workspace:GetDescendants()) do
-								if index % 4000 == 0 then
-									task.wait()
-									if tornado.serial ~= serial then return end
-								end
-								if part:IsA("BasePart") and not part.Anchored then table.insert(found, part) end
+							if engine.added then
+								engine.added:Disconnect()
+								engine.added = nil
 							end
-							table.sort(found, function(left, right)
-								return (left.Position - from).Magnitude < (right.Position - from).Magnitude
-							end)
-							for _, part in ipairs(found) do
-								if tornado.serial ~= serial or tornado.count >= 150 then break end
-								if part.Parent then add(part) end
-							end
-							notify("Part Tornado", tornado.count == 0 and "No loose parts here to pull." or ("Pulling " .. tornado.count .. (tornado.count == 1 and " part" or " parts") .. " over to " .. menuModules.nameOf(target)), 3)
-						end)
-						tornado.added = workspace.DescendantAdded:Connect(function(part)
-							if part:IsA("BasePart") then task.defer(add, part) end
-						end)
-						tornado.loop = RunService.Heartbeat:Connect(function(deltaTime)
-							if not target.Parent then
-								notify("Part Tornado", menuModules.nameOf(target) .. " left the server")
-								return switchOff("Part Tornado")
-							end
-							local theirRoot = target.Character and getRoot(target.Character)
-							if not theirRoot then return end
-							-- Asking to be in charge of loose parts further away, where the executor allows it.
-							if sethidden then pcall(sethidden, localPlayer, "SimulationRadius", 1e9) end
-							local center = theirRoot.Position
-							local frame = math.max(deltaTime, 1 / 120)
-							for part, place in pairs(tornado.parts) do
-								if not part.Parent or part.Anchored then
-									tornado.parts[part] = nil
-									tornado.count -= 1
-								else
-									if not place.angle then
-										local outward = part.Position - center
-										place.angle = math.atan2(outward.Z, outward.X)
-										place.lift = math.random() * 8 - 2
-										place.gap = math.random() * 3
-									end
-									place.angle += deltaTime * featureSettings.trollTornadoSpeed * 0.5
-									local radius = featureSettings.trollTornadoRadius + place.gap
-									local goal = center + Vector3.new(math.cos(place.angle) * radius, featureSettings.trollTornadoHeight + place.lift, math.sin(place.angle) * radius)
-									local velocity = (goal - part.Position) / frame
-									if velocity.Magnitude > 150 then velocity = velocity.Unit * 150 end
+							for _, item in ipairs(engine.items) do
+								local part = item.part
+								if part.Parent and not part.Anchored then
 									pcall(function()
-										part.AssemblyLinearVelocity = velocity
-										part.AssemblyAngularVelocity = Vector3.new(0, 3, 0)
+										part.AssemblyLinearVelocity = Vector3.zero
+										part.AssemblyAngularVelocity = Vector3.zero
 									end)
 								end
 							end
+							table.clear(engine.items)
+							table.clear(engine.has)
+							engine.mode = nil
+						end
+						-- Where every other player is, to keep parts away from them.
+						local function otherRoots()
+							local roots = {}
+							for _, player in ipairs(Players:GetPlayers()) do
+								local root = player ~= localPlayer and player.Character and getRoot(player.Character)
+								if root then table.insert(roots, root.Position) end
+							end
+							return roots
+						end
+						-- velocity, unless the part is within radius of someone: then out and away from them.
+						local function keepClear(part, velocity, roots, radius)
+							for _, position in ipairs(roots) do
+								local away = part.Position - position
+								if away.Magnitude < radius then
+									return (away.Magnitude > 0.1 and away.Unit or Vector3.yAxis) * 30 + Vector3.new(0, 15, 0)
+								end
+							end
+							return velocity
+						end
+						-- Starts a parts trick, from its mode:
+						--   limit: how many parts at most, nearest you first (or lowest score(part, distance));
+						--   range(): only parts that close to you;
+						--   frame(now, deltaTime): set up each frame, returning false to skip it;
+						--   place(item, index, count, now, deltaTime, mode): where a part goes, or nil to leave
+						--     it be (item.velocity, if set, is used as it is, and item.spin spins it);
+						--   orient(item, mode): turns a part; speed: the fastest parts move (studs a second);
+						--   clear: how far parts keep from players; found(count): how many parts it got.
+						local function startParts(mode)
+							stopParts()
+							engine.mode = mode
+							engine.limit = mode.limit or 150
+							local serial = engine.serial
+							local _, _, root = myCharacter()
+							local from = root and root.Position or workspace.CurrentCamera.CFrame.Position
+							local range = mode.range and mode.range() or math.huge
+							-- The map a few thousand at a time, so starting doesn't freeze the game.
+							task.spawn(function()
+								local found = {}
+								for index, part in ipairs(workspace:GetDescendants()) do
+									if index % 4000 == 0 then
+										task.wait()
+										if engine.serial ~= serial then return end
+									end
+									if part:IsA("BasePart") and not part.Anchored then
+										local distance = (part.Position - from).Magnitude
+										if distance <= range then
+											table.insert(found, { part = part, score = mode.score and mode.score(part, distance) or distance })
+										end
+									end
+								end
+								table.sort(found, function(left, right) return left.score < right.score end)
+								for _, entry in ipairs(found) do
+									if engine.serial ~= serial or #engine.items >= engine.limit then break end
+									if entry.part.Parent then addPart(entry.part) end
+								end
+								if engine.serial == serial and mode.found then mode.found(#engine.items) end
+							end)
+							engine.added = workspace.DescendantAdded:Connect(function(part)
+								if not part:IsA("BasePart") then return end
+								task.defer(function()
+									if engine.serial ~= serial or not part.Parent then return end
+									local _, _, myRoot = myCharacter()
+									if mode.range and (not myRoot or (part.Position - myRoot.Position).Magnitude > mode.range()) then return end
+									addPart(part)
+								end)
+							end)
+							engine.loop = RunService.Heartbeat:Connect(function(deltaTime)
+								-- Asking to be in charge of loose parts further away, where the executor allows it.
+								if sethidden then pcall(sethidden, localPlayer, "SimulationRadius", 1e9) end
+								local now = os.clock()
+								if mode.frame and mode.frame(now, deltaTime) == false then return end
+								local roots = otherRoots()
+								local clear = mode.clear or 5
+								local frame = math.max(deltaTime, 1 / 120)
+								local fastest = mode.speed or 150
+								local count = #engine.items
+								local index = 1
+								while index <= #engine.items do
+									local item = engine.items[index]
+									local part = item.part
+									if not part.Parent or part.Anchored then
+										engine.has[part] = nil
+										table.remove(engine.items, index)
+									else
+										local goal = mode.place(item, index, count, now, deltaTime, mode)
+										local velocity = item.velocity
+										item.velocity = nil
+										if goal and not velocity then
+											velocity = (goal - part.Position) / frame
+											if velocity.Magnitude > fastest then velocity = velocity.Unit * fastest end
+										end
+										if velocity then velocity = keepClear(part, velocity, roots, clear) end
+										pcall(function()
+											if velocity then part.AssemblyLinearVelocity = velocity end
+											part.AssemblyAngularVelocity = item.spin or Vector3.zero
+											if mode.orient then mode.orient(item, mode) end
+										end)
+										index += 1
+									end
+								end
+							end)
+						end
+						-- For the tricks round your target: keeps their root and character on mode each frame,
+						-- calling mode.tick(mode) if it has one, and switches the trick off if they leave.
+						local function aroundTarget(name, target, mode)
+							mode.frame = function()
+								if not target.Parent then
+									notify(name, menuModules.nameOf(target) .. " left the server")
+									switchOff(name)
+									return false
+								end
+								local character = target.Character
+								local root = character and getRoot(character)
+								if not root then return false end
+								mode.root, mode.character = root, character
+								if mode.tick then mode.tick(mode) end
+								return true
+							end
+							mode.found = function(count)
+								notify(name, count == 0 and "No loose parts here that you can move." or (count .. (count == 1 and " part" or " parts") .. " on the way to " .. menuModules.nameOf(target)), 3)
+							end
+							return mode
+						end
+						-- For the tricks round you: keeps your root and humanoid on mode, calling
+						-- mode.tick(mode, now, deltaTime) if it has one.
+						local function aroundYou(name, mode)
+							mode.frame = function(now, deltaTime)
+								local character, humanoid, root = myCharacter()
+								if not root then return false end
+								mode.root, mode.humanoid, mode.character = root, humanoid, character
+								if mode.tick then mode.tick(mode, now, deltaTime) end
+								return true
+							end
+							mode.found = function(count)
+								notify(name, count == 0 and "No loose parts here that you can move." or (count .. (count == 1 and " part" or " parts") .. " found"), 3)
+							end
+							return mode
+						end
+						-- A switch for a parts trick. makeMode() gives the trick's mode when it's switched on,
+						-- or nothing, and it stays off.
+						local function partsSwitch(name, makeMode)
+							return function(enabled)
+								if not enabled then
+									if engine.mode and engine.mode.name == name then stopParts() end
+									return
+								end
+								local mode = makeMode()
+								if not mode then return false end
+								claimMovement(name)
+								mode.name = name
+								startParts(mode)
+							end
+						end
+						-- Flat parts first (for standing on), then the biggest, then the nearest.
+						local function flatScore(part, distance)
+							local size = part.Size
+							local flatness = size.Y <= math.min(size.X, size.Z) * 0.6 and 0 or 40
+							return distance + flatness - math.min(size.X * size.Z, 100) * 0.3
+						end
+						-- How far below the root your feet are.
+						local function legsOf(humanoid, root)
+							return isR15(humanoid) and (humanoid.HipHeight + root.Size.Y / 2) or 3
+						end
+						-- Where part index of count goes swirling round center. shape: Ring, Sphere, Helix,
+						-- Spiral or Wave. Ring parts each go round from the side they came in on, so none cross
+						-- the middle.
+						local function swirl(item, index, count, now, deltaTime, center, radius, speed, height, shape)
+							if not item.angle then
+								local outward = item.part.Position - center
+								item.angle = math.atan2(outward.Z, outward.X)
+								item.lift = math.random() * 8 - 2
+								item.gap = math.random() * 3
+							end
+							item.angle += deltaTime * speed * 0.5
+							if shape == "Sphere" then
+								local down = math.acos(math.clamp(1 - 2 * (index - 0.5) / math.max(count, 1), -1, 1))
+								local around = index * 2.39996 + now * speed * 0.3
+								return center + Vector3.new(math.cos(around) * math.sin(down), math.cos(down), math.sin(around) * math.sin(down)) * radius + Vector3.new(0, height, 0)
+							elseif shape == "Helix" then
+								local along = math.floor((index - 1) / 2) / math.max(math.ceil(count / 2), 1)
+								local around = along * math.pi * 4 + now * speed * 0.5 + (index % 2) * math.pi
+								local reach = math.max(radius * 0.6, 5.5)
+								return center + Vector3.new(math.cos(around) * reach, height - 2 + along * radius * 1.5, math.sin(around) * reach)
+							elseif shape == "Spiral" then
+								local around = index * 0.7 + now * speed * 0.3
+								local reach = math.max(radius * 0.4, 5.5) + index / math.max(count, 1) * radius
+								return center + Vector3.new(math.cos(around) * reach, height + math.sin(index) * 0.5, math.sin(around) * reach)
+							elseif shape == "Wave" then
+								local reach = radius + item.gap
+								return center + Vector3.new(math.cos(item.angle) * reach, height + 2 + math.sin(now * 2 + item.angle * 3) * 3, math.sin(item.angle) * reach)
+							end
+							local reach = radius + item.gap
+							return center + Vector3.new(math.cos(item.angle) * reach, height + item.lift, math.sin(item.angle) * reach)
+						end
+						-- A point share (0 to 1) of the way round a picture, on a square from -1 to 1.
+						local function artPoint(shape, share)
+							local turn = share * math.pi * 2
+							if shape == "Heart" then
+								return Vector2.new(16 * math.sin(turn) ^ 3, 13 * math.cos(turn) - 5 * math.cos(2 * turn) - 2 * math.cos(3 * turn) - math.cos(4 * turn)) / 17
+							elseif shape == "Star" then
+								-- Ten corners, out and in by turns, with the parts spread along the edges.
+								local corner = share * 10
+								local first = math.floor(corner)
+								local function cornerAt(number)
+									local reach = number % 2 == 0 and 1 or 0.42
+									local angle = math.pi / 2 + number * math.pi / 5
+									return Vector2.new(math.cos(angle), math.sin(angle)) * reach
+								end
+								return cornerAt(first):Lerp(cornerAt(first + 1), corner - first)
+							end
+							-- Smiley: the face round the outside, two eyes, then the smile.
+							if share < 0.6 then
+								local angle = share / 0.6 * math.pi * 2
+								return Vector2.new(math.cos(angle), math.sin(angle))
+							elseif share < 0.8 then
+								local eyeTurn = (share - 0.6) / 0.1 * math.pi * 2
+								local eyeX = share < 0.7 and -0.35 or 0.35
+								return Vector2.new(eyeX + math.cos(eyeTurn) * 0.08, 0.35 + math.sin(eyeTurn) * 0.08)
+							end
+							local angle = math.pi + 0.35 + (share - 0.8) / 0.2 * (math.pi - 0.7)
+							return Vector2.new(math.cos(angle) * 0.55, math.sin(angle) * 0.55 - 0.05)
+						end
+
+						withIcon(trollTabs.parts, "CreateSection", { name = "Round your target" }, "tornado", "crosshair")
+						-- Part Tornado: swirled round them in a ring, sphere, helix, spiral or wave.
+						local setTornado = partsSwitch("Part Tornado", function()
+							local target = targetFor("Part Tornado")
+							if not target then return nil end
+							return aroundTarget("Part Tornado", target, {
+								limit = 150,
+								place = function(item, index, count, now, deltaTime, mode)
+									return swirl(item, index, count, now, deltaTime, mode.root.Position, featureSettings.trollTornadoRadius,
+										featureSettings.trollTornadoSpeed, featureSettings.trollTornadoHeight, featureSettings.trollTornadoShape)
+								end,
+							})
 						end)
+						targetedSwitches["Part Tornado"] = setTornado
+						addQuickToggle(trollTabs.parts, "Part Tornado", "Pull every loose part you can over to your target and swirl it round them. Right-click for the shape, size and speed", setTornado, "tornado", "boxes")
+						-- Part Halo: a small ring spinning over their head.
+						local setHalo = partsSwitch("Part Halo", function()
+							local target = targetFor("Part Halo")
+							if not target then return nil end
+							return aroundTarget("Part Halo", target, {
+								limit = 16, speed = 60, clear = 2.5,
+								place = function(_, index, count, now, _, mode)
+									local head = mode.character:FindFirstChild("Head")
+									local top = head and head:IsA("BasePart") and (head.Position + Vector3.new(0, head.Size.Y / 2, 0)) or (mode.root.Position + Vector3.new(0, 3, 0))
+									local around = index / math.max(count, 1) * math.pi * 2 + now * featureSettings.partHaloSpeed * 0.5
+									local radius = featureSettings.partHaloRadius
+									return top + Vector3.new(math.cos(around) * radius, featureSettings.partHaloHeight, math.sin(around) * radius)
+								end,
+							})
+						end)
+						targetedSwitches["Part Halo"] = setHalo
+						addQuickToggle(trollTabs.parts, "Part Halo", "A ring of parts spinning over your target's head like a halo. Right-click for its size and speed", setHalo, "crown", "circle-dot")
+						-- Part Art: a picture made of parts, up in the air in front of them, facing them.
+						local setArt = partsSwitch("Part Art", function()
+							local target = targetFor("Part Art")
+							if not target then return nil end
+							return aroundTarget("Part Art", target, {
+								limit = 60,
+								place = function(_, index, count, _, _, mode)
+									local root = mode.root
+									local look = flat(root.CFrame.LookVector)
+									look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+									local right = Vector3.new(-look.Z, 0, look.X)
+									local size = featureSettings.partArtSize
+									local center = root.Position + look * (size * 0.5 + 8) + Vector3.new(0, featureSettings.partArtHeight + size * 0.5, 0)
+									local point = artPoint(featureSettings.partArtShape, (index - 0.5) / math.max(count, 1))
+									return center + right * point.X * size * 0.5 + Vector3.new(0, point.Y * size * 0.5, 0)
+								end,
+							})
+						end)
+						targetedSwitches["Part Art"] = setArt
+						addQuickToggle(trollTabs.parts, "Part Art", "Parts make a heart, smiley or star in the air in front of your target. Right-click for the picture and size", setArt, "heart", "smile")
+						-- Part Snake: a line of parts slithering along behind them, the way they went.
+						local setSnake = partsSwitch("Part Snake", function()
+							local target = targetFor("Part Snake")
+							if not target then return nil end
+							-- Where they've been, about a stud apart, newest first.
+							local trail = {}
+							return aroundTarget("Part Snake", target, {
+								limit = featureSettings.partSnakeLength, speed = 80, clear = 2,
+								tick = function(mode)
+									local position = mode.root.Position
+									-- A respawn or a teleport starts the trail again.
+									if trail[1] and (position - trail[1]).Magnitude > 30 then table.clear(trail) end
+									if not trail[1] or (position - trail[1]).Magnitude >= 1 then
+										table.insert(trail, 1, position)
+										if #trail > 300 then table.remove(trail) end
+									end
+								end,
+								place = function(_, index, _, _, _, mode)
+									local back = 2 + index * featureSettings.partSnakeGap
+									local point = trail[math.floor(back)]
+									if not point then
+										-- Past the end of the trail: on in a line behind them.
+										local behind = -flat(mode.root.CFrame.LookVector)
+										behind = behind.Magnitude > 0.1 and behind.Unit or Vector3.new(0, 0, 1)
+										point = (trail[#trail] or mode.root.Position) + behind * math.max(back - #trail, 0)
+									end
+									return point - Vector3.new(0, 1.5, 0)
+								end,
+							})
+						end)
+						targetedSwitches["Part Snake"] = setSnake
+						addQuickToggle(trollTabs.parts, "Part Snake", "A line of parts slithers along behind your target, the way they went. Right-click for its length", setSnake, "spline", "footprints")
+
+						withIcon(trollTabs.parts, "CreateSection", { name = "Round you" }, "user-round", "hand")
+						-- Telekinesis: hold its key and point at a loose part to pick it up; it follows your
+						-- pointer, the scroll wheel moves it nearer or further, and letting go drops it. Its
+						-- own loop, as it's one part at a time.
+						local grabParams = RaycastParams.new()
+						grabParams.FilterType = Enum.RaycastFilterType.Exclude
+						local grab = { part = nil, distance = 0, keyDown = false, box = nil }
+						local function dropGrab()
+							local part = grab.part
+							grab.part = nil
+							if part and part.Parent then
+								-- Let go with a gentle toss the way it was going, never a hard throw.
+								pcall(function()
+									local velocity = part.AssemblyLinearVelocity
+									if velocity.Magnitude > 25 then part.AssemblyLinearVelocity = velocity.Unit * 25 end
+								end)
+							end
+							if grab.box then
+								grab.box:Destroy()
+								grab.box = nil
+							end
+							pcall(function() ContextActionService:UnbindAction("SpreadCheeksTelekinesisWheel") end)
+						end
+						local function telekinesisStep(deltaTime)
+							local camera = workspace.CurrentCamera
+							if not camera then return end
+							local keyOk, keyCode = pcall(function() return Enum.KeyCode[featureSettings.partGrabKey] end)
+							local down = keyOk and keyCode ~= nil and UserInputService:IsKeyDown(keyCode) and not UserInputService:GetFocusedTextBox()
+							local mouse = UserInputService:GetMouseLocation()
+							local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
+							if down and not grab.keyDown then
+								grabParams.FilterDescendantsInstances = { localPlayer.Character }
+								local hit = workspace:Raycast(ray.Origin, ray.Direction * 500, grabParams)
+								local part = hit and hit.Instance:IsA("BasePart") and not hit.Instance.Anchored and hit.Instance.AssemblyRootPart or nil
+								if part and movable(part) then
+									grab.part = part
+									grab.distance = (hit.Position - ray.Origin).Magnitude
+									local box = Instance.new("SelectionBox")
+									box.Name = "SpreadCheeksTelekinesis"
+									box.Adornee = part
+									box.LineThickness = 0.06
+									box.Color3 = auxiliaryUiTheme.AccentText
+									box.Parent = COREGUI
+									grab.box = box
+									-- The scroll wheel moves it while you hold it, instead of the camera.
+									ContextActionService:BindActionAtPriority("SpreadCheeksTelekinesisWheel", function(_, inputState, input)
+										if inputState == Enum.UserInputState.Change then
+											grab.distance = math.clamp(grab.distance + input.Position.Z * 3, 4, 300)
+										end
+										return Enum.ContextActionResult.Sink
+									end, false, 3000, Enum.UserInputType.MouseWheel)
+								end
+							elseif not down and grab.keyDown then
+								dropGrab()
+							end
+							grab.keyDown = down
+							local part = grab.part
+							if not part then return end
+							if not part.Parent or part.Anchored then return dropGrab() end
+							if sethidden then pcall(sethidden, localPlayer, "SimulationRadius", 1e9) end
+							local goal = ray.Origin + ray.Direction * grab.distance
+							local velocity = (goal - part.Position) / math.max(deltaTime, 1 / 120)
+							if velocity.Magnitude > 60 then velocity = velocity.Unit * 60 end
+							velocity = keepClear(part, velocity, otherRoots(), 4)
+							pcall(function()
+								part.AssemblyLinearVelocity = velocity
+								part.AssemblyAngularVelocity *= 0.9
+							end)
+						end
+						addQuickToggle(trollTabs.parts, "Telekinesis", "Hold T and point at a loose part to pick it up and carry it; scroll to move it nearer or further. Right-click to change the key", function(enabled)
+							dropGrab()
+							if not enabled then return afterControls("SpreadCheeksTelekinesis", nil) end
+							claimMovement("Telekinesis")
+							-- A key already held when it's switched on doesn't grab anything.
+							grab.keyDown = true
+							afterControls("SpreadCheeksTelekinesis", telekinesisStep)
+						end, "hand", "move")
+						-- Part Pets: a few parts trail along behind you, bobbing.
+						local setPets = partsSwitch("Part Pets", function()
+							return aroundYou("Part Pets", {
+								limit = featureSettings.partPetCount, speed = 60,
+								place = function(_, index, count, now, _, mode)
+									local root = mode.root
+									local look = flat(root.CFrame.LookVector)
+									look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+									local right = Vector3.new(-look.Z, 0, look.X)
+									local across = (count > 1 and (index - 1) / (count - 1) - 0.5 or 0) * math.min(count, 8) * 1.6
+									local distance = featureSettings.partPetDistance + (index % 2) * 1.5
+									return root.Position - look * distance + right * across + Vector3.new(0, -0.5 + math.sin(now * 3 + index) * 0.6, 0)
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Part Pets", "A few loose parts follow you around like pets. Right-click for how many", setPets, "paw-print", "heart")
+						-- Magic Carpet: the flattest loose part near you slides under your feet and stays there.
+						-- Space takes it up (you jump and land on it higher) and Ctrl or Q down, and riding it
+						-- you go at its speed the way you walk.
+						local carpet = { height = nil, yaw = 0 }
+						local carpetParams = RaycastParams.new()
+						carpetParams.FilterType = Enum.RaycastFilterType.Exclude
+						local setCarpet = partsSwitch("Magic Carpet", function()
+							if not myCharacter() then
+								notify("Magic Carpet", "Your character isn't ready yet.")
+								return nil
+							end
+							carpet.height = nil
+							return aroundYou("Magic Carpet", {
+								limit = 1, speed = 200,
+								range = function() return 80 end,
+								score = flatScore,
+								tick = function(mode, _, deltaTime)
+									local item = engine.items[1]
+									if not item then return end
+									local root, humanoid = mode.root, mode.humanoid
+									local feet = root.Position.Y - legsOf(humanoid, root)
+									-- Starting off, or a long way from it: back under your feet.
+									if not carpet.height or math.abs(carpet.height - feet) > 12 then carpet.height = feet end
+									local typing = UserInputService:GetFocusedTextBox() ~= nil
+									local sinking = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q)
+									local rise = (not typing and UserInputService:IsKeyDown(Enum.KeyCode.Space) and 1 or 0)
+										- (not typing and sinking and 1 or 0)
+									local speed = featureSettings.partCarpetSpeed
+									carpet.height += rise * speed * 0.5 * deltaTime
+									-- Riding it, you go faster than walking, stopping short of walls.
+									local move = flat(humanoid.MoveDirection)
+									local extra = speed - humanoid.WalkSpeed
+									if move.Magnitude > 0.05 and extra > 0 then
+										local distance = extra * deltaTime
+										carpetParams.FilterDescendantsInstances = { mode.character, item.part }
+										local hit = workspace:Raycast(root.Position, move.Unit * (distance + 1.5), carpetParams)
+										if hit then distance = math.max(0, (hit.Position - root.Position).Magnitude - 1.5) end
+										if distance > 0 then root.CFrame += move.Unit * distance end
+									end
+									local look = flat(root.CFrame.LookVector)
+									if look.Magnitude > 0.1 then carpet.yaw = yawOf(look) end
+								end,
+								place = function(item, _, _, _, _, mode)
+									if not carpet.height then return nil end
+									local root = mode.root
+									return Vector3.new(root.Position.X, carpet.height - item.part.Size.Y / 2, root.Position.Z)
+								end,
+								orient = function(item)
+									local part = item.part
+									part.CFrame = CFrame.new(part.Position) * CFrame.Angles(0, carpet.yaw, 0)
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Magic Carpet", "Ride a loose part like a magic carpet: walk to fly along, Space to go up, Ctrl or Q to come down. Right-click for the speed", setCarpet, "wind", "plane")
+						-- Part Stairs: a staircase of parts in front of you, the step under you holding you up.
+						-- Walking forward climbs it; standing still stays put; Ctrl or Q goes back down.
+						local stairs = { height = nil, last = nil }
+						local setStairs = partsSwitch("Part Stairs", function()
+							if not myCharacter() then
+								notify("Part Stairs", "Your character isn't ready yet.")
+								return nil
+							end
+							stairs.height, stairs.last = nil, nil
+							return aroundYou("Part Stairs", {
+								limit = featureSettings.partStairCount + 1, speed = 200,
+								range = function() return 100 end,
+								score = flatScore,
+								tick = function(mode, _, deltaTime)
+									local root, humanoid = mode.root, mode.humanoid
+									local look = flat(root.CFrame.LookVector)
+									mode.look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+									local feet = root.Position.Y - legsOf(humanoid, root)
+									if not stairs.height or math.abs(stairs.height - feet) > 8 then stairs.height = feet end
+									-- Climbing as you walk forward, at the stairs' slope.
+									local position = root.Position
+									if stairs.last then
+										local forward = flat(position - stairs.last):Dot(mode.look)
+										stairs.height += forward * featureSettings.partStairRise / 2.2
+									end
+									stairs.last = position
+									local typing = UserInputService:GetFocusedTextBox() ~= nil
+									if not typing and (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q)) then
+										stairs.height -= 6 * deltaTime
+									end
+									mode.base = Vector3.new(position.X, stairs.height, position.Z)
+								end,
+								place = function(item, index, _, _, _, mode)
+									local step = index - 1
+									local top = mode.base + mode.look * (step * 2.2) + Vector3.new(0, step * featureSettings.partStairRise, 0)
+									return top - Vector3.new(0, item.part.Size.Y / 2, 0)
+								end,
+								orient = function(item, mode)
+									local part = item.part
+									part.CFrame = CFrame.new(part.Position) * CFrame.Angles(0, yawOf(mode.look), 0)
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Part Stairs", "Stairs of parts in front of you to walk up into the sky; Ctrl or Q to come back down. Right-click for the steps", setStairs, "trending-up", "footprints")
+						-- Part Shield: parts swirling round you.
+						local setShield = partsSwitch("Part Shield", function()
+							return aroundYou("Part Shield", {
+								limit = 40,
+								place = function(item, index, count, now, deltaTime, mode)
+									return swirl(item, index, count, now, deltaTime, mode.root.Position, featureSettings.partShieldRadius,
+										featureSettings.partShieldSpeed, 0, featureSettings.partShieldShape)
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Part Shield", "Parts swirl round you like a force field. Right-click for its shape and size", setShield, "shield", "orbit")
+
+						withIcon(trollTabs.parts, "CreateSection", { name = "Everywhere" }, "globe", "sparkles")
+						-- Zero Gravity: loose parts round you float up and drift slowly, turning over.
+						local setFloat = partsSwitch("Zero Gravity", function()
+							return aroundYou("Zero Gravity", {
+								limit = 150, speed = 8,
+								range = function() return featureSettings.partFloatRange end,
+								place = function(item, _, _, now)
+									if not item.home then
+										item.home = item.part.Position
+										item.phase = math.random() * math.pi * 2
+										item.spin = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 1.5
+									end
+									local drift = Vector3.new(math.sin(now * 0.5 + item.phase) * 2, math.sin(now * 0.8 + item.phase) * 1.5, math.cos(now * 0.4 + item.phase) * 2)
+									return item.home + Vector3.new(0, featureSettings.partFloatHeight, 0) + drift
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Zero Gravity", "Loose parts round you float up and drift about, like in space. Right-click for how high and how far", setFloat, "orbit", "rocket")
+						-- Part Fountain: parts shoot up from over your head and rain down round you, again and again.
+						local setFountain = partsSwitch("Part Fountain", function()
+							return aroundYou("Part Fountain", {
+								limit = featureSettings.partFountainCount, speed = 80,
+								place = function(item, _, _, now, _, mode)
+									-- Up in the air: left to fly and fall.
+									if item.flyingUntil and now < item.flyingUntil then return nil end
+									local spout = mode.root.Position + Vector3.new(0, 6, 0)
+									if (item.part.Position - spout).Magnitude < 3 then
+										local power = featureSettings.partFountainPower
+										local angle = math.random() * math.pi * 2
+										local outward = power * (math.random() * 0.35 + 0.1)
+										item.velocity = Vector3.new(math.cos(angle) * outward, power, math.sin(angle) * outward)
+										item.flyingUntil = now + power / workspace.Gravity * 2 + 0.4
+										return nil
+									end
+									return spout
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Part Fountain", "Parts shoot up from over your head and fall back down round you, over and over. Right-click for the power", setFountain, "droplets", "sparkles")
+						-- Blender: loose parts round you lift a little and spin on the spot.
+						local setBlender = partsSwitch("Blender", function()
+							return aroundYou("Blender", {
+								limit = 150, speed = 30,
+								range = function() return featureSettings.partBlenderRange end,
+								place = function(item)
+									if not item.home then
+										item.home = item.part.Position + Vector3.new(0, 2, 0)
+										local axis = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
+										item.axis = axis.Magnitude > 0.01 and axis.Unit or Vector3.yAxis
+									end
+									item.spin = item.axis * featureSettings.partBlenderSpeed
+									return item.home
+								end,
+							})
+						end)
+						addQuickToggle(trollTabs.parts, "Blender", "Every loose part round you lifts a little and spins on the spot. Right-click for the speed and range", setBlender, "rotate-3d", "tornado")
+
+						withIcon(trollTabs.parts, "CreateSection", { name = "Helper" }, "scan-eye", "eye")
+						-- Show Movable Parts: a box round each loose part near you that the parts tricks can use,
+						-- every few seconds: green if you're in charge of it now, yellow if it may be (or the
+						-- executor can't tell). Only on your screen.
+						local shown = { loop = nil, folder = nil, boxes = {}, scanning = false, told = false }
+						local function setShowParts(enabled)
+							if shown.loop then
+								shown.loop:Disconnect()
+								shown.loop = nil
+							end
+							if shown.folder then
+								shown.folder:Destroy()
+								shown.folder = nil
+							end
+							table.clear(shown.boxes)
+							shown.told = false
+							if not enabled then return end
+							local folder = Instance.new("Folder")
+							folder.Name = "SpreadCheeksMovableParts"
+							folder.Parent = COREGUI
+							shown.folder = folder
+							local last = -10
+							shown.loop = RunService.Heartbeat:Connect(function()
+								if shown.scanning or os.clock() - last < 3 then return end
+								last = os.clock()
+								shown.scanning = true
+								task.spawn(function()
+									local _, _, root = myCharacter()
+									local from = root and root.Position or workspace.CurrentCamera.CFrame.Position
+									local wanted, count = {}, 0
+									for index, part in ipairs(workspace:GetDescendants()) do
+										if index % 4000 == 0 then
+											task.wait()
+											if shown.folder ~= folder then
+												shown.scanning = false
+												return
+											end
+										end
+										if count < 300 and part:IsA("BasePart") and not part.Anchored
+											and (part.Position - from).Magnitude <= featureSettings.partShowRange and movable(part) then
+											wanted[part] = true
+											count += 1
+										end
+									end
+									shown.scanning = false
+									if shown.folder ~= folder then return end
+									for part, box in pairs(shown.boxes) do
+										if not wanted[part] then
+											box:Destroy()
+											shown.boxes[part] = nil
+										end
+									end
+									local canTell = type(isnetworkowner) == "function"
+									for part in pairs(wanted) do
+										local box = shown.boxes[part]
+										if not box then
+											box = Instance.new("BoxHandleAdornment")
+											box.Adornee = part
+											box.AlwaysOnTop = true
+											box.ZIndex = 4
+											box.Transparency = 0.6
+											box.Parent = folder
+											shown.boxes[part] = box
+										end
+										box.Size = part.Size
+										local ownedOk, owned = false, false
+										if canTell then ownedOk, owned = pcall(isnetworkowner, part) end
+										box.Color3 = (ownedOk and owned) and Color3.fromRGB(34, 197, 94) or Color3.fromRGB(234, 179, 8)
+									end
+									if not shown.told then
+										shown.told = true
+										notify("Show Movable Parts", count == 0 and "No loose parts near you." or (count .. (count == 1 and " loose part" or " loose parts") .. " near you"), 3)
+									end
+								end)
+							end)
+						end
+						addQuickToggle(trollTabs.parts, "Show Movable Parts", "Boxes round the loose parts the parts tricks can use: green is yours to move now, yellow might be. Right-click for the range", setShowParts, "scan-eye", "box")
+					end)
+					if not partsBuilt then
+						warn("[SpreadCheeksGUI] The Parts tab couldn't be added: " .. tostring(partsProblem))
 					end
-					targetedSwitches["Part Tornado"] = setTornado
-					addQuickToggle(trollTabs.players, "Part Tornado", "Pull every loose part you can over to your target and swirl it round them like a tornado. Right-click for the size and speed", setTornado, "tornado", "boxes")
 				end
 
 				-- Only you can see: these change your own screen and nobody else's.
@@ -19959,38 +20575,138 @@ if rayfieldLoaded and Rayfield then
 						echoCard.addHint("Longer makes it creepier: they'll look round and see you doing what they did ages ago.")
 						echoCard.refresh()
 					end
-					local tornadoCard = cardFor("Part Tornado")
-					if tornadoCard then
-						tornadoCard.addSectionLabel("TORNADO", "tornado")
-						tornadoCard.addSlider({
-							text = "Distance from them",
-							icon = { "ruler" },
-							min = 6, max = 40, step = 1,
-							get = function() return featureSettings.trollTornadoRadius end,
-							set = function(value) featureSettings.trollTornadoRadius = value end,
-							commit = saveFeatureSettings,
-							format = function(value) return math.floor(value + 0.5) .. " studs" end,
-						})
-						tornadoCard.addSlider({
-							text = "Spin speed",
-							icon = { "gauge" },
-							min = 1, max = 10, step = 0.5,
-							get = function() return featureSettings.trollTornadoSpeed end,
-							set = function(value) featureSettings.trollTornadoSpeed = value end,
-							commit = saveFeatureSettings,
-						})
-						tornadoCard.addSlider({
-							text = "Height",
-							icon = { "arrow-up-down" },
-							min = 0, max = 20, step = 1,
-							get = function() return featureSettings.trollTornadoHeight end,
-							set = function(value) featureSettings.trollTornadoHeight = value end,
-							commit = saveFeatureSettings,
-							format = function(value) return math.floor(value + 0.5) .. " studs" end,
-						})
-						tornadoCard.addHint("Up to 150 parts, nearest you first. Only loose parts your game lets you move will come, so in some games nothing does.")
-						tornadoCard.refresh()
+					-- The Parts tab's cards.
+					do
+						local function partsSlider(card, text, key, min, max, step, unit, icon)
+							card.addSlider({
+								text = text,
+								icon = { icon or "gauge" },
+								min = min, max = max, step = step,
+								get = function() return featureSettings[key] end,
+								set = function(value) featureSettings[key] = value end,
+								commit = saveFeatureSettings,
+								format = function(value)
+									local number = step < 0.1 and string.format("%.2f", value) or step < 1 and string.format("%.1f", value) or tostring(math.floor(value + 0.5))
+									return number .. (unit or "")
+								end,
+							})
+						end
+						local function partsChoice(card, key, options, columns)
+							addChoiceGrid(card, options, columns, function() return featureSettings[key] end, function(value)
+								featureSettings[key] = value
+								saveFeatureSettings()
+							end)
+						end
+						local countHint = "How many takes effect the next time you switch it on."
+						local card = cardFor("Part Tornado")
+						if card then
+							card.addSectionLabel("SHAPE", "tornado")
+							partsChoice(card, "trollTornadoShape", { "Ring", "Sphere", "Helix", "Spiral", "Wave" }, 3)
+							card.addSectionLabel("TORNADO", "gauge")
+							partsSlider(card, "Distance from them", "trollTornadoRadius", 6, 40, 1, " studs", "ruler")
+							partsSlider(card, "Spin speed", "trollTornadoSpeed", 1, 10, 0.5)
+							partsSlider(card, "Height", "trollTornadoHeight", 0, 20, 1, " studs", "arrow-up-down")
+							card.addHint("Up to 150 parts, nearest you first. Only loose parts your game lets you move will come, so in some games nothing does.")
+							card.refresh()
+						end
+						card = cardFor("Part Halo")
+						if card then
+							card.addSectionLabel("HALO", "crown")
+							partsSlider(card, "Size", "partHaloRadius", 1.5, 5, 0.5, " studs", "ruler")
+							partsSlider(card, "Spin speed", "partHaloSpeed", 1, 10, 0.5)
+							partsSlider(card, "Height over their head", "partHaloHeight", 0.5, 5, 0.5, " studs", "arrow-up-down")
+							card.addHint("Up to 16 parts. Small parts make the neatest halo.")
+							card.refresh()
+						end
+						card = cardFor("Part Art")
+						if card then
+							card.addSectionLabel("PICTURE", "heart", "smile")
+							partsChoice(card, "partArtShape", { "Heart", "Smiley", "Star" }, 3)
+							partsSlider(card, "Size", "partArtSize", 4, 25, 1, " studs", "ruler")
+							partsSlider(card, "Height", "partArtHeight", 2, 30, 1, " studs", "arrow-up-down")
+							card.addHint("Up to 60 parts, up in the air in front of them and facing them, so they see it. More parts make a clearer picture.")
+							card.refresh()
+						end
+						card = cardFor("Part Snake")
+						if card then
+							card.addSectionLabel("SNAKE", "spline")
+							partsSlider(card, "Length", "partSnakeLength", 5, 40, 1, " parts", "ruler")
+							partsSlider(card, "Gap between parts", "partSnakeGap", 1.5, 6, 0.5, " studs", "move-horizontal")
+							card.addHint(countHint)
+							card.refresh()
+						end
+						card = cardFor("Telekinesis")
+						if card then
+							card.addSectionLabel("KEY", "keyboard")
+							partsChoice(card, "partGrabKey", { "T", "F", "R", "E", "X", "C", "V", "Y" }, 4)
+							card.addHint("Hold it and point at a loose part to pick it up; it follows your pointer, the scroll wheel moves it nearer or further, and letting go drops it. It won't go into anyone.")
+							card.refresh()
+						end
+						card = cardFor("Part Pets")
+						if card then
+							card.addSectionLabel("PETS", "paw-print")
+							partsSlider(card, "How many", "partPetCount", 1, 15, 1, nil, "paw-print")
+							partsSlider(card, "Distance behind you", "partPetDistance", 3, 12, 1, " studs", "ruler")
+							card.addHint(countHint)
+							card.refresh()
+						end
+						card = cardFor("Magic Carpet")
+						if card then
+							card.addSectionLabel("CARPET", "wind")
+							partsSlider(card, "Speed", "partCarpetSpeed", 10, 120, 5, " studs/s")
+							card.addHint("It picks the flattest loose part near you. Walk to fly along; Space takes it up, Ctrl or Q brings it down. Walking speed is 16.")
+							card.refresh()
+						end
+						card = cardFor("Part Stairs")
+						if card then
+							card.addSectionLabel("STAIRS", "trending-up", "footprints")
+							partsSlider(card, "Steps", "partStairCount", 3, 12, 1, nil, "footprints")
+							partsSlider(card, "Rise per step", "partStairRise", 0.5, 2, 0.5, " studs", "arrow-up-down")
+							card.addHint("The step under you holds you up. Walk forward to climb; Ctrl or Q goes back down. " .. countHint)
+							card.refresh()
+						end
+						card = cardFor("Part Shield")
+						if card then
+							card.addSectionLabel("SHAPE", "shield")
+							partsChoice(card, "partShieldShape", { "Ring", "Sphere" }, 2)
+							partsSlider(card, "Distance from you", "partShieldRadius", 5, 25, 1, " studs", "ruler")
+							partsSlider(card, "Spin speed", "partShieldSpeed", 1, 10, 0.5)
+							card.addHint("Up to 40 parts.")
+							card.refresh()
+						end
+						card = cardFor("Zero Gravity")
+						if card then
+							card.addSectionLabel("FLOAT", "orbit")
+							partsSlider(card, "How high", "partFloatHeight", 5, 40, 1, " studs", "arrow-up-down")
+							partsSlider(card, "Range", "partFloatRange", 30, 400, 10, " studs", "ruler")
+							card.addHint("Every loose part within range of you when you switch it on, up to 150.")
+							card.refresh()
+						end
+						card = cardFor("Part Fountain")
+						if card then
+							card.addSectionLabel("FOUNTAIN", "droplets")
+							partsSlider(card, "Power", "partFountainPower", 20, 120, 5)
+							partsSlider(card, "How many", "partFountainCount", 5, 60, 1, nil, "droplets")
+							card.addHint(countHint)
+							card.refresh()
+						end
+						card = cardFor("Blender")
+						if card then
+							card.addSectionLabel("BLENDER", "rotate-3d")
+							partsSlider(card, "Spin speed", "partBlenderSpeed", 5, 50, 1)
+							partsSlider(card, "Range", "partBlenderRange", 30, 400, 10, " studs", "ruler")
+							card.addHint("Every loose part within range of you when you switch it on, up to 150.")
+							card.refresh()
+						end
+						card = cardFor("Show Movable Parts")
+						if card then
+							card.addSectionLabel("RANGE", "scan-eye")
+							partsSlider(card, "Range", "partShowRange", 50, 500, 10, " studs", "ruler")
+							card.addHint("Green: yours to move right now. Yellow: loose, and might be yours (get closer), or your executor can't tell. Only you see the boxes.")
+							card.refresh()
+						end
 					end
+
 					local spinCard = cardFor("Spin")
 					if spinCard then
 						spinCard.addSectionLabel("SPEED", "gauge")
@@ -20331,6 +21047,10 @@ if rayfieldLoaded and Rayfield then
 						trollCopyFollow = { "Off", "Behind", "Beside" },
 						trollBowSpot = { "In front", "Behind", "Around them" },
 						trollTrail = { "Rainbow", "Sparkles", "Fire" },
+						trollTornadoShape = { "Ring", "Sphere", "Helix", "Spiral", "Wave" },
+						partArtShape = { "Heart", "Smiley", "Star" },
+						partShieldShape = { "Ring", "Sphere" },
+						partGrabKey = { "T", "F", "R", "E", "X", "C", "V", "Y" },
 					}
 					for key, options in pairs(choices) do
 						if not table.find(options, featureSettings[key]) then featureSettings[key] = options[1] end
@@ -32046,7 +32766,8 @@ if rayfieldLoaded and Rayfield then
 				tabs[name] = tab
 				local pill = Instance.new("TextButton")
 				pill.LayoutOrder = order
-				pill.Size = UDim2.new(0.25, -5, 1, 0)
+				-- Five tabs across.
+				pill.Size = UDim2.new(0.2, -5, 1, 0)
 				pill.AutoButtonColor = false
 				pill.BorderSizePixel = 0
 				pill.Font = Enum.Font.GothamMedium
@@ -32121,8 +32842,10 @@ if rayfieldLoaded and Rayfield then
 			end
 
 			-- Settings, the same ones as each trick's settings card in the menu. area is a tab-like
-			-- { frame, order } they're drawn into.
+			-- { frame, order } they're drawn into. settingsShowers[trick] shows that trick's settings, so
+			-- switching a trick on can show them.
 			local dragging = nil
+			local settingsShowers = {}
 			local function addChoice(area, item)
 				local caption = makeText(area.frame, Enum.Font.Gotham, 12, "Text")
 				caption.LayoutOrder = nextIn(area)
@@ -32278,8 +33001,7 @@ if rayfieldLoaded and Rayfield then
 					saveFeatureSettings()
 				end
 			end))
-			-- A tab's settings: a pill for each trick, and the picked one's settings under them. Returns a
-			-- function that shows a trick's settings (when it's switched on, say).
+			-- A tab's settings: a pill for each trick, and the picked one's settings under them.
 			local function settingsSection(tab, defs)
 				sectionLabel(tab, "SETTINGS")
 				local pills = grid(tab, 3)
@@ -32316,8 +33038,8 @@ if rayfieldLoaded and Rayfield then
 				end
 				for _, def in ipairs(defs) do
 					button(pills, def.name, function() show(def.name) end, function() return picked == def.name end)
+					settingsShowers[def.name] = show
 				end
-				return show
 			end
 			-- The settings themselves, saved in featureSettings like the cards save them.
 			local function formatFor(step, unit)
@@ -32354,8 +33076,6 @@ if rayfieldLoaded and Rayfield then
 					end,
 				}
 			end
-			local showPrankSettings, showTrickSettings = nil, nil
-
 			-- Makes player the Player Pranks target, if they aren't already.
 			local function isTarget(player)
 				return menuModules.selectedPlayerName ~= nil and menuModules.selectedPlayerName() == player.Name
@@ -32376,7 +33096,7 @@ if rayfieldLoaded and Rayfield then
 					else
 						makeTarget(player)
 						setQuickToggle(entry, true)
-						if showPrankSettings then showPrankSettings(name) end
+						if settingsShowers[name] then settingsShowers[name](name) end
 					end
 				end, function(player)
 					local entry = quickToggleByName[name]
@@ -32389,7 +33109,7 @@ if rayfieldLoaded and Rayfield then
 					local entry = quickToggleByName[name]
 					if not entry then return end
 					setQuickToggle(entry, not entry.state)
-					if entry.state and showTrickSettings then showTrickSettings(name) end
+					if entry.state and settingsShowers[name] then settingsShowers[name](name) end
 				end, function()
 					local entry = quickToggleByName[name]
 					return entry ~= nil and entry.state
@@ -32463,7 +33183,7 @@ if rayfieldLoaded and Rayfield then
 			end
 
 			-- Pranks: the Player Pranks tricks, on them.
-			local prankNames = { "Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare", "Glide To", "Part Tornado" }
+			local prankNames = { "Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare", "Glide To" }
 			local pranks = newTab("Pranks", 1)
 			sectionLabel(pranks, "ON THEM  ·  CLICK AGAIN TO STOP")
 			local prankCells = grid(pranks, 2)
@@ -32477,7 +33197,7 @@ if rayfieldLoaded and Rayfield then
 					if entry and entry.state then setQuickToggle(entry, false) end
 				end
 			end)
-			showPrankSettings = settingsSection(pranks, {
+			settingsSection(pranks, {
 				{ name = "Orbit", items = {
 					sliderOf("Speed", "trollOrbitSpeed", 1, 10, 0.5),
 					sliderOf("Distance", "trollOrbitDistance", 3, 25, 1, " studs"),
@@ -32503,16 +33223,75 @@ if rayfieldLoaded and Rayfield then
 				{ name = "Hype Man", items = { switchOf("Cheer when they jump", "trollHypeJump"), switchOf("Cheer when they do an emote", "trollHypeEmote") } },
 				{ name = "Echo", items = { sliderOf("How far behind", "trollEchoDelay", 0.5, 5, 0.5, " s") } },
 				{ name = "Glide To", items = { sliderOf("Speed", "trollGlideSpeed", 10, 200, 5, " studs/s") } },
+			})
+			hint(pranks, "These make them your Player Pranks target. Switching one on shows its settings; they're the same settings as right-clicking it in the menu.")
+
+			-- Parts: the Parts tab's tricks, round them or round you, with their settings.
+			local partsTab = newTab("Parts", 2)
+			sectionLabel(partsTab, "ROUND THEM  ·  CLICK AGAIN TO STOP")
+			local roundThem = grid(partsTab, 2)
+			for _, name in ipairs({ "Part Tornado", "Part Halo", "Part Art", "Part Snake" }) do
+				if quickToggleByName[name] then prankSwitch(roundThem, name) end
+			end
+			sectionLabel(partsTab, "ROUND YOU AND EVERYWHERE")
+			local roundYou = grid(partsTab, 2)
+			for _, name in ipairs({ "Telekinesis", "Part Pets", "Magic Carpet", "Part Stairs", "Part Shield", "Zero Gravity", "Part Fountain", "Blender", "Show Movable Parts" }) do
+				if quickToggleByName[name] then selfSwitch(roundYou, name) end
+			end
+			settingsSection(partsTab, {
 				{ name = "Part Tornado", items = {
+					choiceOf("Shape", "trollTornadoShape", { "Ring", "Sphere", "Helix", "Spiral", "Wave" }),
 					sliderOf("Distance from them", "trollTornadoRadius", 6, 40, 1, " studs"),
 					sliderOf("Spin speed", "trollTornadoSpeed", 1, 10, 0.5),
 					sliderOf("Height", "trollTornadoHeight", 0, 20, 1, " studs"),
 				} },
+				{ name = "Part Halo", items = {
+					sliderOf("Size", "partHaloRadius", 1.5, 5, 0.5, " studs"),
+					sliderOf("Spin speed", "partHaloSpeed", 1, 10, 0.5),
+					sliderOf("Height over their head", "partHaloHeight", 0.5, 5, 0.5, " studs"),
+				} },
+				{ name = "Part Art", items = {
+					choiceOf("Picture", "partArtShape", { "Heart", "Smiley", "Star" }),
+					sliderOf("Size", "partArtSize", 4, 25, 1, " studs"),
+					sliderOf("Height", "partArtHeight", 2, 30, 1, " studs"),
+				} },
+				{ name = "Part Snake", items = {
+					sliderOf("Length", "partSnakeLength", 5, 40, 1, " parts"),
+					sliderOf("Gap between parts", "partSnakeGap", 1.5, 6, 0.5, " studs"),
+				} },
+				{ name = "Telekinesis", items = { choiceOf("Key", "partGrabKey", { "T", "F", "R", "E", "X", "C", "V", "Y" }) } },
+				{ name = "Part Pets", items = {
+					sliderOf("How many", "partPetCount", 1, 15, 1),
+					sliderOf("Distance behind you", "partPetDistance", 3, 12, 1, " studs"),
+				} },
+				{ name = "Magic Carpet", items = { sliderOf("Speed", "partCarpetSpeed", 10, 120, 5, " studs/s") } },
+				{ name = "Part Stairs", items = {
+					sliderOf("Steps", "partStairCount", 3, 12, 1),
+					sliderOf("Rise per step", "partStairRise", 0.5, 2, 0.5, " studs"),
+				} },
+				{ name = "Part Shield", items = {
+					choiceOf("Shape", "partShieldShape", { "Ring", "Sphere" }),
+					sliderOf("Distance from you", "partShieldRadius", 5, 25, 1, " studs"),
+					sliderOf("Spin speed", "partShieldSpeed", 1, 10, 0.5),
+				} },
+				{ name = "Zero Gravity", items = {
+					sliderOf("How high", "partFloatHeight", 5, 40, 1, " studs"),
+					sliderOf("Range", "partFloatRange", 30, 400, 10, " studs"),
+				} },
+				{ name = "Part Fountain", items = {
+					sliderOf("Power", "partFountainPower", 20, 120, 5),
+					sliderOf("How many", "partFountainCount", 5, 60, 1),
+				} },
+				{ name = "Blender", items = {
+					sliderOf("Spin speed", "partBlenderSpeed", 5, 50, 1),
+					sliderOf("Range", "partBlenderRange", 30, 400, 10, " studs"),
+				} },
+				{ name = "Show Movable Parts", items = { sliderOf("Range", "partShowRange", 50, 500, 10, " studs") } },
 			})
-			hint(pranks, "These make them your Player Pranks target. Switching one on shows its settings; they're the same settings as right-clicking it in the menu.")
+			hint(partsTab, "One parts trick at a time. They only move loose parts your game lets you move, usually ones near you. How many (pets, snake, fountain, stairs) takes effect when you switch it on again.")
 
 			-- Emotes: you turn to face them, then play it once.
-			local emotes = newTab("Emotes", 2)
+			local emotes = newTab("Emotes", 3)
 			sectionLabel(emotes, "TURN TO THEM AND...")
 			local emoteCells = grid(emotes, 3)
 			for _, name in ipairs({
@@ -32530,7 +33309,7 @@ if rayfieldLoaded and Rayfield then
 			hint(emotes, "The first five work on any avatar; the rest need R15, which most games use.")
 
 			-- Moves: your moves (turned to them first) and your own tricks.
-			local moves = newTab("Moves", 3)
+			local moves = newTab("Moves", 4)
 			sectionLabel(moves, "AT THEM")
 			local moveCells = grid(moves, 3)
 			for _, move in ipairs(trolling.moves or {}) do
@@ -32547,7 +33326,7 @@ if rayfieldLoaded and Rayfield then
 			}) do
 				if quickToggleByName[name] then selfSwitch(bodyCells, name) end
 			end
-			showTrickSettings = settingsSection(moves, {
+			settingsSection(moves, {
 				{ name = "Fake Lag", items = {
 					choiceOf("Style", "trollLagStyle", { "Stutter", "Rubber-band", "Glitch", "Spikes", "Mixed" }),
 					sliderOf("Strength", "trollLagStrength", 1, 10, 1),
@@ -32573,7 +33352,7 @@ if rayfieldLoaded and Rayfield then
 			hint(moves, "Emote loops the emote picked on the Emotes tab. Switching a trick on shows its settings.")
 
 			-- Tools: getting to them, watching them, and about them.
-			local tools = newTab("Tools", 4)
+			local tools = newTab("Tools", 5)
 			sectionLabel(tools, "GET TO THEM")
 			local goCells = grid(tools, 3)
 			button(goCells, "Next to them", function(player) goNear(player, "side") end)
@@ -33742,6 +34521,59 @@ if rayfieldLoaded and Rayfield then
 				if chooseTarget(args, speaker, "Part Tornado") then setSwitch("Part Tornado", true) end
 			end)
 			addcmd("unparttornado", { "untpparts" }, function() setSwitch("Part Tornado", false) end)
+
+			-- Parts.
+			describe("tornadoshape [ring/sphere/helix/spiral/wave]", "The shape Part Tornado swirls the parts in")
+			addcmd("tornadoshape", {}, function(args)
+				local shapes = { ring = "Ring", sphere = "Sphere", helix = "Helix", spiral = "Spiral", wave = "Wave" }
+				local shape = shapes[firstArgument(args)]
+				if not shape then return notify("Part Tornado", "Choose ring, sphere, helix, spiral or wave, like tornadoshape helix") end
+				featureSettings.trollTornadoShape = shape
+				saveFeatureSettings()
+				notify("Part Tornado", shape, 2)
+			end)
+			-- The parts tricks round a player, each with an on and an off command.
+			for _, trick in ipairs({
+				{ "Part Halo", "parthalo", "A ring of parts spinning over a player's head like a halo" },
+				{ "Part Art", "partart", "Parts make a heart, smiley or star in the air in front of a player" },
+				{ "Part Snake", "partsnake", "A line of parts slithers along behind a player" },
+			}) do
+				local name, command, description = trick[1], trick[2], trick[3]
+				describe(command .. " [player]", description .. " (your Player Pranks target if you leave the name out)")
+				describe("un" .. command, "Drops the parts where they are")
+				addcmd(command, {}, function(args, speaker)
+					if chooseTarget(args, speaker, name) then setSwitch(name, true) end
+				end)
+				addcmd("un" .. command, {}, function() setSwitch(name, false) end)
+			end
+			describe("partartshape [heart/smiley/star]", "The picture Part Art makes")
+			addcmd("partartshape", {}, function(args)
+				local shapes = { heart = "Heart", smiley = "Smiley", smile = "Smiley", star = "Star" }
+				local shape = shapes[firstArgument(args)]
+				if not shape then return notify("Part Art", "Choose heart, smiley or star, like partartshape star") end
+				featureSettings.partArtShape = shape
+				saveFeatureSettings()
+				notify("Part Art", shape, 2)
+			end)
+			addSwitchCommands("Telekinesis", { { "telekinesis", "tk" }, { "untelekinesis", "untk" }, "toggletelekinesis" },
+				"Hold T and point at a loose part to pick it up and carry it", "Puts it down and stops")
+			addSwitchCommands("Part Pets", { { "partpets" }, { "unpartpets" }, "togglepartpets" },
+				"A few loose parts follow you around like pets", "The pets drop where they are", "Part Pets")
+			-- (Infinite Yield has its own carpet command, so this one is magiccarpet.)
+			addSwitchCommands("Magic Carpet", { { "magiccarpet" }, { "unmagiccarpet" }, "togglemagiccarpet" },
+				"Ride a loose part like a magic carpet: walk to fly, Space up, Ctrl or Q down", "Off the carpet")
+			addSwitchCommands("Part Stairs", { { "partstairs" }, { "unpartstairs" }, "togglepartstairs" },
+				"Stairs of parts in front of you to walk up into the sky; Ctrl or Q comes back down", "The stairs drop", "Part Stairs")
+			addSwitchCommands("Part Shield", { { "partshield" }, { "unpartshield" }, "togglepartshield" },
+				"Parts swirl round you like a force field", "The shield drops")
+			addSwitchCommands("Zero Gravity", { { "zerogravity", "zerog" }, { "unzerogravity", "unzerog" }, "togglezerogravity" },
+				"Loose parts round you float up and drift about, like in space", "The parts fall back down")
+			addSwitchCommands("Part Fountain", { { "partfountain" }, { "unpartfountain" }, "togglepartfountain" },
+				"Parts shoot up from over your head and fall back down round you, over and over", "The fountain stops")
+			addSwitchCommands("Blender", { { "blender" }, { "unblender" }, "toggleblender" },
+				"Every loose part round you lifts a little and spins on the spot", "The parts stop spinning")
+			addSwitchCommands("Show Movable Parts", { { "showparts" }, { "unshowparts" }, "toggleshowparts" },
+				"Boxes round the loose parts the parts tricks can use", "Hides the boxes", "Show Movable Parts")
 
 			-- Spectating.
 			describe("spectatetarget", "Watches your Player Pranks target, with the Troll Panel of pranks just for them")
