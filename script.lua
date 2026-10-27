@@ -5732,6 +5732,11 @@ end)
 
 ESPenabled = false
 CHMSenabled = false
+-- Set by the SpreadCheeks menu once it's built. spreadCheeksTeleport(cframe) takes over a
+-- teleport (Safe Teleport flies you there) and returns true, or returns false to leave it to the
+-- command; spreadCheeksNameOf(player) is the name to show for someone (Streamer Mode hides it).
+spreadCheeksTeleport = nil
+spreadCheeksNameOf = nil
 
 function round(num, numDecimalPlaces)
 	local mult = 10^(numDecimalPlaces or 0)
@@ -5914,7 +5919,12 @@ function ESP(plr, logic)
 				TagGui.MaxDistance = math.huge
 				TagGui.Parent = ESPholder
 
-				local displayName = plr.DisplayName:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+				-- Asked again every update, so turning Streamer Mode on or off shows straight away.
+				local function shownName()
+					local name = spreadCheeksNameOf and spreadCheeksNameOf(plr) or plr.DisplayName
+					return (tostring(name):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+				end
+				local displayName = shownName()
 				local NameLabel = Instance.new("TextLabel")
 				NameLabel.Name = "PlayerName"
 				NameLabel.BackgroundTransparency = 1
@@ -6018,7 +6028,7 @@ function ESP(plr, logic)
 						if myRoot and targetRoot and targetHumanoid then
 							local distance = math.floor((myRoot.Position - targetRoot.Position).Magnitude)
 							local healthRatio = math.clamp(targetHumanoid.Health / math.max(targetHumanoid.MaxHealth, 1), 0, 1)
-							local tagText = espSettings.name and displayName or ""
+							local tagText = espSettings.name and shownName() or ""
 							if espSettings.distance then
 								tagText = tagText .. (tagText ~= "" and "  " or "") .. '<font size="11" color="#A9B1C2">' .. distance .. ' studs</font>'
 							end
@@ -6673,8 +6683,11 @@ local function clicktpFunc()
 			Vector3.new(rootPartPosition.X, hitPosition.Y, rootPartPosition.Z)
 		) * CFrame.Angles(0, math.pi, 0)
 
-		rootPart.CFrame = newCFrame + Vector3.new(0, hipHeight or 4, 0)
-		breakVelocity()
+		local destination = newCFrame + Vector3.new(0, hipHeight or 4, 0)
+		if not (spreadCheeksTeleport and spreadCheeksTeleport(destination)) then
+			rootPart.CFrame = destination
+			breakVelocity()
+		end
 	end)
 end
 
@@ -8029,12 +8042,18 @@ addcmd('waypoint',{'wp','lpos','loadposition','loadpos'},function(args, speaker)
 				local x = WayPoints[i].COORD[1]
 				local y = WayPoints[i].COORD[2]
 				local z = WayPoints[i].COORD[3]
-				getRoot(speaker.Character).CFrame = CFrame.new(x,y,z)
+				local destination = CFrame.new(x,y,z)
+				if not (spreadCheeksTeleport and spreadCheeksTeleport(destination)) then
+					getRoot(speaker.Character).CFrame = destination
+				end
 			end
 		end
 		for i,_ in pairs(pWayPoints) do
 			if tostring(pWayPoints[i].NAME):lower() == tostring(WPName):lower() then
-				getRoot(speaker.Character).CFrame = CFrame.new(pWayPoints[i].COORD[1].Position)
+				local destination = CFrame.new(pWayPoints[i].COORD[1].Position)
+				if not (spreadCheeksTeleport and spreadCheeksTeleport(destination)) then
+					getRoot(speaker.Character).CFrame = destination
+				end
 			end
 		end
 	end
@@ -9494,8 +9513,11 @@ addcmd("goto", {"to"}, function(args, speaker)
 				targetCharacter:WaitForChild("HumanoidRootPart", 5)
 			end
 
-			speaker.Character:PivotTo(CFrame.new(targetPosition + (targetPivot.LookVector * 3), targetPosition))
-			breakVelocity()
+			local destination = CFrame.new(targetPosition + (targetPivot.LookVector * 3), targetPosition)
+			if not (spreadCheeksTeleport and spreadCheeksTeleport(destination)) then
+				speaker.Character:PivotTo(destination)
+				breakVelocity()
+			end
 			break
 		end
 	end
@@ -14688,6 +14710,40 @@ if rayfieldLoaded and Rayfield then
 			-- emotes, from the top going round clockwise.
 			emoteWheel = false, emoteWheelKey = "B",
 			emoteWheelEmotes = { "Wave", "Dance 1", "Floss Dance", "Laugh", "Cheer", "Shrek Roar", "Hot To Go!", "Confused" },
+			-- What's New: the update whose notes were last shown, and where that window was dragged.
+			lastSeenVersion = "", whatsNewX = -1, whatsNewY = -1,
+			-- Safe Teleport: on or off, and how fast it flies you (studs a second).
+			safeTeleport = false, safeTeleportSpeed = 100,
+			-- Anti-Void and Auto Rejoin: on or off.
+			antiVoid = false, autoRejoin = false,
+			-- The Object Finder window: shown, and its position.
+			objectFinder = false, finderX = -1, finderY = -1,
+			-- Auto Collect: the words to look for, "Touch" or "Fly", how far it reaches (studs) and
+			-- how fast Fly goes (studs a second).
+			collectWords = {}, collectMethod = "Touch", collectRange = 250, collectSpeed = 60,
+			-- The Movement Recorder: whether playback loops, and how fast it plays.
+			recordLoop = false, recordSpeed = 1,
+			-- Aim prediction: on or off, how far ahead it aims (seconds), and whether your ping is added.
+			aimbotPredict = false, aimbotPredictTime = 0.1, aimbotPredictPing = true,
+			-- Hitbox Expander: which part grows ("Root" or "Head"), how big (studs), who's left alone,
+			-- and whether the grown parts can be seen.
+			hitboxPart = "Root", hitboxSize = 8, hitboxTeamCheck = true, hitboxFriendCheck = true, hitboxVisible = true,
+			-- The Spectate Bar: shown while you spectate, and its position.
+			spectateBar = true, spectateBarX = -1, spectateBarY = -1,
+			-- Zoom Key: on or off, the key held (a KeyCode name) and how far in it zooms (field of view).
+			zoomKey = false, zoomKeyName = "Z", zoomFov = 20,
+			-- Time of Day: on or off, and the hour (0 to 24).
+			timeOfDay = false, timeOfDayHour = 12,
+			-- FPS Boost, and muting the game's music and other players' sounds: on or off.
+			fpsBoost = false, muteMusic = false, muteOthers = false,
+			-- Streamer Mode: on or off.
+			streamerMode = false,
+			-- Health & Ping Warnings: on or off, which warnings, and the health (percent) that's low.
+			healthWarnings = false, warnHealth = true, warnPing = true, warnHealthAt = 30,
+			-- Player Notes: a note on each player, by user ID. The Outfit Viewer's position.
+			playerNotes = {}, outfitX = -1, outfitY = -1,
+			-- Whether Clean Screen has been given its F2 key yet, so a key taken off it stays off.
+			cleanScreenKeySet = false,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14701,6 +14757,8 @@ if rayfieldLoaded and Rayfield then
 			trollGlideSpeed = { 10, 200 }, trollGuardRange = { 4, 40 },
 			trollBlinkDistance = { 2, 8 }, trollBlinkCooldown = { 0.1, 2 }, trollRoombaSpeed = { 4, 30 },
 			parkourAirJumps = { 1, 3 }, grappleRange = { 50, 500 }, grapplePullSpeed = { 30, 150 },
+			safeTeleportSpeed = { 30, 300 }, collectRange = { 25, 1000 }, collectSpeed = { 20, 150 }, recordSpeed = { 0.5, 3 },
+			aimbotPredictTime = { 0, 0.5 }, hitboxSize = { 2, 25 }, zoomFov = { 5, 60 }, timeOfDayHour = { 0, 24 }, warnHealthAt = { 10, 60 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -14972,6 +15030,48 @@ if rayfieldLoaded and Rayfield then
 		-- the Logs window; selectionListeners are called when the Players tab's selected player
 		-- changes (Player Pranks uses that selection too).
 		local menuModules = { notificationLog = {}, selectionListeners = {} }
+		-- Streamer Mode hides player names. nameOf is how the menu names someone: "Player 3" (the same
+		-- number for them all session) or "You" while it's on, their display name otherwise.
+		-- userNameOf is the same for usernames, and labelOf is both together, the way the menu lists
+		-- people. Anything showing names goes in nameListeners, to be told when Streamer Mode changes.
+		do
+			local aliases, aliasCount = {}, 0
+			local function alias(player)
+				if player == Players.LocalPlayer then return "You" end
+				if not aliases[player.UserId] then
+					aliasCount += 1
+					aliases[player.UserId] = "Player " .. aliasCount
+				end
+				return aliases[player.UserId]
+			end
+			menuModules.nameListeners = {}
+			function menuModules.nameOf(player)
+				if typeof(player) ~= "Instance" then return tostring(player) end
+				return featureSettings.streamerMode and alias(player) or player.DisplayName
+			end
+			function menuModules.userNameOf(player)
+				if typeof(player) ~= "Instance" then return tostring(player) end
+				return featureSettings.streamerMode and alias(player) or player.Name
+			end
+			-- gap goes between the two names (one space unless given).
+			function menuModules.labelOf(player, gap)
+				if typeof(player) ~= "Instance" then return tostring(player) end
+				if featureSettings.streamerMode then return alias(player) end
+				return player.DisplayName == player.Name and player.Name or (player.DisplayName .. (gap or " ") .. "(@" .. player.Name .. ")")
+			end
+			spreadCheeksNameOf = menuModules.nameOf
+			-- Copies text with the executor's clipboard, saying what was copied.
+			function menuModules.copy(text, what)
+				text = tostring(text)
+				if not everyClipboard then
+					notify("Copy", "Your executor can't copy to the clipboard. " .. (what and (what:gsub("^%l", string.upper) .. ": ") or "") .. text, 8)
+					return false
+				end
+				local copied = pcall(everyClipboard, text)
+				notify("Copy", copied and ("Copied " .. (what or "it")) or "Couldn't copy that", 2.5)
+				return copied
+			end
+		end
 
 		task.spawn(function()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -15323,6 +15423,39 @@ if rayfieldLoaded and Rayfield then
 			pcall(function() entry.object:Set(entry.state, true) end)
 		end
 
+		-- A switch for one of the parts built further down (menuModules[module], with setEnabled),
+		-- remembered between sessions in featureSettings[key]. It's listed in menuModules.remembered,
+		-- and those that were on come back on once everything's built ("Switches that were on").
+		menuModules.remembered = {}
+		local function addRememberedToggle(tab, name, key, module, description, ...)
+			addQuickToggle(tab, name, description, function(enabled)
+				if featureSettings[key] ~= enabled then
+					featureSettings[key] = enabled
+					saveFeatureSettings()
+				end
+				local part = menuModules[module]
+				if not part then return end
+				local result = part.setEnabled(enabled)
+				if result == false then
+					featureSettings[key] = false
+					saveFeatureSettings()
+				end
+				return result
+			end, ...)
+			table.insert(menuModules.remembered, { name = name, key = key })
+		end
+
+		-- Buttons that can go on a key too (Go Back and the moves in Walks & Moves). Each gets a key
+		-- box on its row like the switches, and the key runs it.
+		local quickActions = {}
+		local quickActionByName = {}
+		local function addQuickAction(name, run, object)
+			local action = { name = name, run = run, object = object, key = nil, isAction = true }
+			table.insert(quickActions, action)
+			quickActionByName[name] = action
+			return action
+		end
+
 		local noFallState = {
 			enabled = false,
 			rootConnection = nil,
@@ -15395,6 +15528,38 @@ if rayfieldLoaded and Rayfield then
 		withIcon(mobilityTab, "CreateSection", { name = "Getting around" }, "footprints")
 		addCommandToggle(mobilityTab, "Noclip", "noclip", "clip", nil, "ghost")
 		addCommandToggle(mobilityTab, "Infinite Jump", "infjump", "uninfjump", nil, "chevrons-up")
+		-- Safe Teleport, Go Back and the Movement Recorder are built further down (The Big Update);
+		-- these are their switches and buttons, made here so they're in this tab with key boxes.
+		addRememberedToggle(mobilityTab, "Safe Teleport", "safeTeleport", "safeTeleport", "Teleports fly you there quickly instead, so games that kick for teleporting don't notice. Right-click for the speed", "shield-check", "plane-landing")
+		do
+			local function goBack()
+				if menuModules.goBack then menuModules.goBack() end
+			end
+			addQuickAction("Go Back", goBack, withIcon(mobilityTab, "CreateButton", {
+				name = "Go Back",
+				description = "Back to where you were before your last teleport, glide or death. Again goes further back",
+				callback = goBack,
+			}, "undo-2", "history"))
+		end
+		withIcon(mobilityTab, "CreateSection", { name = "Movement Recorder" }, "circle-dot", "video")
+		addQuickToggle(mobilityTab, "Record Movement", "Records where you walk and jump. Switch it off to stop", function(enabled)
+			if not menuModules.recorder then return false end
+			return menuModules.recorder.setRecording(enabled)
+		end, "circle-dot", "video")
+		addQuickToggle(mobilityTab, "Play Recording", "Takes you to where it starts and plays it back. Right-click to loop it or change its speed", function(enabled)
+			if not menuModules.recorder then return false end
+			return menuModules.recorder.setPlaying(enabled)
+		end, "play", "repeat")
+		-- Loading a config shouldn't start a recording or a playback.
+		quickToggleByName["Record Movement"].noConfig = true
+		quickToggleByName["Play Recording"].noConfig = true
+		withIcon(mobilityTab, "CreateButton", {
+			name = "Clear Recording",
+			description = "Deletes this game's recording",
+			callback = function()
+				if menuModules.recorder then menuModules.recorder.clear() end
+			end,
+		}, "trash-2", "eraser")
 
 		-- Combat: seeing and aiming at players, then flinging them.
 		withIcon(combatTab, "CreateSection", { name = "ESP & aim" }, "scan-eye")
@@ -15444,6 +15609,11 @@ if rayfieldLoaded and Rayfield then
 			if menuModules.targetHud then menuModules.targetHud.setEnabled(enabled) end
 		end, "scan-face", "crosshair")
 		addCommandToggle(combatTab, "Chams", "chams", "nochams", "Right-click for fill strength", "person-standing")
+		-- Hitbox Expander, built further down (menuModules.hitboxExpander).
+		addQuickToggle(combatTab, "Hitbox Expander", "Bigger hitboxes on other players, so they're easier to hit. Right-click for the size and checks", function(enabled)
+			if not menuModules.hitboxExpander then return false end
+			return menuModules.hitboxExpander.setEnabled(enabled)
+		end, "expand", "box")
 		withIcon(combatTab, "CreateSection", { name = "Fling" }, "tornado")
 		addCommandToggle(combatTab, "Fling", "fling", "unfling", nil, "tornado")
 		-- Walk Fling and No Fall Damage both rewrite the character's velocity every frame and
@@ -15492,6 +15662,9 @@ if rayfieldLoaded and Rayfield then
 				execCmd("fov " .. tostring(value), Players.LocalPlayer, true)
 			end,
 		}, "focus")
+		-- Zoom Key and the Spectate Bar, built further down (The Big Update).
+		addRememberedToggle(viewTab, "Zoom Key", "zoomKey", "zoomKey", "Hold Z to zoom in like a scope; scroll while holding it to zoom more or less. Right-click to change the key", "zoom-in", "scan")
+		addRememberedToggle(viewTab, "Spectate Bar", "spectateBar", "spectateBar", "While you spectate someone, a bar to flip between players with the arrow keys", "users-round", "eye")
 		-- Fullbright and No Fog note how the game's lighting was when they're switched on and put it
 		-- back when they're switched off. Both reapply every frame, since games keep resetting it.
 		local lightingSaved = {}
@@ -15559,6 +15732,17 @@ if rayfieldLoaded and Rayfield then
 		addQuickToggle(viewTab, "Fullbright", "Lights everything up, day or night", setFullbright, "sun")
 		addQuickToggle(viewTab, "No Fog", "Clears fog and haze so you can see far", setNoFog, "cloud-off", "cloud")
 		addCommandToggle(viewTab, "X-ray", "xray", "unxray", "See through walls and buildings", "scan", "eye")
+		addRememberedToggle(viewTab, "Time of Day", "timeOfDay", "timeOfDay", "Sets the time on your screen. Right-click for the hour", "sun-moon", "clock")
+		addRememberedToggle(viewTab, "FPS Boost", "fpsBoost", "fpsBoost", "Turns the game's graphics down (shadows, effects, textures) so it runs smoother", "zap", "rocket")
+		withIcon(viewTab, "CreateSection", { name = "Sound" }, "volume-2", "music")
+		addRememberedToggle(viewTab, "Mute Game Music", "muteMusic", "muteMusic", "Mutes the game's music and other sounds that loop", "music", "volume-x")
+		addRememberedToggle(viewTab, "Mute Player Sounds", "muteOthers", "muteOthers", "Mutes other players' boomboxes, gear and anything else they play", "volume-x", "speaker")
+		withIcon(viewTab, "CreateSection", { name = "Finding & collecting" }, "search", "magnet")
+		addRememberedToggle(viewTab, "Object Finder", "objectFinder", "objectFinder", "A window to find anything on the map by name, see it through walls and fly to it", "search", "scan-search")
+		addQuickToggle(viewTab, "Auto Collect", "Keeps picking up coins, gems or anything named what you choose. Right-click to choose", function(enabled)
+			if not menuModules.autoCollect then return false end
+			return menuModules.autoCollect.setEnabled(enabled)
+		end, "magnet", "hand")
 
 		-- Protection: staying safe and unseen.
 		withIcon(protectionTab, "CreateSection", { name = "Safety" }, "shield-check", "shield")
@@ -15586,6 +15770,9 @@ if rayfieldLoaded and Rayfield then
 				end)
 			end
 		end, "coffee", "clock")
+		-- Anti-Void and Auto Rejoin, built further down (The Big Update).
+		addRememberedToggle(protectionTab, "Anti-Void", "antiVoid", "antiVoid", "Falling off the map puts you back where you last stood", "shield-check", "landmark")
+		addRememberedToggle(protectionTab, "Auto Rejoin", "autoRejoin", "autoRejoin", "Rejoins by itself if you're kicked or lose connection: this server first, then any", "refresh-cw", "log-in")
 		withIcon(protectionTab, "CreateSection", { name = "Stealth" }, "eye-off")
 		addCommandToggle(protectionTab, "Invisible", "invisible", "visible", nil, "eye-off")
 		-- Cheater Detector warns you about players who move like cheaters. Its switch is made here,
@@ -15675,7 +15862,8 @@ if rayfieldLoaded and Rayfield then
 				-- character themselves every frame and steering switches change how you walk, so each
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba" }
+				-- Play Recording (Mobility) moves you too, so it's one of the takeovers.
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook" }
 				local clashes = {}
 				local function clash(first, second)
@@ -15707,6 +15895,8 @@ if rayfieldLoaded and Rayfield then
 						switchOff(other)
 					end
 				end
+				-- For Play Recording, which is built outside this block.
+				menuModules.claimMovement = claimMovement
 				-- The takeover that's running (Handstand, Crawl, Superman, Helicopter or Bow Down), if any.
 				local takeoverState = { name = nil, loop = nil, track = nil, yaw = 0 }
 
@@ -16525,7 +16715,8 @@ if rayfieldLoaded and Rayfield then
 						end)
 					end,
 				}, "clapperboard", "film", "play")
-				withIcon(trollTabs.emotes, "CreateButton", {
+				-- Kept so its row gets a key box, like the moves (see trolling.moves).
+				trolling.stopAnimationsButton = withIcon(trollTabs.emotes, "CreateButton", {
 					name = "Stop Animations",
 					description = "Stops the emote and anything played by ID",
 					callback = function() trolling.stopAnimations() end,
@@ -17262,14 +17453,15 @@ if rayfieldLoaded and Rayfield then
 					{ name = "Launch", description = "Shoots you high into the air. Some games give fall damage", icons = { "rocket" }, run = function() trolling.launch() end },
 					{ name = "Fakeout", description = "Vanish into the void for a second, then pop back where you were", icons = { "ghost" }, run = function() execCmd("fakeout", localPlayer, true) end },
 				}
+				-- Each move's row is kept (move.object) so it gets a key box like the switches.
 				for _, move in ipairs(trolling.moves) do
-					withIcon(trollTabs.walks, "CreateButton", {
+					move.object = withIcon(trollTabs.walks, "CreateButton", {
 						name = move.name,
 						description = move.description,
 						callback = move.run,
 					}, table.unpack(move.icons))
 				end
-				table.insert(trolling.moves, { name = "Stop Animations", icons = { "circle-stop", "square" }, run = function() trolling.stopAnimations() end })
+				table.insert(trolling.moves, { name = "Stop Animations", icons = { "circle-stop", "square" }, run = function() trolling.stopAnimations() end, object = trolling.stopAnimationsButton })
 
 				-- Parkour: jump again in mid-air (up to three times, in its settings card), kick off a wall
 				-- you're next to, and dash the way you're going with the dash key (Q to start with), once
@@ -17434,6 +17626,8 @@ if rayfieldLoaded and Rayfield then
 						beam.Segments = 1
 						beam.LightEmission = 0.4
 						beam.Color = ColorSequence.new(auxiliaryUiTheme.AccentText)
+						-- Named so FPS Boost leaves it alone.
+						beam.Name = "SpreadCheeksRope"
 						beam.Parent = rootAttachment
 						grapple.rootAttachment, grapple.hookAttachment, grapple.beam = rootAttachment, hookAttachment, beam
 						-- Off the ground, so the rope can carry you.
@@ -17527,12 +17721,13 @@ if rayfieldLoaded and Rayfield then
 					local player = findPlayer(name)
 					local text = "Nobody picked yet"
 					if player and player ~= localPlayer then
-						text = player.DisplayName .. "  (@" .. player.Name .. ")"
+						text = menuModules.labelOf(player, "  ")
 					elseif not player and name and name ~= "" then
 						text = "@" .. name .. " isn't in this server"
 					end
 					pcall(function() targetText:Set(text) end)
 				end
+				table.insert(menuModules.nameListeners, refreshTargetText)
 				withIcon(trollTabs.players, "CreateButton", {
 					name = "Choose Player",
 					description = "Pick who the tricks below use, by their face and name",
@@ -17555,9 +17750,9 @@ if rayfieldLoaded and Rayfield then
 						end
 						if not nearest then return notify("Nearest Player", "There's nobody else around right now.") end
 						if menuModules.selectPlayer then
-							menuModules.selectPlayer(nearest.Name, nearest.DisplayName .. "  (@" .. nearest.Name .. ")")
+							menuModules.selectPlayer(nearest.Name, menuModules.labelOf(nearest, "  "))
 						end
-						notify("Target", nearest.DisplayName .. ", " .. math.floor(nearestDistance + 0.5) .. " studs away", 2.5)
+						notify("Target", menuModules.nameOf(nearest) .. ", " .. math.floor(nearestDistance + 0.5) .. " studs away", 2.5)
 					end,
 				}, "locate-fixed", "crosshair")
 
@@ -17602,7 +17797,7 @@ if rayfieldLoaded and Rayfield then
 					headsitState.sitting = true
 					headsitState.loop = RunService.Heartbeat:Connect(function()
 						if not target.Parent then
-							notify("Headsit", target.DisplayName .. " left the server")
+							notify("Headsit", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Headsit")
 						end
 						local _, myHumanoid, myRoot = myCharacter()
@@ -17695,7 +17890,7 @@ if rayfieldLoaded and Rayfield then
 					end)
 					orbitState.loop = RunService.Heartbeat:Connect(function(deltaTime)
 						if not target.Parent then
-							notify("Orbit", target.DisplayName .. " left the server")
+							notify("Orbit", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Orbit")
 						end
 						local _, myHumanoid, myRoot = myCharacter()
@@ -17767,14 +17962,14 @@ if rayfieldLoaded and Rayfield then
 					local _, humanoid = myCharacter()
 					local theirHumanoid = target.Character and target.Character:FindFirstChildOfClass("Humanoid")
 					if humanoid and theirHumanoid and humanoid.RigType ~= theirHumanoid.RigType then
-						notify("Copycat", "You and " .. target.DisplayName .. " have different body types (R6 and R15), so some moves won't copy.", 5)
+						notify("Copycat", "You and " .. menuModules.nameOf(target) .. " have different body types (R6 and R15), so some moves won't copy.", 5)
 					end
 					switchOff("Emote")
 					holdAnimate("Copycat", true)
 					local lastSync = 0
 					copycatState.loop = RunService.Heartbeat:Connect(function()
 						if not target.Parent then
-							notify("Copycat", target.DisplayName .. " left the server")
+							notify("Copycat", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Copycat")
 						end
 						local _, myHumanoid, myRoot = myCharacter()
@@ -17947,13 +18142,13 @@ if rayfieldLoaded and Rayfield then
 						end
 					end)
 					glideState.loop = RunService.Heartbeat:Connect(function(deltaTime)
-						if not target.Parent then return gaveUp(target.DisplayName .. " left the server") end
+						if not target.Parent then return gaveUp(menuModules.nameOf(target) .. " left the server") end
 						local _, myHumanoid, myRoot = myCharacter()
 						if not myHumanoid then return end
 						-- A new character ends it.
 						if myHumanoid ~= glideState.humanoid then return gaveUp(nil) end
 						if os.clock() - glideState.started > 60 then
-							return gaveUp("Couldn't get to " .. target.DisplayName .. " within a minute.")
+							return gaveUp("Couldn't get to " .. menuModules.nameOf(target) .. " within a minute.")
 						end
 						myHumanoid.PlatformStand = true
 						myRoot.AssemblyAngularVelocity = Vector3.zero
@@ -17999,8 +18194,11 @@ if rayfieldLoaded and Rayfield then
 						return false
 					end
 					claimMovement("Glide To")
+					-- Go Back can take you back to where the glide started.
+					local _, _, startRoot = myCharacter()
+					if startRoot and menuModules.rememberSpot then menuModules.rememberSpot(startRoot.Position) end
 					glideTowards(target, false, function()
-						notify("Glide To", "Got to " .. target.DisplayName, 2)
+						notify("Glide To", "Got to " .. menuModules.nameOf(target), 2)
 						switchOff("Glide To")
 					end, function(reason)
 						if reason then notify("Glide To", reason) end
@@ -18325,7 +18523,7 @@ if rayfieldLoaded and Rayfield then
 					claimMovement("Weeping Angel")
 					afterControls("SpreadCheeksWeepingAngel", function(deltaTime)
 						if not target.Parent then
-							notify("Weeping Angel", target.DisplayName .. " left the server")
+							notify("Weeping Angel", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Weeping Angel")
 						end
 						local character, humanoid, root = myCharacter()
@@ -18376,7 +18574,7 @@ if rayfieldLoaded and Rayfield then
 					claimMovement("Bodyguard")
 					afterControls("SpreadCheeksBodyguard", function(deltaTime)
 						if not target.Parent then
-							notify("Bodyguard", target.DisplayName .. " left the server")
+							notify("Bodyguard", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Bodyguard")
 						end
 						local character, humanoid, root = myCharacter()
@@ -18462,7 +18660,7 @@ if rayfieldLoaded and Rayfield then
 					claimMovement("Nothing Personal")
 					afterControls("SpreadCheeksNothingPersonal", function(deltaTime)
 						if not target.Parent then
-							notify("Nothing Personal", target.DisplayName .. " left the server")
+							notify("Nothing Personal", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Nothing Personal")
 						end
 						local character, humanoid, root = myCharacter()
@@ -18573,7 +18771,7 @@ if rayfieldLoaded and Rayfield then
 					claimMovement("Hype Man")
 					afterControls("SpreadCheeksHypeMan", function(deltaTime)
 						if not target.Parent then
-							notify("Hype Man", target.DisplayName .. " left the server")
+							notify("Hype Man", menuModules.nameOf(target) .. " left the server")
 							return switchOff("Hype Man")
 						end
 						local character, humanoid, root = myCharacter()
@@ -19517,6 +19715,16 @@ if rayfieldLoaded and Rayfield then
 		end, "star", "bookmark")
 		-- A star on this row would only put a tile on the bar that hides the bar.
 		quickToggleByName["Favourites Bar"].noFavourite = true
+		-- Health & Ping Warnings, Streamer Mode and Clean Screen, built further down (The Big Update).
+		addRememberedToggle(interfaceTab, "Health & Ping Warnings", "healthWarnings", "healthWarnings", "A red glow round the screen when your health is low, and a heads-up when your ping spikes. Right-click for settings", "heart-pulse", "triangle-alert")
+		addRememberedToggle(interfaceTab, "Streamer Mode", "streamerMode", "streamerMode", "Hides player names in the menu, its windows, ESP and the player list", "eye-off", "monitor-off")
+		addQuickToggle(interfaceTab, "Clean Screen", "Hides the menu, its windows and the game's buttons, for clean clips. F2 to start with", function(enabled)
+			if not menuModules.cleanScreen then return false end
+			return menuModules.cleanScreen.setEnabled(enabled)
+		end, "monitor-off", "sparkles")
+		-- It isn't kept in configs, and its star would put a tile on a bar it hides.
+		quickToggleByName["Clean Screen"].noConfig = true
+		quickToggleByName["Clean Screen"].noFavourite = true
 
 		local keybindFile = "SpreadCheeksGUI_Keybinds.json"
 		-- Semicolon opens the quick command bar; Escape and Backspace are used while capturing.
@@ -19527,11 +19735,21 @@ if rayfieldLoaded and Rayfield then
 			[Enum.KeyCode.Unknown] = true,
 		}
 
+		-- The moves in Walks & Moves can go on keys too, like Go Back.
+		for _, move in ipairs(trolling.moves or {}) do
+			if move.object and not quickActionByName[move.name] then addQuickAction(move.name, move.run, move.object) end
+		end
+
+		-- Switch keys are saved under the switch's name, and the keys of Go Back and the moves under
+		-- "action:" and their name.
 		local function saveQuickKeybinds()
 			if not writefile then return end
 			local data = {}
 			for _, entry in ipairs(quickToggles) do
 				if entry.key then data[entry.name] = entry.key.Name end
+			end
+			for _, action in ipairs(quickActions) do
+				if action.key then data["action:" .. action.name] = action.key.Name end
 			end
 			writefile(keybindFile, HttpService:JSONEncode(data), true)
 		end
@@ -19543,7 +19761,8 @@ if rayfieldLoaded and Rayfield then
 			local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
 			if not decodeOk or type(data) ~= "table" then return end
 			for name, keyName in pairs(data) do
-				local entry = quickToggleByName[name]
+				local actionName = type(name) == "string" and name:match("^action:(.+)$")
+				local entry = actionName and quickActionByName[actionName] or quickToggleByName[name]
 				local keyOk, keyCode = pcall(function() return Enum.KeyCode[keyName] end)
 				if entry and not entry.noKeybind and keyOk and keyCode and not reservedKeys[keyCode] then
 					entry.key = keyCode
@@ -19644,44 +19863,58 @@ if rayfieldLoaded and Rayfield then
 			end)
 		end
 
-		-- Each toggle row gets a key box just left of its switch, styled like
-		-- Rayfield's own keybind box. Click it, then press a key.
+		-- A key box styled like Rayfield's own keybind box, on row at position. Click it, then press a key.
+		local function addKeyChip(entry, row, position)
+			local chip = Instance.new("TextButton")
+			chip.Name = "KeybindChip"
+			chip.AnchorPoint = Vector2.new(1, 0.5)
+			chip.Position = position
+			chip.AutoButtonColor = false
+			chip.BorderSizePixel = 0
+			chip.Font = Enum.Font.GothamMedium
+			chip.TextSize = 13
+			-- Above the row's full-row click target (ZIndex 10) so clicking the box doesn't flip the switch.
+			chip.ZIndex = 11
+			bindAuxiliaryUiColor(chip, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(chip, "TextColor3", "Text")
+			local chipCorner = Instance.new("UICorner")
+			chipCorner.CornerRadius = UDim.new(1, 0)
+			chipCorner.Parent = chip
+			local chipStroke = Instance.new("UIStroke")
+			chipStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			bindAuxiliaryUiColor(chipStroke, "Color", "Stroke")
+			chipStroke.Parent = chip
+			entry.chip = chip
+			entry.chipStroke = chipStroke
+			chip.MouseButton1Click:Connect(function()
+				if capturingEntry == entry then
+					stopKeyRecording()
+				else
+					startKeyRecording(entry)
+				end
+			end)
+			chip.Parent = row
+			refreshKeyChip(entry)
+		end
+
+		-- Go Back and the moves have nothing at the right of their rows, so their boxes go there.
+		for _, action in ipairs(quickActions) do
+			local row = action.object and action.object.main
+			if typeof(row) == "Instance" then
+				addKeyChip(action, row, UDim2.new(1, -14, 0.5, 0))
+			else
+				warn("[SpreadCheeksGUI] Couldn't add a key box to " .. action.name .. "; Rayfield's button layout may have changed.")
+			end
+		end
+
+		-- Each toggle row gets a key box just left of its switch.
 		for _, entry in ipairs(quickToggles) do
 			local row = entry.object and entry.object.main
 			if entry.noKeybind then
 				-- No key box on this row.
 			elseif typeof(row) == "Instance" then
-				local chip = Instance.new("TextButton")
-				chip.Name = "KeybindChip"
-				chip.AnchorPoint = Vector2.new(1, 0.5)
 				-- Rayfield's switch is 50px wide and sits 15px in from the row's right edge.
-				chip.Position = UDim2.new(1, -73, 0, 20)
-				chip.AutoButtonColor = false
-				chip.BorderSizePixel = 0
-				chip.Font = Enum.Font.GothamMedium
-				chip.TextSize = 13
-				-- Above the toggle's full-row click target (ZIndex 10) so clicking the box doesn't flip the switch.
-				chip.ZIndex = 11
-				bindAuxiliaryUiColor(chip, "BackgroundColor3", "Inset")
-				bindAuxiliaryUiColor(chip, "TextColor3", "Text")
-				local chipCorner = Instance.new("UICorner")
-				chipCorner.CornerRadius = UDim.new(1, 0)
-				chipCorner.Parent = chip
-				local chipStroke = Instance.new("UIStroke")
-				chipStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-				bindAuxiliaryUiColor(chipStroke, "Color", "Stroke")
-				chipStroke.Parent = chip
-				entry.chip = chip
-				entry.chipStroke = chipStroke
-				chip.MouseButton1Click:Connect(function()
-					if capturingEntry == entry then
-						stopKeyRecording()
-					else
-						startKeyRecording(entry)
-					end
-				end)
-				chip.Parent = row
-				refreshKeyChip(entry)
+				addKeyChip(entry, row, UDim2.new(1, -73, 0, 20))
 			else
 				warn("[SpreadCheeksGUI] Couldn't add a key box to " .. entry.name .. "; Rayfield's toggle layout may have changed.")
 			end
@@ -19776,6 +20009,12 @@ if rayfieldLoaded and Rayfield then
 							refreshKeyChip(other)
 						end
 					end
+					for _, other in ipairs(quickActions) do
+						if other ~= entry and other.key == keyCode then
+							other.key = nil
+							refreshKeyChip(other)
+						end
+					end
 					entry.key = keyCode
 				end
 				stopKeyRecording()
@@ -19787,6 +20026,11 @@ if rayfieldLoaded and Rayfield then
 			for _, entry in ipairs(quickToggles) do
 				if entry.key == input.KeyCode then
 					flipQuickToggle(entry)
+				end
+			end
+			for _, action in ipairs(quickActions) do
+				if action.key == input.KeyCode then
+					task.spawn(action.run)
 				end
 			end
 		end)
@@ -19948,6 +20192,11 @@ if rayfieldLoaded and Rayfield then
 				for _, entry in ipairs(quickToggles) do
 					if entry.key then
 						table.insert(rows, { name = entry.name, key = entry.key.Name, kind = "toggle", on = entry.state })
+					end
+				end
+				for _, action in ipairs(quickActions) do
+					if action.key then
+						table.insert(rows, { name = action.name, key = action.key.Name, kind = "run" })
 					end
 				end
 				for _, source in ipairs(extraSources) do
@@ -20896,7 +21145,7 @@ if rayfieldLoaded and Rayfield then
 
 		withIcon(interfaceTab, "CreateSection", { name = "Keybinds" }, "keyboard")
 		interfaceTab:CreateText({
-			text = "Click the key box next to any switch in Quick Controls, then press a key to bind it. Press Esc instead to clear it, or click the box again to cancel. Keybinds are ignored while you're typing in chat or a text box.",
+			text = "Click the key box next to any switch in Quick Controls (or a move in Walks & Moves, or Go Back), then press a key to bind it. Press Esc instead to clear it, or click the box again to cancel. Keybinds are ignored while you're typing in chat or a text box.",
 		})
 
 		-- Clears the keys set on the Quick Controls switches. The first click asks for a second
@@ -20908,6 +21157,9 @@ if rayfieldLoaded and Rayfield then
 				local count = 0
 				for _, entry in ipairs(quickToggles) do
 					if entry.key then count += 1 end
+				end
+				for _, action in ipairs(quickActions) do
+					if action.key then count += 1 end
 				end
 				if count == 0 then
 					clearConfirmUntil = 0
@@ -20925,12 +21177,23 @@ if rayfieldLoaded and Rayfield then
 					entry.key = nil
 					refreshKeyChip(entry)
 				end
+				for _, action in ipairs(quickActions) do
+					action.key = nil
+					refreshKeyChip(action)
+				end
 				saveQuickKeybinds()
 				notify("Keybinds", count == 1 and "Cleared 1 keybind" or ("Cleared " .. count .. " keybinds"))
 			end,
 		}, "trash-2", "eraser")
 
 		withIcon(interfaceTab, "CreateSection", { name = "Extras" }, "sparkles")
+		withIcon(interfaceTab, "CreateButton", {
+			name = "What's New",
+			description = "Everything the latest update added",
+			callback = function()
+				if menuModules.whatsNew then menuModules.whatsNew.open() end
+			end,
+		}, "gift", "sparkles")
 		local logoBounceGui, logoBounceConnection
 		local logoBounceToggle
 		local function stopLogoBounce()
@@ -22290,6 +22553,17 @@ if rayfieldLoaded and Rayfield then
 				if featureSettings.aimbotRandomPart then
 					aimAt = randomPartFor(target, part)
 				end
+				-- Aim prediction: where they'll be after the lead time (plus your ping, if chosen) at the
+				-- speed they're going, for shots that take time to arrive.
+				local aimPoint = aimAt.Position
+				if featureSettings.aimbotPredict then
+					local lead = featureSettings.aimbotPredictTime
+					if featureSettings.aimbotPredictPing then
+						local pingOk, ping = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
+						if pingOk and type(ping) == "number" then lead += math.clamp(ping, 0, 0.5) end
+					end
+					aimPoint += aimAt.AssemblyLinearVelocity * lead
+				end
 
 				-- Smoothness 1 snaps straight on; higher values close the gap more slowly. Scaled by
 				-- frame time so it feels the same at any frame rate.
@@ -22297,13 +22571,13 @@ if rayfieldLoaded and Rayfield then
 				local alpha = smoothness <= 1 and 1 or 1 - (1 - 1 / smoothness) ^ math.clamp(deltaTime * 60, 0, 10)
 				local method = featureSettings.aimbotMethod
 				if method == "Free aim" and moveMouse then
-					freeAim(camera, cursor, camera:WorldToViewportPoint(aimAt.Position), alpha)
+					freeAim(camera, cursor, camera:WorldToViewportPoint(aimPoint), alpha)
 				elseif method == "Mouse" and moveMouse then
-					local point = camera:WorldToViewportPoint(aimAt.Position)
+					local point = camera:WorldToViewportPoint(aimPoint)
 					nudgeMouse((point.X - cursor.X) * alpha, (point.Y - cursor.Y) * alpha)
 				else
 					local from = camera.CFrame
-					camera.CFrame = from:Lerp(CFrame.lookAt(from.Position, aimAt.Position), alpha)
+					camera.CFrame = from:Lerp(CFrame.lookAt(from.Position, aimPoint), alpha)
 				end
 			end
 			-- Right after Roblox's camera has moved for the frame, so this has the final say.
@@ -22453,6 +22727,19 @@ if rayfieldLoaded and Rayfield then
 					commit = saveFeatureSettings,
 					format = function(value) return string.format("%.1f×", value) end,
 				})
+
+				card.addSectionLabel("PREDICTION", "move-horizontal", "target")
+				card.addSwitchGrid({ setting("Aim prediction", "aimbotPredict"), setting("Allow for ping", "aimbotPredictPing") })
+				card.addSlider({
+					text = "Lead time",
+					icon = { "clock", "timer" },
+					min = 0, max = 0.5, step = 0.01,
+					get = function() return featureSettings.aimbotPredictTime end,
+					set = function(value) featureSettings.aimbotPredictTime = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return math.floor(value * 1000 + 0.5) .. " ms" end,
+				})
+				card.addHint("Aims where a moving player will be, for guns and throws that take time to land. Raise the lead time if you miss behind them, lower it if you miss in front. Allow for ping adds your connection's delay.")
 
 				card.addSectionLabel("FOV", "circle-dashed", "circle")
 				card.addSlider({
@@ -22969,9 +23256,8 @@ if rayfieldLoaded and Rayfield then
 				-- At most once every 30 seconds for each player and kind of thing, so it doesn't nag.
 				if times[kind] and now - times[kind] < 30 then return end
 				times[kind] = now
-				local who = player.DisplayName ~= player.Name and (player.DisplayName .. " (@" .. player.Name .. ")") or player.Name
-				notify("Possible cheater", who .. " " .. message, 6)
-				table.insert(recentFlags, 1, { name = player.DisplayName, short = short, at = os.time() })
+				notify("Possible cheater", menuModules.labelOf(player) .. " " .. message, 6)
+				table.insert(recentFlags, 1, { name = menuModules.nameOf(player), short = short, at = os.time() })
 				if #recentFlags > 6 then table.remove(recentFlags) end
 				if featureSettings.cheatOutline then outline(player) end
 				if card and card.expanded then card.refresh() end
@@ -23268,7 +23554,7 @@ if rayfieldLoaded and Rayfield then
 		local locatedPlayerName = nil
 		local selectedPlayerDisplay = withIcon(playerTab, "CreateText", {
 			name = "Selected player",
-			text = Players.LocalPlayer.DisplayName .. "  (@" .. Players.LocalPlayer.Name .. ")",
+			text = menuModules.labelOf(Players.LocalPlayer, "  "),
 		}, "user-round")
 		-- Picking someone else while Locate is on moves Locate to them.
 		local function selectPlayer(name, label)
@@ -23284,6 +23570,13 @@ if rayfieldLoaded and Rayfield then
 				locatedPlayerName = name
 			end
 		end
+		-- Streamer Mode going on or off shows the selected player the new way.
+		table.insert(menuModules.nameListeners, function()
+			local player = Players:FindFirstChild(selectedPlayerName)
+			if player and player:IsA("Player") then
+				pcall(function() selectedPlayerDisplay:Set(menuModules.labelOf(player, "  ")) end)
+			end
+		end)
 		-- Player Pranks picks its target through this same selection.
 		menuModules.selectPlayer = selectPlayer
 		function menuModules.selectedPlayerName()
@@ -23558,7 +23851,7 @@ if rayfieldLoaded and Rayfield then
 					nameLabel.Size = UDim2.new(1, -8, 0, 16)
 					nameLabel.BackgroundTransparency = 1
 					nameLabel.Font = Enum.Font.GothamMedium
-					nameLabel.Text = targetPlayer.DisplayName
+					nameLabel.Text = menuModules.nameOf(targetPlayer)
 					nameLabel.TextColor3 = Color3.fromRGB(237, 240, 246)
 					nameLabel.TextSize = 11
 					nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
@@ -23569,7 +23862,7 @@ if rayfieldLoaded and Rayfield then
 					userLabel.Size = UDim2.new(1, -8, 0, 12)
 					userLabel.BackgroundTransparency = 1
 					userLabel.Font = Enum.Font.Gotham
-					userLabel.Text = "@" .. targetPlayer.Name
+					userLabel.Text = featureSettings.streamerMode and "" or ("@" .. targetPlayer.Name)
 					userLabel.TextColor3 = Color3.fromRGB(145, 153, 169)
 					userLabel.TextSize = 9
 					userLabel.TextTruncate = Enum.TextTruncate.AtEnd
@@ -23577,8 +23870,8 @@ if rayfieldLoaded and Rayfield then
 					bindAuxiliaryUiColor(userLabel, "TextColor3", "SubText")
 
 					tile.Activated:Connect(function()
-						selectPlayer(targetPlayer.Name, targetPlayer.DisplayName .. "  (@" .. targetPlayer.Name .. ")")
-						selectedLabel.Text = "Selected: " .. targetPlayer.DisplayName .. "  (@" .. targetPlayer.Name .. ")"
+						selectPlayer(targetPlayer.Name, menuModules.labelOf(targetPlayer, "  "))
+						selectedLabel.Text = "Selected: " .. menuModules.labelOf(targetPlayer, "  ")
 						pickerGui.Enabled = false
 					end)
 					task.spawn(function()
@@ -24349,6 +24642,38 @@ if rayfieldLoaded and Rayfield then
 				frameSize = UDim2.new(1, 0, 0, 13),
 			})
 			footnote.LayoutOrder = 4
+			-- This server: copy its Job ID (Roblox Account Manager's Join Server takes it, as does the
+			-- copy button on each server below) or the Place ID, or rejoin and land back on your spot.
+			local hereRow = Instance.new("Frame")
+			hereRow.LayoutOrder = 5
+			hereRow.Size = UDim2.fromScale(1, 0)
+			hereRow.AutomaticSize = Enum.AutomaticSize.Y
+			hereRow.BackgroundTransparency = 1
+			hereRow.Parent = header
+			local hereLayout = Instance.new("UIListLayout")
+			hereLayout.FillDirection = Enum.FillDirection.Horizontal
+			hereLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+			hereLayout.Padding = UDim.new(0, 6)
+			hereLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			pcall(function() hereLayout.Wraps = true end)
+			hereLayout.Parent = hereRow
+			local hereLabel = makeLabel(hereRow, {
+				text = "This server", font = Enum.Font.GothamBold, size = 12, role = "SubText", frameSize = UDim2.fromOffset(0, 26),
+			})
+			hereLabel.AutomaticSize = Enum.AutomaticSize.X
+			local herePills = {
+				{ "Copy Job ID", function() menuModules.copy(game.JobId, "this server's Job ID") end },
+				{ "Copy Place ID", function() menuModules.copy(game.PlaceId, "the Place ID") end },
+				{ "Rejoin here", function()
+					if menuModules.rejoinHere then menuModules.rejoinHere() end
+				end },
+			}
+			for index, pillInfo in ipairs(herePills) do
+				local pill = makePill(hereRow, pillInfo[1], index)
+				bindAuxiliaryUiColor(pill, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(pill, "TextColor3", "Text")
+				pill.Activated:Connect(pillInfo[2])
+			end
 
 			-- Shown instead of the list when there's nothing to list, or something went wrong.
 			local statusCard = makeCard(root)
@@ -24460,12 +24785,30 @@ if rayfieldLoaded and Rayfield then
 				addCorner(dot, UDim.new(1, 0))
 				makeLabel(row, {
 					text = #stats > 0 and table.concat(stats, "  ·  ") or "No ping reported", font = Enum.Font.GothamMedium, size = 12,
-					position = UDim2.fromOffset(117, 10), frameSize = UDim2.new(1, -221, 0, 16),
+					position = UDim2.fromOffset(117, 10), frameSize = UDim2.new(1, -255, 0, 16),
 				})
 				makeLabel(row, {
 					text = (isHere and "Your server  ·  " or "Server ") .. string.sub(server.id, 1, 8), size = 10, role = isHere and "AccentText" or "Muted",
-					position = UDim2.fromOffset(104, 30), frameSize = UDim2.new(1, -208, 0, 14),
+					position = UDim2.fromOffset(104, 30), frameSize = UDim2.new(1, -242, 0, 14),
 				})
+				-- Copies the server's Job ID, for Roblox Account Manager or a friend.
+				local copyId = Instance.new("TextButton")
+				copyId.AnchorPoint = Vector2.new(1, 0.5)
+				copyId.Position = UDim2.new(1, -96, 0.5, 0)
+				copyId.Size = UDim2.fromOffset(30, 30)
+				copyId.AutoButtonColor = false
+				copyId.BorderSizePixel = 0
+				copyId.Font = Enum.Font.GothamBold
+				copyId.TextSize = 10
+				bindAuxiliaryUiColor(copyId, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(copyId, "TextColor3", "SubText")
+				copyId.Parent = row
+				addCorner(copyId, UDim.new(0, 8))
+				local copyIcon = makeIcon(copyId, 14, "SubText", "copy", "clipboard-copy")
+				copyIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+				copyIcon.Position = UDim2.fromScale(0.5, 0.5)
+				copyId.Text = copyIcon.Visible and "" or "ID"
+				copyId.Activated:Connect(function() menuModules.copy(server.id, "that server's Job ID") end)
 
 				local action = Instance.new("TextButton")
 				action.AnchorPoint = Vector2.new(1, 0.5)
@@ -25443,8 +25786,13 @@ if rayfieldLoaded and Rayfield then
 				keybindListX = true, keybindListY = true, performanceStatsX = true, performanceStatsY = true,
 				radarX = true, radarY = true, logsWindowX = true, logsWindowY = true, favouritesBarX = true, favouritesBarY = true,
 				targetHudX = true, targetHudY = true, fpsCap = true,
+				lastSeenVersion = true, whatsNewX = true, whatsNewY = true, finderX = true, finderY = true,
+				spectateBarX = true, spectateBarY = true, outfitX = true, outfitY = true, playerNotes = true, cleanScreenKeySet = true,
+				safeTeleport = true, antiVoid = true, autoRejoin = true, objectFinder = true, spectateBar = true, zoomKey = true,
+				timeOfDay = true, fpsBoost = true, muteMusic = true, muteOthers = true, streamerMode = true, healthWarnings = true,
 			}
-			local store = { configs = {}, autoload = "", applySwitches = true }
+			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
+			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
 			if readfile then
 				local readOk, contents = readfile(configFile, true)
 				if readOk and type(contents) == "string" and contents ~= "" then
@@ -25458,6 +25806,9 @@ if rayfieldLoaded and Rayfield then
 						end
 						if type(data.autoload) == "string" then store.autoload = data.autoload end
 						if type(data.applySwitches) == "boolean" then store.applySwitches = data.applySwitches end
+						for gameId, name in pairs(type(data.gameConfigs) == "table" and data.gameConfigs or {}) do
+							if type(gameId) == "string" and type(name) == "string" then store.gameConfigs[gameId] = name end
+						end
 					end
 				end
 			end
@@ -25479,10 +25830,16 @@ if rayfieldLoaded and Rayfield then
 					esp[key] = espSettings[key]
 				end
 				local keys, switches = {}, {}
+				-- "" is no key, so loading the config takes off a key set since; a switch a config
+				-- doesn't mention at all (one added since it was saved) keeps its key.
 				for _, entry in ipairs(quickToggles) do
-					if entry.key then keys[entry.name] = entry.key.Name end
+					keys[entry.name] = entry.key and entry.key.Name or ""
 					-- noConfig switches (Fake Dead, and the ones that need a player) stay as they are.
 					if not entry.noConfig then switches[entry.name] = entry.state == true end
+				end
+				-- Keys on Go Back and the moves, kept apart from switch names the way the keybinds file does.
+				for _, action in ipairs(quickActions) do
+					keys["action:" .. action.name] = action.key and action.key.Name or ""
 				end
 				switches["Aimbot"] = aimbotState.enabled == true
 				switches["Keybind List"] = featureSettings.keybindList == true
@@ -25525,19 +25882,34 @@ if rayfieldLoaded and Rayfield then
 				end
 				if type(config.keys) == "table" then
 					stopKeyRecording()
-					for _, entry in ipairs(quickToggles) do
-						local keyName = config.keys[entry.name]
-						local keyOk, keyCode = pcall(function() return Enum.KeyCode[keyName] end)
-						local usable = not entry.noKeybind and type(keyName) == "string" and keyOk and keyCode and not reservedKeys[keyCode]
-						entry.key = usable and keyCode or nil
-						refreshKeyChip(entry)
+					-- Every key box, under the name the config keeps its key by.
+					local boxes = {}
+					for _, entry in ipairs(quickToggles) do table.insert(boxes, { entry = entry, name = entry.name }) end
+					for _, action in ipairs(quickActions) do table.insert(boxes, { entry = action, name = "action:" .. action.name }) end
+					-- Keys the config doesn't mention (on switches and moves added since it was saved) stay
+					-- as they are, unless the config gives that key to something else.
+					local given = {}
+					for _, box in ipairs(boxes) do
+						local keyName = config.keys[box.name]
+						if keyName ~= nil then
+							local keyOk, keyCode = pcall(function() return Enum.KeyCode[keyName] end)
+							local usable = not box.entry.noKeybind and type(keyName) == "string" and keyOk and keyCode and not reservedKeys[keyCode]
+							box.entry.key = usable and keyCode or nil
+							if box.entry.key then given[box.entry.key] = true end
+						end
+					end
+					for _, box in ipairs(boxes) do
+						if config.keys[box.name] == nil and box.entry.key and given[box.entry.key] then box.entry.key = nil end
+						refreshKeyChip(box.entry)
 					end
 					saveQuickKeybinds()
 				end
 				if withSwitches and type(config.switches) == "table" then
+					-- A switch the config doesn't mention (one added since it was saved) is left as it is.
 					for _, entry in ipairs(quickToggles) do
-						local on = config.switches[entry.name] == true
-						if not entry.noConfig and entry.state ~= on then setQuickToggle(entry, on) end
+						local saved = config.switches[entry.name]
+						local on = saved == true
+						if not entry.noConfig and saved ~= nil and entry.state ~= on then setQuickToggle(entry, on) end
 					end
 					applyAimbot(config.switches["Aimbot"] == true)
 					pcall(function() aimbotToggle:Set(aimbotState.enabled, true) end)
@@ -25581,6 +25953,13 @@ if rayfieldLoaded and Rayfield then
 				local existing = findConfig(name)
 				if existing then store.configs[existing] = nil end
 				store.configs[name] = captureConfig()
+				-- Saving over a config under different capitals keeps what it loads for.
+				if existing and existing ~= name then
+					if store.autoload == existing then store.autoload = name end
+					for gameId, linked in pairs(store.gameConfigs) do
+						if linked == existing then store.gameConfigs[gameId] = name end
+					end
+				end
 				saveStore()
 				notify("Configs", (existing and "Updated " or "Saved ") .. name, 3)
 				if refreshList then refreshList() end
@@ -25599,11 +25978,14 @@ if rayfieldLoaded and Rayfield then
 			function api.names()
 				return configNames()
 			end
-			-- The autoload config goes in once the rest of the menu has finished building.
-			if store.autoload ~= "" then
+			-- The config picked for this game (This game), or else the autoload config, goes in once the
+			-- rest of the menu has finished building.
+			local gameConfig = store.gameConfigs[tostring(game.GameId)]
+			local startupConfig = (gameConfig and store.configs[gameConfig]) and gameConfig or store.autoload
+			if startupConfig ~= "" then
 				task.defer(function()
-					if store.configs[store.autoload] then
-						api.load(store.autoload, true)
+					if store.configs[startupConfig] then
+						api.load(startupConfig, true)
 					end
 				end)
 			end
@@ -25867,7 +26249,7 @@ if rayfieldLoaded and Rayfield then
 			table.insert(auxiliaryUiThemeListeners, showSwitch)
 			makeLabel(listCard, {
 				order = 4, size = 11, role = "SubText", wrap = true,
-				text = "Autoload loads that config by itself each time the script starts. Copy puts a config on your clipboard to share; paste it under Import.",
+				text = "Autoload loads that config by itself each time the script starts; This game does the same in this game only, ahead of Autoload. Copy puts a config on your clipboard to share; paste it under Import.",
 			})
 
 			refreshList = function()
@@ -25906,26 +26288,39 @@ if rayfieldLoaded and Rayfield then
 						notify("Configs", isAutoload and ("Nothing loads on start now") or (name .. " will load each time the script starts"), 3)
 						refreshList()
 					end)
-					local copyButton = makePill(buttons, "Copy", 3, "Card", "SubText")
+					-- This game: loads by itself whenever the script starts in this game (before Autoload).
+					local gameKey = tostring(game.GameId)
+					local isGameConfig = store.gameConfigs[gameKey] == name
+					local gameButton = makePill(buttons, "This game", 3, isGameConfig and "SelectedCard" or "Card", isGameConfig and "AccentText" or "SubText")
+					gameButton.Activated:Connect(function()
+						store.gameConfigs[gameKey] = not isGameConfig and name or nil
+						saveStore()
+						notify("Configs", isGameConfig and ("Nothing's picked for this game now") or (name .. " will load each time the script starts in this game"), 3)
+						refreshList()
+					end)
+					local copyButton = makePill(buttons, "Copy", 4, "Card", "SubText")
 					copyButton.Activated:Connect(function()
 						local encodeOk, text = pcall(function()
 							return HttpService:JSONEncode({ spreadCheeksConfig = 1, name = name, config = store.configs[name] })
 						end)
 						if encodeOk then toClipboard(text) end
 					end)
-					local deleteButton = makePill(buttons, "Delete", 4, "Card", "SubText")
+					local deleteButton = makePill(buttons, "Delete", 5, "Card", "SubText")
 					deleteButton.Activated:Connect(function()
 						if not confirmed("delete:" .. name:lower(), "Click Delete again to delete " .. name .. ".") then return end
 						store.configs[name] = nil
 						if store.autoload == name then store.autoload = "" end
+						for linkedGame, linked in pairs(store.gameConfigs) do
+							if linked == name then store.gameConfigs[linkedGame] = nil end
+						end
 						saveStore()
 						notify("Configs", "Deleted " .. name, 3)
 						refreshList()
 					end)
-					-- The buttons take about 260px together; the name and note get the rest.
+					-- The buttons take about 330px together; the name and note get the rest.
 					makeLabel(row, {
 						text = name, font = Enum.Font.GothamMedium, size = 13,
-						position = UDim2.fromOffset(12, 5), frameSize = UDim2.new(1, -280, 0, 17),
+						position = UDim2.fromOffset(12, 5), frameSize = UDim2.new(1, -350, 0, 17),
 					})
 					local switchesOn = 0
 					for _, on in pairs(type(config.switches) == "table" and config.switches or {}) do
@@ -25934,9 +26329,9 @@ if rayfieldLoaded and Rayfield then
 					local theme = type(config.features) == "table" and config.features.theme or nil
 					makeLabel(row, {
 						text = "Saved " .. timeAgo(config.savedAt) .. "  ·  " .. switchesOn .. (switchesOn == 1 and " switch on" or " switches on")
-							.. (theme and ("  ·  " .. tostring(theme)) or "") .. (isAutoload and "  ·  loads on start" or ""),
-						size = 10, role = isAutoload and "AccentText" or "Muted",
-						position = UDim2.fromOffset(12, 23), frameSize = UDim2.new(1, -280, 0, 13),
+							.. (theme and ("  ·  " .. tostring(theme)) or "") .. (isGameConfig and "  ·  loads in this game" or (isAutoload and "  ·  loads on start" or "")),
+						size = 10, role = (isAutoload or isGameConfig) and "AccentText" or "Muted",
+						position = UDim2.fromOffset(12, 23), frameSize = UDim2.new(1, -350, 0, 13),
 					})
 				end
 			end
@@ -26389,11 +26784,14 @@ if rayfieldLoaded and Rayfield then
 				local hex, escape = menuModules.hex, menuModules.escape
 				local clock = os.date("*t", entry.at)
 				local time = '<font color="' .. hex(theme.Muted) .. '">' .. string.format("%02d:%02d", clock.hour, clock.min) .. "</font>  "
+				-- With Streamer Mode on, people go by their "Player 3" names and usernames are left out.
+				local name = entry.player and featureSettings.streamerMode and menuModules.nameOf(entry.player) or entry.name
 				if tabName == "Chat" then
-					return time .. '<b><font color="' .. hex(theme.AccentText) .. '">' .. escape(entry.name) .. "</font></b>  " .. escape(entry.text)
+					return time .. '<b><font color="' .. hex(theme.AccentText) .. '">' .. escape(name) .. "</font></b>  " .. escape(entry.text)
 				elseif tabName == "Joins" then
 					local verb = entry.joined and ('<font color="' .. hex(theme.Good) .. '">joined</font>') or ('<font color="' .. hex(theme.Bad) .. '">left</font>')
-					return time .. "<b>" .. escape(entry.name) .. "</b> " .. verb .. '  <font color="' .. hex(theme.Muted) .. '">@' .. escape(entry.user) .. "</font>"
+					local user = featureSettings.streamerMode and "" or ('  <font color="' .. hex(theme.Muted) .. '">@' .. escape(entry.user) .. "</font>")
+					return time .. "<b>" .. escape(name) .. "</b> " .. verb .. user
 				end
 				return time .. "<b>" .. escape(entry.title) .. "</b>  " .. escape(entry.message)
 			end
@@ -26477,6 +26875,9 @@ if rayfieldLoaded and Rayfield then
 				paintTabs()
 				if logWindow.isShown() then render() end
 			end)
+			table.insert(menuModules.nameListeners, function()
+				if logWindow.isShown() then render() end
+			end)
 			logWindow.onShown = render
 
 			-- A new line for one of the lists: added to the end when that list is showing, and the
@@ -26507,7 +26908,7 @@ if rayfieldLoaded and Rayfield then
 			-- Chat, from Roblox's newer chat or the legacy one, whichever the game uses.
 			local function addChat(player, text)
 				if not player or type(text) ~= "string" or text == "" then return end
-				push("Chat", { at = os.time(), name = player.DisplayName, user = player.Name, text = text })
+				push("Chat", { at = os.time(), name = player.DisplayName, user = player.Name, player = player, text = text })
 			end
 			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
 				table.insert(logWindow.connections, TextChatService.MessageReceived:Connect(function(message)
@@ -26526,10 +26927,10 @@ if rayfieldLoaded and Rayfield then
 				table.insert(logWindow.connections, Players.PlayerAdded:Connect(listenTo))
 			end
 			table.insert(logWindow.connections, Players.PlayerAdded:Connect(function(player)
-				push("Joins", { at = os.time(), name = player.DisplayName, user = player.Name, joined = true })
+				push("Joins", { at = os.time(), name = player.DisplayName, user = player.Name, player = player, joined = true })
 			end))
 			table.insert(logWindow.connections, Players.PlayerRemoving:Connect(function(player)
-				push("Joins", { at = os.time(), name = player.DisplayName, user = player.Name, joined = false })
+				push("Joins", { at = os.time(), name = player.DisplayName, user = player.Name, player = player, joined = false })
 			end))
 
 			paintTabs()
@@ -26915,7 +27316,7 @@ if rayfieldLoaded and Rayfield then
 				name.Size = UDim2.fromOffset(80, 11)
 				name.BackgroundTransparency = 1
 				name.Font = Enum.Font.GothamMedium
-				name.Text = player.DisplayName
+				name.Text = menuModules.nameOf(player)
 				name.TextSize = 9
 				name.TextStrokeTransparency = 0.5
 				name.TextTruncate = Enum.TextTruncate.AtEnd
@@ -26926,6 +27327,11 @@ if rayfieldLoaded and Rayfield then
 				markers[player] = marker
 				return marker
 			end
+			table.insert(menuModules.nameListeners, function()
+				for player, marker in pairs(markers) do
+					marker.name.Text = menuModules.nameOf(player)
+				end
+			end)
 			table.insert(radarWindow.connections, Players.PlayerRemoving:Connect(function(player)
 				if markers[player] then
 					markers[player].dot:Destroy()
@@ -27051,7 +27457,7 @@ if rayfieldLoaded and Rayfield then
 				return nil
 			end
 			local function describe(player)
-				return player.DisplayName ~= player.Name and (player.DisplayName .. " (@" .. player.Name .. ")") or player.Name
+				return menuModules.labelOf(player)
 			end
 			local connections = {}
 			if sharedEnv.SpreadCheeksJoinAlerts then
@@ -27337,8 +27743,7 @@ if rayfieldLoaded and Rayfield then
 				local now = os.clock()
 				if lastAlert[player.UserId] and now - lastAlert[player.UserId] < 3 then return end
 				lastAlert[player.UserId] = now
-				local who = player.DisplayName ~= player.Name and (player.DisplayName .. " (@" .. player.Name .. ")") or player.Name
-				notify("Mentioned by " .. who, text, 6)
+				notify("Mentioned by " .. menuModules.labelOf(player), text, 6)
 				if featureSettings.mentionSound then
 					local ping = Instance.new("Sound")
 					ping.SoundId = "rbxasset://sounds/electronicpingshort.wav"
@@ -27664,6 +28069,8 @@ if rayfieldLoaded and Rayfield then
 			detailLabel.Parent = body
 
 			local enabled, shownTarget, lastUpdate, connection = false, nil, 0, nil
+			-- Streamer Mode going on or off draws the name again.
+			table.insert(menuModules.nameListeners, function() shownTarget = nil end)
 			-- Who to show: the aimbot's lock first, then whoever the trigger bot is on.
 			local function currentTarget()
 				local locked = aimbotState.target
@@ -27688,8 +28095,8 @@ if rayfieldLoaded and Rayfield then
 				if target ~= shownTarget then
 					shownTarget = target
 					avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. target.UserId .. "&w=150&h=150"
-					nameLabel.Text = target.DisplayName
-					userLabel.Text = "@" .. target.Name
+					nameLabel.Text = menuModules.nameOf(target)
+					userLabel.Text = featureSettings.streamerMode and "" or ("@" .. target.Name)
 				end
 				status.Text = kind
 				status.TextColor3 = auxiliaryUiTheme.AccentText
@@ -27828,6 +28235,2345 @@ if rayfieldLoaded and Rayfield then
 		end)
 
 		------------------------------------------------------------------------------------------
+		------------------------------------------------------------------------------------------
+		-- The Big Update (27 October 2026). Each part is built on its own, so a problem in one can't
+		-- stop the rest. Their switches are made with the others further up, so they get key boxes;
+		-- the ones remembered between sessions come back on at the end (see "Switches that were on").
+
+		------------------------------------------------------------------------------------------
+		-- What's New: the first time the script runs after an update, a window shows what the update
+		-- added. menuVersion changes with every update, and that update's notes go at the top of
+		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
+		safeBuild("What's New", function()
+			local menuVersion = "2026.10.27"
+			local releaseNotes = {
+				{
+					title = "The Big Update", date = "27 October 2026",
+					notes = {
+						{ "What's New", "This window, the first time you run the script after an update." },
+						{ "Go Back", "Mobility tab. Back to where you were before your last teleport, glide or death." },
+						{ "Safe Teleport", "Mobility tab. Teleports fly you there quickly instead of jumping you, so games that kick for teleporting don't notice." },
+						{ "Anti-Void", "Protection tab. Falling off the map puts you back where you last stood." },
+						{ "Auto Rejoin", "Protection tab. Rejoins by itself if you're kicked or disconnected." },
+						{ "Rejoin Here", "Servers tab. Rejoins the server and puts you back on the same spot." },
+						{ "Job ID copy", "Servers tab. Copy any server's Job ID for Roblox Account Manager." },
+						{ "Object Finder", "View tab. Find anything on the map by name, see it through walls and fly to it." },
+						{ "Auto Collect", "View tab. Keeps picking up coins, gems or anything named what you type." },
+						{ "Movement Recorder", "Mobility tab. Record your movement and play it back, once or on a loop." },
+						{ "Spectate Bar", "View tab. Flip between players with the arrow keys while you spectate." },
+						{ "Zoom Key", "View tab. Hold Z to zoom in like a scope; scroll to zoom more or less." },
+						{ "Time of Day", "View tab. Set the time on your screen, from midnight to noon." },
+						{ "FPS Boost", "View tab. Turns the game's graphics down so it runs smoother." },
+						{ "Mute Sounds", "View tab. Mute the game's music, or other players' boomboxes and gear." },
+						{ "Aim Prediction", "Combat tab, Aimbot settings. Aims where moving players are about to be." },
+						{ "Hitbox Expander", "Combat tab. Bigger hitboxes on other players, with team and friend checks." },
+						{ "Streamer Mode", "Interface tab. Hides player names across the menu, its windows and the player list." },
+						{ "Clean Screen", "Interface tab. F2 hides every menu window and the game's buttons for clean clips." },
+						{ "Health & Ping Warnings", "Interface tab. A red glow when your health is low, and a heads-up when your ping spikes." },
+						{ "Player Notes", "Players tab. Write a note on anyone; it shows on their card and when they join." },
+						{ "Outfit Viewer", "Players tab. See everything someone's wearing, with pictures and prices." },
+						{ "Configs per game", "Configs tab. Pick a config for a game and it loads by itself there." },
+						{ "Key boxes on moves", "Walks & Moves and Mobility. Put the moves and Go Back on keys, like the switches." },
+					},
+				},
+			}
+			local notesWindow = menuModules.makeWindow({
+				name = "SpreadCheeksWhatsNew", title = "What's New", icons = { "sparkles", "gift" },
+				width = 380, height = 440, xKey = "whatsNewX", yKey = "whatsNewY",
+				defaultPosition = function(screen, size) return (screen.X - size.X) / 2, (screen.Y - size.Y) / 2 end,
+			})
+			local gotIt = Instance.new("TextButton")
+			gotIt.AutomaticSize = Enum.AutomaticSize.X
+			gotIt.Size = UDim2.fromOffset(0, 22)
+			gotIt.AutoButtonColor = false
+			gotIt.BorderSizePixel = 0
+			gotIt.Font = Enum.Font.GothamBold
+			gotIt.Text = "Got it"
+			gotIt.TextSize = 11
+			gotIt.ZIndex = 3
+			bindAuxiliaryUiColor(gotIt, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(gotIt, "TextColor3", "OnAccent")
+			local gotItCorner = Instance.new("UICorner")
+			gotItCorner.CornerRadius = UDim.new(0, 7)
+			gotItCorner.Parent = gotIt
+			local gotItPadding = Instance.new("UIPadding")
+			gotItPadding.PaddingLeft = UDim.new(0, 10)
+			gotItPadding.PaddingRight = UDim.new(0, 10)
+			gotItPadding.Parent = gotIt
+			gotIt.Parent = notesWindow.headerRight
+			local list = Instance.new("ScrollingFrame")
+			list.Position = UDim2.fromOffset(6, 2)
+			list.Size = UDim2.new(1, -12, 1, -8)
+			list.BackgroundTransparency = 1
+			list.BorderSizePixel = 0
+			list.ScrollBarThickness = 3
+			list.ScrollingDirection = Enum.ScrollingDirection.Y
+			list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			list.CanvasSize = UDim2.new()
+			bindAuxiliaryUiColor(list, "ScrollBarImageColor3", "Muted")
+			list.Parent = notesWindow.body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 6)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 8)
+			listPadding.PaddingRight = UDim.new(0, 10)
+			listPadding.PaddingBottom = UDim.new(0, 8)
+			listPadding.Parent = list
+			-- Colours are written into the text, so it's drawn again after a theme change.
+			local function render()
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				local theme, hex = auxiliaryUiTheme, menuModules.hex
+				local order = 0
+				local function line(text, size, font)
+					order += 1
+					local label = Instance.new("TextLabel")
+					label.LayoutOrder = order
+					label.Size = UDim2.fromScale(1, 0)
+					label.AutomaticSize = Enum.AutomaticSize.Y
+					label.BackgroundTransparency = 1
+					label.Font = font or Enum.Font.Gotham
+					label.RichText = true
+					label.Text = text
+					label.TextSize = size
+					label.TextWrapped = true
+					label.TextXAlignment = Enum.TextXAlignment.Left
+					label.TextColor3 = theme.Text
+					label.Parent = list
+				end
+				for _, release in ipairs(releaseNotes) do
+					line(menuModules.escape(release.title), 16, Enum.Font.GothamBold)
+					line('<font color="' .. hex(theme.Muted) .. '">' .. release.date .. "  ·  " .. #release.notes .. " new things</font>", 11)
+					for _, note in ipairs(release.notes) do
+						line('<b><font color="' .. hex(theme.AccentText) .. '">' .. menuModules.escape(note[1]) .. "</font></b>  "
+							.. '<font color="' .. hex(theme.SubText) .. '">' .. menuModules.escape(note[2]) .. "</font>", 12)
+					end
+				end
+			end
+			render()
+			table.insert(auxiliaryUiThemeListeners, render)
+			local function close()
+				notesWindow.setShown(false)
+				if featureSettings.lastSeenVersion ~= menuVersion then
+					featureSettings.lastSeenVersion = menuVersion
+					saveFeatureSettings()
+				end
+			end
+			gotIt.Activated:Connect(close)
+			menuModules.whatsNew = {
+				open = function() notesWindow.setShown(true) end,
+				close = close,
+				version = menuVersion,
+			}
+			if featureSettings.lastSeenVersion ~= menuVersion then notesWindow.setShown(true) end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Safe Teleport and Go Back. Go Back keeps the last ten places you were before a teleport (any
+		-- jump of 50 studs in a tenth of a second counts, whatever did it), a glide or a death, and
+		-- takes you to the newest; again goes further back. Safe Teleport makes the menu's teleports
+		-- (Go Back, Object Finder, goto, waypoints and click teleport) fly you there at its speed
+		-- instead of jumping you, the way Glide To flies, so games that kick for teleporting don't see
+		-- one. menuModules.flyTo is that flight, for Auto Collect too.
+		safeBuild("Safe Teleport and Go Back", function()
+			local localPlayer = Players.LocalPlayer
+			local history, ignoreUntil = {}, 0
+			local function remember(position)
+				local last = history[#history]
+				if last and (last - position).Magnitude < 5 then return end
+				table.insert(history, position)
+				if #history > 10 then table.remove(history, 1) end
+			end
+			function menuModules.rememberSpot(position)
+				if typeof(position) == "Vector3" then remember(position) end
+			end
+			task.spawn(function()
+				local lastRoot, lastPosition = nil, nil
+				while true do
+					task.wait(0.1)
+					local character = localPlayer.Character
+					local root = character and getRoot(character)
+					if root then
+						local position = root.Position
+						if root == lastRoot and lastPosition and os.clock() > ignoreUntil and (position - lastPosition).Magnitude > 50 then
+							remember(lastPosition)
+						end
+						lastRoot, lastPosition = root, position
+					end
+				end
+			end)
+			local function watchDeath(character)
+				local humanoid = character:WaitForChild("Humanoid", 10)
+				if not humanoid then return end
+				humanoid.Died:Connect(function()
+					local root = getRoot(character)
+					if root then remember(root.Position) end
+				end)
+			end
+			if localPlayer.Character then task.spawn(watchDeath, localPlayer.Character) end
+			localPlayer.CharacterAdded:Connect(watchDeath)
+
+			-- The flight: through walls (collisions off), limp so the humanoid doesn't fight it, moved by
+			-- velocity so everyone sees it smoothly. Arriving drops you on the exact spot.
+			local flight = { loop = nil, noclip = nil, collisions = nil, humanoid = nil }
+			local function endFlight()
+				if flight.loop then
+					flight.loop:Disconnect()
+					flight.loop = nil
+				end
+				if flight.noclip then
+					flight.noclip:Disconnect()
+					flight.noclip = nil
+				end
+				for part, canCollide in pairs(flight.collisions or {}) do
+					if part.Parent then part.CanCollide = canCollide end
+				end
+				flight.collisions = nil
+				local humanoid = flight.humanoid
+				flight.humanoid = nil
+				if humanoid and humanoid.Parent and humanoid.Health > 0 then
+					humanoid.PlatformStand = false
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+			end
+			-- Flies you to cframe at speed (studs a second), calling arrived once you're there. False if
+			-- your character isn't ready.
+			local function flyTo(cframe, speed, arrived)
+				endFlight()
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				local root = character and getRoot(character)
+				if not humanoid or not root or humanoid.Health <= 0 then return false end
+				if humanoid.SeatPart then humanoid.Sit = false end
+				flight.humanoid = humanoid
+				flight.collisions = {}
+				for _, part in ipairs(character:GetDescendants()) do
+					if part:IsA("BasePart") then flight.collisions[part] = part.CanCollide end
+				end
+				flight.noclip = RunService.Stepped:Connect(function()
+					for part in pairs(flight.collisions) do
+						if part.Parent then part.CanCollide = false end
+					end
+				end)
+				local target, started = cframe.Position, os.clock()
+				flight.loop = RunService.Heartbeat:Connect(function(deltaTime)
+					local myRoot = character.Parent and getRoot(character)
+					if not myRoot or humanoid.Health <= 0 then return endFlight() end
+					humanoid.PlatformStand = true
+					myRoot.AssemblyAngularVelocity = Vector3.zero
+					local offset = target - myRoot.Position
+					local distance = offset.Magnitude
+					if distance < 1 or os.clock() - started > 180 then
+						endFlight()
+						myRoot.CFrame = cframe
+						myRoot.AssemblyLinearVelocity = Vector3.zero
+						if arrived then task.spawn(arrived) end
+						return
+					end
+					myRoot.AssemblyLinearVelocity = offset.Unit * math.min(speed, distance / math.max(deltaTime, 1 / 120))
+				end)
+				return true
+			end
+			menuModules.flyTo = flyTo
+			menuModules.stopFlying = endFlight
+			-- The Safe Teleport switch: teleportTo checks featureSettings.safeTeleport itself, so switching
+			-- it off only needs to stop a flight that's under way.
+			menuModules.safeTeleport = {
+				setEnabled = function(on)
+					if not on then endFlight() end
+				end,
+			}
+			-- Takes you to cframe: flying with Safe Teleport on, straight there without. remembered
+			-- false leaves the spot you're leaving out of Go Back (Go Back itself does that).
+			local function teleportTo(cframe, notRemembered)
+				local character = localPlayer.Character
+				local root = character and getRoot(character)
+				if not root then return false end
+				ignoreUntil = os.clock() + 0.5
+				if not notRemembered then remember(root.Position) end
+				if featureSettings.safeTeleport then
+					return flyTo(cframe, featureSettings.safeTeleportSpeed)
+				end
+				endFlight()
+				local humanoid = character:FindFirstChildOfClass("Humanoid")
+				if humanoid and humanoid.SeatPart then humanoid.Sit = false end
+				root.CFrame = cframe
+				root.AssemblyLinearVelocity = Vector3.zero
+				return true
+			end
+			menuModules.teleportTo = teleportTo
+			-- Infinite Yield's goto, waypoints and click teleport ask this first; it only takes over with
+			-- Safe Teleport on.
+			spreadCheeksTeleport = function(cframe)
+				if not featureSettings.safeTeleport then return false end
+				return teleportTo(cframe)
+			end
+			function menuModules.goBack()
+				local spot = table.remove(history)
+				if not spot then return notify("Go Back", "Nowhere to go back to yet.") end
+				local character = localPlayer.Character
+				local root = character and getRoot(character)
+				if not root then return end
+				teleportTo(CFrame.new(spot + Vector3.new(0, 0.5, 0)) * root.CFrame.Rotation, true)
+				notify("Go Back", #history > 0 and (#history .. (#history == 1 and " more place" or " more places") .. " to go back to") or "That's as far back as it goes", 2)
+			end
+
+			local card = quickToggleByName["Safe Teleport"] and createSettingsCard(quickToggleByName["Safe Teleport"])
+			if card then
+				card.addSectionLabel("SPEED", "gauge")
+				card.addSlider({
+					text = "Flying speed",
+					icon = { "gauge" },
+					min = 30, max = 300, step = 5,
+					get = function() return featureSettings.safeTeleportSpeed end,
+					set = function(value) featureSettings.safeTeleportSpeed = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return math.floor(value + 0.5) .. " studs/s" end,
+				})
+				card.addHint("Walking is 16. Slower is less likely to be noticed; faster gets there sooner. Works for Go Back, Object Finder, goto, waypoints and click teleport.")
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Anti-Void: notes where you last stood on something, and if you fall to near the bottom of the
+		-- map (or more than 400 studs below that spot), puts you straight back there.
+		safeBuild("Anti-Void", function()
+			local localPlayer = Players.LocalPlayer
+			local state = { loop = nil, safe = nil }
+			local function setEnabled(on)
+				if state.loop then
+					state.loop:Disconnect()
+					state.loop = nil
+				end
+				state.safe = nil
+				if not on then return end
+				state.loop = RunService.Heartbeat:Connect(function()
+					local character = localPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local root = character and getRoot(character)
+					if not humanoid or not root or humanoid.Health <= 0 then return end
+					local bottom = workspace.FallenPartsDestroyHeight
+					local height = root.Position.Y
+					if humanoid.FloorMaterial ~= Enum.Material.Air and height > bottom + 40 then
+						state.safe = root.CFrame
+					elseif state.safe and (height < bottom + 25 or height < state.safe.Position.Y - 400) then
+						root.CFrame = state.safe + Vector3.new(0, 3, 0)
+						root.AssemblyLinearVelocity = Vector3.zero
+						notify("Anti-Void", "Caught you before the void", 2)
+					end
+				end)
+			end
+			menuModules.antiVoid = { setEnabled = setEnabled }
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Rejoin Here and Auto Rejoin. Rejoin Here notes where you're standing, rejoins this server, and
+		-- puts you back on the spot: through the executor's teleport queue when it has one, or else when
+		-- the script next starts (within five minutes). Auto Rejoin rejoins when Roblox shows the
+		-- kicked or disconnected message: this server first, then any server of the game.
+		safeBuild("Rejoin Here and Auto Rejoin", function()
+			local localPlayer = Players.LocalPlayer
+			local spotFile = "SpreadCheeksGUI_RejoinSpot.json"
+			-- The same thing the queued code below does, for when the script itself runs first.
+			local function readSpot()
+				if not readfile then return nil end
+				local readOk, contents = readfile(spotFile, true)
+				if not readOk or type(contents) ~= "string" or contents == "" then return nil end
+				local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+				if not decodeOk or type(data) ~= "table" or data.placeId ~= game.PlaceId or type(data.position) ~= "table" then return nil end
+				if os.time() - (tonumber(data.at) or 0) > 300 then return nil end
+				return data
+			end
+			local saved = readSpot()
+			if saved then
+				if writefile then writefile(spotFile, "", true) end
+				task.spawn(function()
+					local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+					local root = character:WaitForChild("HumanoidRootPart", 15)
+					if not root then return end
+					task.wait(0.5)
+					local p, l = saved.position, type(saved.look) == "table" and saved.look or { 0, 0, -1 }
+					local position = Vector3.new(tonumber(p[1]) or 0, tonumber(p[2]) or 0, tonumber(p[3]) or 0)
+					root.CFrame = CFrame.lookAt(position, position + Vector3.new(tonumber(l[1]) or 0, 0, tonumber(l[3]) or -1))
+					notify("Rejoin Here", "Back where you were", 3)
+				end)
+			end
+			local queuedCode = [==[
+		local HttpService, Players = game:GetService("HttpService"), game:GetService("Players")
+		local file = "SpreadCheeksGUI_RejoinSpot.json"
+		local readOk, contents = pcall(readfile, file)
+		if not readOk or type(contents) ~= "string" or contents == "" then return end
+		local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+		if not decodeOk or type(data) ~= "table" or data.placeId ~= game.PlaceId or os.time() - (tonumber(data.at) or 0) > 300 then return end
+		pcall(writefile, file, "")
+		repeat task.wait() until Players.LocalPlayer
+		local player = Players.LocalPlayer
+		local character = player.Character or player.CharacterAdded:Wait()
+		local root = character:WaitForChild("HumanoidRootPart", 15)
+		if not root then return end
+		task.wait(0.5)
+		local p, l = data.position, data.look or { 0, 0, -1 }
+		local position = Vector3.new(p[1], p[2], p[3])
+		root.CFrame = CFrame.lookAt(position, position + Vector3.new(l[1], 0, l[3]))
+		]==]
+			function menuModules.rejoinHere()
+				local character = localPlayer.Character
+				local root = character and getRoot(character)
+				if not root then return notify("Rejoin Here", "Your character isn't ready yet.") end
+				if not writefile then return notify("Rejoin Here", "Your executor can't save files, so your spot can't be kept.") end
+				local position, look = root.Position, root.CFrame.LookVector
+				writefile(spotFile, HttpService:JSONEncode({
+					placeId = game.PlaceId, at = os.time(),
+					position = { position.X, position.Y, position.Z }, look = { look.X, look.Y, look.Z },
+				}), true)
+				if queueteleport then pcall(queueteleport, queuedCode) end
+				notify("Rejoin Here", "Rejoining...", 3)
+				execCmd("rejoin", localPlayer, true)
+			end
+
+			local rejoin = { connection = nil, trying = false }
+			local function setAutoRejoin(on)
+				if rejoin.connection then
+					rejoin.connection:Disconnect()
+					rejoin.connection = nil
+				end
+				if not on then return end
+				rejoin.connection = GuiService.ErrorMessageChanged:Connect(function()
+					local messageOk, message = pcall(function() return GuiService:GetErrorMessage() end)
+					if rejoin.trying or (messageOk and message == "") then return end
+					rejoin.trying = true
+					task.spawn(function()
+						-- This server three times, then any server of the game, every five seconds.
+						for attempt = 1, 12 do
+							pcall(function()
+								if attempt <= 3 then
+									TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
+								else
+									TeleportService:Teleport(game.PlaceId, localPlayer)
+								end
+							end)
+							task.wait(5)
+						end
+						rejoin.trying = false
+					end)
+				end)
+			end
+			menuModules.autoRejoin = { setEnabled = setAutoRejoin }
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Object Finder: a window where you type a name (chest, key, coin, door) and it finds every part
+		-- or model on the map with that in its name, nearest first. The nearest 30 are highlighted
+		-- through walls with their name and distance, and Go flies (or teleports) you to one.
+		safeBuild("The Object Finder", function()
+			local localPlayer = Players.LocalPlayer
+			local finder = menuModules.makeWindow({
+				name = "SpreadCheeksFinder", title = "Object Finder", icons = { "search", "scan-search" },
+				width = 340, height = 400, xKey = "finderX", yKey = "finderY",
+				defaultPosition = function(screen, size) return screen.X - size.X - 16, (screen.Y - size.Y) / 2 end,
+			})
+			local body = finder.body
+			local search = Instance.new("TextBox")
+			search.Position = UDim2.fromOffset(10, 2)
+			search.Size = UDim2.new(1, -86, 0, 28)
+			search.BorderSizePixel = 0
+			search.ClearTextOnFocus = false
+			search.Font = Enum.Font.Gotham
+			search.PlaceholderText = "What to find, like chest"
+			search.Text = ""
+			search.TextSize = 12
+			search.TextXAlignment = Enum.TextXAlignment.Left
+			bindAuxiliaryUiColor(search, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(search, "TextColor3", "Text")
+			bindAuxiliaryUiColor(search, "PlaceholderColor3", "Muted")
+			local searchCorner = Instance.new("UICorner")
+			searchCorner.CornerRadius = UDim.new(0, 8)
+			searchCorner.Parent = search
+			local searchPadding = Instance.new("UIPadding")
+			searchPadding.PaddingLeft = UDim.new(0, 10)
+			searchPadding.PaddingRight = UDim.new(0, 10)
+			searchPadding.Parent = search
+			search.Parent = body
+			local findButton = Instance.new("TextButton")
+			findButton.AnchorPoint = Vector2.new(1, 0)
+			findButton.Position = UDim2.new(1, -10, 0, 2)
+			findButton.Size = UDim2.fromOffset(68, 28)
+			findButton.AutoButtonColor = false
+			findButton.BorderSizePixel = 0
+			findButton.Font = Enum.Font.GothamBold
+			findButton.Text = "Find"
+			findButton.TextSize = 12
+			bindAuxiliaryUiColor(findButton, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(findButton, "TextColor3", "OnAccent")
+			local findCorner = Instance.new("UICorner")
+			findCorner.CornerRadius = UDim.new(0, 8)
+			findCorner.Parent = findButton
+			findButton.Parent = body
+			local summary = Instance.new("TextLabel")
+			summary.Position = UDim2.fromOffset(12, 34)
+			summary.Size = UDim2.new(1, -24, 0, 16)
+			summary.BackgroundTransparency = 1
+			summary.Font = Enum.Font.Gotham
+			summary.Text = "Type a name and press Enter."
+			summary.TextSize = 11
+			summary.TextXAlignment = Enum.TextXAlignment.Left
+			summary.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(summary, "TextColor3", "SubText")
+			summary.Parent = body
+			local list = Instance.new("ScrollingFrame")
+			list.Position = UDim2.fromOffset(6, 54)
+			list.Size = UDim2.new(1, -12, 1, -60)
+			list.BackgroundTransparency = 1
+			list.BorderSizePixel = 0
+			list.ScrollBarThickness = 3
+			list.ScrollingDirection = Enum.ScrollingDirection.Y
+			list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			list.CanvasSize = UDim2.new()
+			bindAuxiliaryUiColor(list, "ScrollBarImageColor3", "Muted")
+			list.Parent = body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 4)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 4)
+			listPadding.PaddingRight = UDim.new(0, 8)
+			listPadding.Parent = list
+
+			-- Highlights and labels live in a folder of their own, so clearing them is one Destroy.
+			local marks = { folder = nil }
+			local results, serial = {}, 0
+			local function clearMarks()
+				if marks.folder then marks.folder:Destroy() end
+				marks.folder = nil
+			end
+			local function positionOf(object)
+				if not object.Parent then return nil end
+				if object:IsA("Model") then
+					local pivotOk, pivot = pcall(function() return object:GetPivot() end)
+					return pivotOk and pivot.Position or nil
+				end
+				return object.Position
+			end
+			local function insideCharacter(object)
+				local model = object:FindFirstAncestorWhichIsA("Model")
+				while model do
+					if Players:GetPlayerFromCharacter(model) then return true end
+					model = model:FindFirstAncestorWhichIsA("Model")
+				end
+				return object:IsA("Model") and Players:GetPlayerFromCharacter(object) ~= nil
+			end
+			local function render()
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				local theme = auxiliaryUiTheme
+				for index, result in ipairs(results) do
+					local row = Instance.new("Frame")
+					row.LayoutOrder = index
+					row.Size = UDim2.new(1, 0, 0, 38)
+					row.BorderSizePixel = 0
+					row.BackgroundColor3 = theme.Inset
+					local rowCorner = Instance.new("UICorner")
+					rowCorner.CornerRadius = UDim.new(0, 8)
+					rowCorner.Parent = row
+					row.Parent = list
+					local name = Instance.new("TextLabel")
+					name.Position = UDim2.fromOffset(10, 4)
+					name.Size = UDim2.new(1, -70, 0, 16)
+					name.BackgroundTransparency = 1
+					name.Font = Enum.Font.GothamMedium
+					name.Text = result.object.Name
+					name.TextSize = 12
+					name.TextXAlignment = Enum.TextXAlignment.Left
+					name.TextTruncate = Enum.TextTruncate.AtEnd
+					name.TextColor3 = theme.Text
+					name.Parent = row
+					local detail = Instance.new("TextLabel")
+					detail.Position = UDim2.fromOffset(10, 20)
+					detail.Size = UDim2.new(1, -70, 0, 14)
+					detail.BackgroundTransparency = 1
+					detail.Font = Enum.Font.Gotham
+					detail.Text = math.floor(result.distance + 0.5) .. " studs  ·  in " .. (result.object.Parent and result.object.Parent.Name or "?")
+					detail.TextSize = 10
+					detail.TextXAlignment = Enum.TextXAlignment.Left
+					detail.TextTruncate = Enum.TextTruncate.AtEnd
+					detail.TextColor3 = theme.Muted
+					detail.Parent = row
+					local go = Instance.new("TextButton")
+					go.AnchorPoint = Vector2.new(1, 0.5)
+					go.Position = UDim2.new(1, -6, 0.5, 0)
+					go.Size = UDim2.fromOffset(50, 24)
+					go.AutoButtonColor = false
+					go.BorderSizePixel = 0
+					go.Font = Enum.Font.GothamBold
+					go.Text = "Go"
+					go.TextSize = 11
+					go.BackgroundColor3 = theme.Accent
+					go.TextColor3 = theme.OnAccent
+					local goCorner = Instance.new("UICorner")
+					goCorner.CornerRadius = UDim.new(0, 6)
+					goCorner.Parent = go
+					go.Parent = row
+					go.Activated:Connect(function()
+						local position = positionOf(result.object)
+						if not position then return notify("Object Finder", "That's gone now.") end
+						if menuModules.teleportTo then menuModules.teleportTo(CFrame.new(position + Vector3.new(0, 4, 0))) end
+					end)
+				end
+			end
+			-- The nearest 30 get a highlight through walls and a label with their name and distance.
+			local function mark()
+				clearMarks()
+				local folder = Instance.new("Folder")
+				folder.Name = "SpreadCheeksFinderMarks"
+				folder.Parent = COREGUI
+				marks.folder = folder
+				local color = auxiliaryUiTheme.AccentText
+				for index = 1, math.min(30, #results) do
+					local object = results[index].object
+					local highlight = Instance.new("Highlight")
+					highlight.Adornee = object
+					highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					highlight.FillColor = color
+					highlight.FillTransparency = 0.65
+					highlight.OutlineColor = color
+					highlight.Parent = folder
+					local anchor = object:IsA("BasePart") and object or object:FindFirstChildWhichIsA("BasePart", true)
+					if anchor then
+						local label = Instance.new("BillboardGui")
+						label.Adornee = anchor
+						label.AlwaysOnTop = true
+						label.Size = UDim2.fromOffset(160, 30)
+						label.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+						label.MaxDistance = math.huge
+						label.Parent = folder
+						local text = Instance.new("TextLabel")
+						text.Size = UDim2.fromScale(1, 1)
+						text.BackgroundTransparency = 1
+						text.Font = Enum.Font.GothamBold
+						text.TextSize = 12
+						text.TextColor3 = Color3.fromRGB(245, 247, 255)
+						text.TextStrokeTransparency = 0.4
+						text.Parent = label
+						results[index].label = text
+					end
+				end
+			end
+			local function find(query)
+				serial += 1
+				local mySerial = serial
+				query = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+				results = {}
+				render()
+				clearMarks()
+				if query == "" then
+					summary.Text = "Type a name and press Enter."
+					return
+				end
+				summary.Text = "Looking..."
+				task.spawn(function()
+					local found, foundModels = {}, {}
+					local descendants = workspace:GetDescendants()
+					for index, object in ipairs(descendants) do
+						if index % 4000 == 0 then
+							task.wait()
+							if serial ~= mySerial then return end
+						end
+						if (object:IsA("BasePart") or object:IsA("Model")) and object.Name:lower():find(query, 1, true) then
+							-- A match inside a match (a part named Chest in a model named Chest) counts once.
+							local inside = false
+							local model = object:FindFirstAncestorWhichIsA("Model")
+							while model do
+								if foundModels[model] then
+									inside = true
+									break
+								end
+								model = model:FindFirstAncestorWhichIsA("Model")
+							end
+							if not inside and not insideCharacter(object) then
+								table.insert(found, object)
+								if object:IsA("Model") then foundModels[object] = true end
+							end
+						end
+					end
+					if serial ~= mySerial then return end
+					local character = localPlayer.Character
+					local root = character and getRoot(character)
+					local from = root and root.Position or workspace.CurrentCamera.CFrame.Position
+					for _, object in ipairs(found) do
+						local position = positionOf(object)
+						if position then table.insert(results, { object = object, distance = (position - from).Magnitude }) end
+					end
+					table.sort(results, function(left, right) return left.distance < right.distance end)
+					local total = #results
+					while #results > 150 do table.remove(results) end
+					summary.Text = total == 0 and "Nothing called that here."
+						or (total .. " found" .. (total > 150 and ", nearest 150 listed" or "") .. "  ·  nearest " .. math.min(30, total) .. " highlighted")
+					render()
+					mark()
+				end)
+			end
+			-- The rows' colours are written in, so they're drawn again after a theme change.
+			table.insert(auxiliaryUiThemeListeners, render)
+			findButton.Activated:Connect(function() find(search.Text) end)
+			search.FocusLost:Connect(function(enterPressed)
+				if enterPressed then find(search.Text) end
+			end)
+			-- Distances on the labels keep up as you move.
+			task.spawn(function()
+				while finder.gui.Parent do
+					task.wait(0.5)
+					if marks.folder then
+						local character = localPlayer.Character
+						local root = character and getRoot(character)
+						for _, result in ipairs(results) do
+							if result.label then
+								local position = positionOf(result.object)
+								result.label.Text = position and root and (result.object.Name .. "  " .. math.floor((position - root.Position).Magnitude + 0.5) .. "m") or ""
+							end
+						end
+					end
+				end
+			end)
+			menuModules.objectFinder = {
+				setEnabled = function(on)
+					finder.setShown(on)
+					if not on then
+						serial += 1
+						clearMarks()
+					elseif results[1] then
+						mark()
+					end
+				end,
+				find = function(query)
+					search.Text = tostring(query or "")
+					find(search.Text)
+				end,
+			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Auto Collect: keeps picking up anything named one of your words (coin, gem, orb) within range.
+		-- Touch reaches them from where you stand, through the executor's firetouchinterest; Fly goes
+		-- to each in turn (with Safe Teleport's flight). Parts are found once, then followed as they
+		-- appear and go, so it stays light. The words, the way and the range are in its settings card.
+		safeBuild("Auto Collect", function()
+			local localPlayer = Players.LocalPlayer
+			local canTouch = type(firetouchinterest) == "function"
+			local collect = { items = {}, connections = {}, loop = nil, serial = 0, flyingTo = nil }
+			local function words()
+				local list = {}
+				for _, word in ipairs(type(featureSettings.collectWords) == "table" and featureSettings.collectWords or {}) do
+					word = tostring(word):lower()
+					if word ~= "" then table.insert(list, word) end
+				end
+				return list
+			end
+			local function matches(object, wanted)
+				if not object:IsA("BasePart") then return false end
+				local parent = object.Parent
+				local name, parentName = object.Name:lower(), parent and parent:IsA("Model") and parent.Name:lower() or ""
+				for _, word in ipairs(wanted) do
+					if name:find(word, 1, true) or parentName:find(word, 1, true) then
+						local model = object:FindFirstAncestorWhichIsA("Model")
+						while model do
+							if Players:GetPlayerFromCharacter(model) then return false end
+							model = model:FindFirstAncestorWhichIsA("Model")
+						end
+						return true
+					end
+				end
+				return false
+			end
+			local function stop()
+				collect.serial += 1
+				if collect.loop then
+					collect.loop:Disconnect()
+					collect.loop = nil
+				end
+				for _, connection in ipairs(collect.connections) do connection:Disconnect() end
+				table.clear(collect.connections)
+				table.clear(collect.items)
+				if collect.flyingTo and menuModules.stopFlying then menuModules.stopFlying() end
+				collect.flyingTo = nil
+			end
+			local function setEnabled(on)
+				stop()
+				if not on then return end
+				local wanted = words()
+				if #wanted == 0 then
+					notify("Auto Collect", "Right-click Auto Collect and add what to collect first, like coin.", 5)
+					return false
+				end
+				local serial = collect.serial
+				table.insert(collect.connections, workspace.DescendantAdded:Connect(function(object)
+					if matches(object, wanted) then collect.items[object] = true end
+				end))
+				table.insert(collect.connections, workspace.DescendantRemoving:Connect(function(object)
+					collect.items[object] = nil
+				end))
+				task.spawn(function()
+					for index, object in ipairs(workspace:GetDescendants()) do
+						if index % 4000 == 0 then
+							task.wait()
+							if collect.serial ~= serial then return end
+						end
+						if matches(object, wanted) then collect.items[object] = true end
+					end
+				end)
+				local last = 0
+				collect.loop = RunService.Heartbeat:Connect(function()
+					local now = os.clock()
+					if now - last < 0.25 then return end
+					last = now
+					local character = localPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local root = character and getRoot(character)
+					if not root or not humanoid or humanoid.Health <= 0 then return end
+					local inRange = {}
+					for item in pairs(collect.items) do
+						if item.Parent then
+							local distance = (item.Position - root.Position).Magnitude
+							if distance <= featureSettings.collectRange then table.insert(inRange, { item = item, distance = distance }) end
+						else
+							collect.items[item] = nil
+						end
+					end
+					table.sort(inRange, function(left, right) return left.distance < right.distance end)
+					if featureSettings.collectMethod == "Touch" and canTouch then
+						for index = 1, math.min(20, #inRange) do
+							local item = inRange[index].item
+							pcall(function()
+								firetouchinterest(item, root, 0)
+								firetouchinterest(item, root, 1)
+							end)
+						end
+						return
+					end
+					-- Fly: on to the nearest, and to the next once that one's gone.
+					local target = collect.flyingTo
+					if target and target.Parent and collect.items[target] then return end
+					collect.flyingTo = nil
+					local nearest = inRange[1]
+					if nearest and menuModules.flyTo then
+						collect.flyingTo = nearest.item
+						menuModules.flyTo(CFrame.new(nearest.item.Position) * root.CFrame.Rotation, featureSettings.collectSpeed, function()
+							-- Picked up or not, it's not gone after once round.
+							task.delay(0.6, function()
+								if collect.flyingTo == nearest.item then
+									collect.items[nearest.item] = nil
+									collect.flyingTo = nil
+								end
+							end)
+						end)
+					end
+				end)
+			end
+			menuModules.autoCollect = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Auto Collect"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("COLLECT", "hand", "magnet")
+			card.addHint("Anything with one of these words in its name (or its model's), like coin or gem.")
+			local addRow = Instance.new("Frame")
+			addRow.LayoutOrder = card.nextOrder()
+			addRow.Size = UDim2.new(1, 0, 0, 30)
+			addRow.BackgroundTransparency = 1
+			addRow.Parent = card.content
+			local wordBox = Instance.new("TextBox")
+			wordBox.Size = UDim2.new(1, -78, 1, 0)
+			wordBox.BorderSizePixel = 0
+			wordBox.ClearTextOnFocus = false
+			wordBox.Font = Enum.Font.Gotham
+			wordBox.PlaceholderText = "A word, like coin"
+			wordBox.Text = ""
+			wordBox.TextSize = 12
+			wordBox.TextXAlignment = Enum.TextXAlignment.Left
+			bindAuxiliaryUiColor(wordBox, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(wordBox, "TextColor3", "Text")
+			bindAuxiliaryUiColor(wordBox, "PlaceholderColor3", "Muted")
+			local wordCorner = Instance.new("UICorner")
+			wordCorner.CornerRadius = UDim.new(0, 8)
+			wordCorner.Parent = wordBox
+			local wordPadding = Instance.new("UIPadding")
+			wordPadding.PaddingLeft = UDim.new(0, 10)
+			wordPadding.PaddingRight = UDim.new(0, 10)
+			wordPadding.Parent = wordBox
+			wordBox.Parent = addRow
+			local addButton = Instance.new("TextButton")
+			addButton.AnchorPoint = Vector2.new(1, 0)
+			addButton.Position = UDim2.fromScale(1, 0)
+			addButton.Size = UDim2.new(0, 70, 1, 0)
+			addButton.AutoButtonColor = false
+			addButton.BorderSizePixel = 0
+			addButton.Font = Enum.Font.GothamBold
+			addButton.Text = "Add"
+			addButton.TextSize = 12
+			bindAuxiliaryUiColor(addButton, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(addButton, "TextColor3", "OnAccent")
+			local addCorner = Instance.new("UICorner")
+			addCorner.CornerRadius = UDim.new(0, 8)
+			addCorner.Parent = addButton
+			addButton.Parent = addRow
+			local wordsFrame = Instance.new("Frame")
+			wordsFrame.LayoutOrder = card.nextOrder()
+			wordsFrame.Size = UDim2.fromScale(1, 0)
+			wordsFrame.AutomaticSize = Enum.AutomaticSize.Y
+			wordsFrame.BackgroundTransparency = 1
+			wordsFrame.Parent = card.content
+			local wordsLayout = Instance.new("UIListLayout")
+			wordsLayout.Padding = UDim.new(0, 4)
+			wordsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			wordsLayout.Parent = wordsFrame
+			-- A change to the words starts collecting again with the new ones, if it's on.
+			local function wordsChanged()
+				saveFeatureSettings()
+				card.refresh()
+				if entry.state then setEnabled(true) end
+			end
+			table.insert(card.refreshers, function()
+				for _, child in ipairs(wordsFrame:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				local list = type(featureSettings.collectWords) == "table" and featureSettings.collectWords or {}
+				if #list == 0 then
+					local none = Instance.new("TextLabel")
+					none.Size = UDim2.new(1, 0, 0, 18)
+					none.BackgroundTransparency = 1
+					none.Font = Enum.Font.Gotham
+					none.Text = "Nothing to collect yet."
+					none.TextSize = 11
+					none.TextXAlignment = Enum.TextXAlignment.Left
+					none.TextColor3 = auxiliaryUiTheme.Muted
+					none.Parent = wordsFrame
+					return
+				end
+				for index, word in ipairs(list) do
+					local row = Instance.new("Frame")
+					row.LayoutOrder = index
+					row.Size = UDim2.new(1, 0, 0, 28)
+					row.BorderSizePixel = 0
+					row.BackgroundColor3 = auxiliaryUiTheme.Inset
+					local rowCorner = Instance.new("UICorner")
+					rowCorner.CornerRadius = UDim.new(0, 7)
+					rowCorner.Parent = row
+					row.Parent = wordsFrame
+					local label = Instance.new("TextLabel")
+					label.Position = UDim2.fromOffset(10, 0)
+					label.Size = UDim2.new(1, -90, 1, 0)
+					label.BackgroundTransparency = 1
+					label.Font = Enum.Font.GothamMedium
+					label.Text = tostring(word)
+					label.TextSize = 12
+					label.TextXAlignment = Enum.TextXAlignment.Left
+					label.TextColor3 = auxiliaryUiTheme.Text
+					label.Parent = row
+					local remove = Instance.new("TextButton")
+					remove.AnchorPoint = Vector2.new(1, 0.5)
+					remove.Position = UDim2.new(1, -4, 0.5, 0)
+					remove.Size = UDim2.fromOffset(70, 22)
+					remove.AutoButtonColor = false
+					remove.BorderSizePixel = 0
+					remove.Font = Enum.Font.GothamMedium
+					remove.Text = "Remove"
+					remove.TextSize = 11
+					remove.BackgroundColor3 = auxiliaryUiTheme.Card
+					remove.TextColor3 = auxiliaryUiTheme.SubText
+					local removeCorner = Instance.new("UICorner")
+					removeCorner.CornerRadius = UDim.new(0, 6)
+					removeCorner.Parent = remove
+					remove.Parent = row
+					remove.Activated:Connect(function()
+						table.remove(list, index)
+						wordsChanged()
+					end)
+				end
+			end)
+			local function addTypedWord()
+				local word = wordBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+				if word == "" or #word > 40 then return end
+				if type(featureSettings.collectWords) ~= "table" then featureSettings.collectWords = {} end
+				for _, existing in ipairs(featureSettings.collectWords) do
+					if tostring(existing):lower() == word:lower() then
+						wordBox.Text = ""
+						return
+					end
+				end
+				table.insert(featureSettings.collectWords, word)
+				wordBox.Text = ""
+				wordsChanged()
+			end
+			addButton.Activated:Connect(addTypedWord)
+			wordBox.FocusLost:Connect(function(enterPressed)
+				if enterPressed then addTypedWord() end
+			end)
+			card.addSectionLabel("HOW", "hand")
+			card.addChoice({ "Touch", "Fly" }, function() return featureSettings.collectMethod end, function(method)
+				featureSettings.collectMethod = method
+				saveFeatureSettings()
+			end)
+			card.addHint(function()
+				if featureSettings.collectMethod == "Touch" then
+					return canTouch and "Picks things up from where you stand, the 20 nearest at a time. Some games only count a real touch; use Fly for those."
+						or "Your executor can't touch things from a distance, so it flies to them instead."
+				end
+				return "Flies you to each in turn, nearest first, using Safe Teleport's flight."
+			end)
+			card.addSlider({
+				text = "Range",
+				icon = { "ruler", "move-horizontal" },
+				min = 25, max = 1000, step = 25,
+				get = function() return featureSettings.collectRange end,
+				set = function(value) featureSettings.collectRange = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs" end,
+			})
+			card.addSlider({
+				text = "Flying speed",
+				icon = { "gauge" },
+				min = 20, max = 150, step = 5,
+				get = function() return featureSettings.collectSpeed end,
+				set = function(value) featureSettings.collectSpeed = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs/s" end,
+			})
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Movement Recorder: Record Movement notes where you are, which way you face and walk, and your
+		-- jumps, twenty times a second. Play Recording takes you to where it starts and plays it back:
+		-- walking you the way you went (so your walk and jump animations play for everyone), with your
+		-- position nudged along to stay on the recorded line. It's kept per game in its own file, and
+		-- Loop and the playback speed are in Play Recording's settings card.
+		safeBuild("The Movement Recorder", function()
+			local localPlayer = Players.LocalPlayer
+			local recordingFile = "SpreadCheeksGUI_Recording_" .. tostring(game.GameId) .. ".json"
+			local recorder = { frames = {}, recordLoop = nil, jumpConnection = nil, jumped = false, started = 0, lastSample = -1 }
+			if readfile then
+				local readOk, contents = readfile(recordingFile, true)
+				if readOk and type(contents) == "string" and contents ~= "" then
+					local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+					if decodeOk and type(data) == "table" and type(data.frames) == "table" then recorder.frames = data.frames end
+				end
+			end
+			local function length()
+				local last = recorder.frames[#recorder.frames]
+				return last and tonumber(last[1]) or 0
+			end
+			local function save()
+				if not writefile then return end
+				local encodeOk, text = pcall(function() return HttpService:JSONEncode({ frames = recorder.frames }) end)
+				if encodeOk then writefile(recordingFile, text, true) end
+			end
+			local function stopRecording()
+				if recorder.recordLoop then
+					recorder.recordLoop:Disconnect()
+					recorder.recordLoop = nil
+				end
+				if recorder.jumpConnection then
+					recorder.jumpConnection:Disconnect()
+					recorder.jumpConnection = nil
+				end
+			end
+			local function setRecording(on)
+				if not on then
+					local wasRecording = recorder.recordLoop ~= nil
+					stopRecording()
+					if wasRecording then
+						save()
+						notify("Movement Recorder", string.format("Recorded %.1f seconds. Switch on Play Recording to play it back.", length()), 4)
+					end
+					return
+				end
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if not humanoid or not getRoot(character) then
+					notify("Movement Recorder", "Your character isn't ready yet.")
+					return false
+				end
+				stopRecording()
+				recorder.frames = {}
+				recorder.started = os.clock()
+				recorder.lastSample = -1
+				recorder.jumped = false
+				recorder.jumpConnection = humanoid.StateChanged:Connect(function(_, newState)
+					if newState == Enum.HumanoidStateType.Jumping then recorder.jumped = true end
+				end)
+				recorder.recordLoop = RunService.Heartbeat:Connect(function()
+					local root = humanoid.Parent and getRoot(humanoid.Parent)
+					if not root or humanoid.Health <= 0 then return quickToggleByName["Record Movement"] and setQuickToggle(quickToggleByName["Record Movement"], false) end
+					local t = os.clock() - recorder.started
+					if t - recorder.lastSample < 0.05 then return end
+					recorder.lastSample = t
+					-- Ten minutes is plenty.
+					if t > 600 then return setQuickToggle(quickToggleByName["Record Movement"], false) end
+					local position, look, move = root.Position, root.CFrame.LookVector, humanoid.MoveDirection
+					table.insert(recorder.frames, {
+						math.floor(t * 1000) / 1000, position.X, position.Y, position.Z,
+						math.atan2(-look.X, -look.Z), move.X, move.Z, recorder.jumped and 1 or 0,
+					})
+					recorder.jumped = false
+				end)
+				notify("Movement Recorder", "Recording. Switch Record Movement off to stop.", 3)
+			end
+
+			-- Like the trolling switches' afterControls: runs step each frame just after Roblox's control
+			-- script, so the walking direction and jumps set here are the ones your humanoid uses.
+			local function afterControls(name, step)
+				pcall(function() RunService:UnbindFromRenderStep(name) end)
+				if step then RunService:BindToRenderStep(name, Enum.RenderPriority.Input.Value + 1, step) end
+			end
+			local player = { elapsed = 0, index = 1, waiting = false }
+			local function stopPlaying()
+				afterControls("SpreadCheeksPlayback", nil)
+			end
+			local function framePosition(frame)
+				return Vector3.new(frame[2], frame[3], frame[4])
+			end
+			local function setPlaying(on)
+				stopPlaying()
+				player.waiting = false
+				if not on then return end
+				if #recorder.frames < 2 then
+					notify("Movement Recorder", "Nothing recorded yet. Switch on Record Movement, move about, then switch it off.", 5)
+					return false
+				end
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				local root = character and getRoot(character)
+				if not humanoid or not root then
+					notify("Movement Recorder", "Your character isn't ready yet.")
+					return false
+				end
+				-- Playing moves you, so the trolling switches that move you go off (and they turn it off).
+				if menuModules.claimMovement then menuModules.claimMovement("Play Recording") end
+				local first = recorder.frames[1]
+				local start = CFrame.new(framePosition(first)) * CFrame.Angles(0, first[5], 0)
+				local function begin()
+					player.elapsed, player.index, player.waiting = 0, 1, false
+					afterControls("SpreadCheeksPlayback", function(deltaTime)
+						local myCharacter = localPlayer.Character
+						local myHumanoid = myCharacter and myCharacter:FindFirstChildOfClass("Humanoid")
+						local myRoot = myCharacter and getRoot(myCharacter)
+						if not myHumanoid or not myRoot or myHumanoid.Health <= 0 then return end
+						player.elapsed += deltaTime * featureSettings.recordSpeed
+						local frames = recorder.frames
+						while frames[player.index + 1] and frames[player.index + 1][1] <= player.elapsed do
+							player.index += 1
+							if frames[player.index][8] == 1 then myHumanoid.Jump = true end
+						end
+						local current, upcoming = frames[player.index], frames[player.index + 1]
+						if not upcoming then
+							if featureSettings.recordLoop then
+								player.elapsed, player.index = 0, 1
+								local firstFrame = frames[1]
+								myRoot.CFrame = CFrame.new(framePosition(firstFrame)) * CFrame.Angles(0, firstFrame[5], 0)
+								myRoot.AssemblyLinearVelocity = Vector3.zero
+								return
+							end
+							notify("Movement Recorder", "Playback finished", 2)
+							return setQuickToggle(quickToggleByName["Play Recording"], false)
+						end
+						local span = math.max(upcoming[1] - current[1], 0.001)
+						local alpha = math.clamp((player.elapsed - current[1]) / span, 0, 1)
+						local wanted = framePosition(current):Lerp(framePosition(upcoming), alpha)
+						myHumanoid:Move(Vector3.new(current[6], 0, current[7]), false)
+						local offset = wanted - myRoot.Position
+						if offset.Magnitude > 10 then
+							-- Knocked well off the line: straight back onto it.
+							myRoot.CFrame = CFrame.new(wanted) * CFrame.Angles(0, current[5], 0)
+							myRoot.AssemblyLinearVelocity = Vector3.zero
+							return
+						end
+						local velocity = myRoot.AssemblyLinearVelocity
+						local frame = math.max(deltaTime, 1 / 120)
+						local flatOffset = Vector3.new(offset.X, 0, offset.Z) / frame
+						if flatOffset.Magnitude > 80 then flatOffset = flatOffset.Unit * 80 end
+						-- Up and down is left to the jumps and gravity, unless it's drifted a long way.
+						local vertical = math.abs(offset.Y) > 3 and math.clamp(offset.Y / frame, -80, 80) or velocity.Y
+						myRoot.AssemblyLinearVelocity = Vector3.new(flatOffset.X, vertical, flatOffset.Z)
+						local position = myRoot.Position
+						myRoot.CFrame = CFrame.new(position) * CFrame.Angles(0, current[5], 0)
+					end)
+				end
+				-- To the start first, then off.
+				if (root.Position - start.Position).Magnitude > 4 and menuModules.teleportTo then
+					player.waiting = true
+					menuModules.teleportTo(start)
+					task.spawn(function()
+						local waited = 0
+						while player.waiting and waited < 60 do
+							local myCharacter = localPlayer.Character
+							local myRoot = myCharacter and getRoot(myCharacter)
+							if myRoot and (myRoot.Position - start.Position).Magnitude < 3 then break end
+							waited += task.wait(0.1)
+						end
+						if player.waiting then begin() end
+					end)
+				else
+					begin()
+				end
+			end
+			local card = quickToggleByName["Play Recording"] and createSettingsCard(quickToggleByName["Play Recording"])
+			menuModules.recorder = {
+				setRecording = function(on)
+					local result = setRecording(on)
+					-- The settings card says how long the recording is.
+					if not on and card then card.refresh() end
+					return result
+				end,
+				setPlaying = setPlaying,
+				clear = function()
+					setQuickToggle(quickToggleByName["Play Recording"], false)
+					recorder.frames = {}
+					if writefile then writefile(recordingFile, "", true) end
+					notify("Movement Recorder", "Recording cleared", 2)
+					if card then card.refresh() end
+				end,
+				length = length,
+			}
+			if card then
+				card.addSectionLabel("PLAYBACK", "play", "repeat")
+				card.addSwitchGrid({
+					{
+						text = "Loop",
+						get = function() return featureSettings.recordLoop == true end,
+						set = function(on)
+							featureSettings.recordLoop = on
+							saveFeatureSettings()
+						end,
+					},
+				}, 1)
+				card.addSlider({
+					text = "Speed",
+					icon = { "gauge" },
+					min = 0.5, max = 3, step = 0.25,
+					get = function() return featureSettings.recordSpeed end,
+					set = function(value) featureSettings.recordSpeed = value end,
+					commit = saveFeatureSettings,
+					format = function(value) return string.format("%.2f×", value) end,
+				})
+				card.addHint(function()
+					local seconds = length()
+					if seconds <= 0 then return "Nothing recorded in this game yet." end
+					return string.format("The recording for this game is %.1f seconds long.", seconds)
+				end)
+				card.refresh()
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Hitbox Expander: other players' root part (or head) grows to the size in its settings card,
+		-- so they're easier to hit. Only your screen changes, so it helps in games that decide hits on
+		-- your side. Team and friend checks leave those players alone, and the grown parts show as
+		-- see-through boxes unless that's switched off. Everything goes back as it was when it's off.
+		safeBuild("Hitbox Expander", function()
+			local localPlayer = Players.LocalPlayer
+			-- grown[part] is how the part was before: its size, transparency, collisions and face decals.
+			local hitbox = { loop = nil, grown = {} }
+			local function shrink(part)
+				local before = hitbox.grown[part]
+				hitbox.grown[part] = nil
+				if not before or not part.Parent then return end
+				pcall(function()
+					part.Size = before.size
+					part.Transparency = before.transparency
+					part.CanCollide = before.canCollide
+				end)
+				for decal, transparency in pairs(before.decals) do
+					if decal.Parent then decal.Transparency = transparency end
+				end
+			end
+			local function grow(part)
+				local before = hitbox.grown[part]
+				if not before then
+					before = { size = part.Size, transparency = part.Transparency, canCollide = part.CanCollide, decals = {} }
+					-- A grown head would stretch its face across the whole box.
+					for _, decal in ipairs(part:GetChildren()) do
+						if decal:IsA("Decal") then before.decals[decal] = decal.Transparency end
+					end
+					hitbox.grown[part] = before
+				end
+				local size = featureSettings.hitboxSize
+				local wanted = Vector3.new(size, size, size)
+				if part.Size ~= wanted then part.Size = wanted end
+				local transparency = featureSettings.hitboxVisible and 0.75 or 1
+				if part.Transparency ~= transparency then part.Transparency = transparency end
+				if part.CanCollide then part.CanCollide = false end
+				for decal in pairs(before.decals) do
+					if decal.Parent then decal.Transparency = 1 end
+				end
+			end
+			local function counts(player)
+				if player == localPlayer then return false end
+				if featureSettings.hitboxTeamCheck and espIsTeammate(player) then return false end
+				if featureSettings.hitboxFriendCheck and menuModules.isFriend and menuModules.isFriend(player) then return false end
+				return true
+			end
+			local function update()
+				local keep = {}
+				for _, player in ipairs(Players:GetPlayers()) do
+					local character = player.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					if humanoid and humanoid.Health > 0 and counts(player) then
+						local part = featureSettings.hitboxPart == "Head" and character:FindFirstChild("Head") or getRoot(character)
+						if part and part:IsA("BasePart") then
+							grow(part)
+							keep[part] = true
+						end
+					end
+				end
+				for part in pairs(hitbox.grown) do
+					if not keep[part] then shrink(part) end
+				end
+			end
+			local function setEnabled(on)
+				if hitbox.loop then
+					hitbox.loop:Disconnect()
+					hitbox.loop = nil
+				end
+				if not on then
+					for part in pairs(hitbox.grown) do shrink(part) end
+					return
+				end
+				local last = 0
+				hitbox.loop = RunService.Heartbeat:Connect(function()
+					local now = os.clock()
+					if now - last < 0.25 then return end
+					last = now
+					update()
+				end)
+				update()
+			end
+			menuModules.hitboxExpander = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Hitbox Expander"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			local function setting(text, key)
+				return {
+					text = text,
+					get = function() return featureSettings[key] == true end,
+					set = function(on)
+						featureSettings[key] = on
+						saveFeatureSettings()
+					end,
+				}
+			end
+			card.addSectionLabel("PART", "box", "target")
+			card.addChoice({ "Root", "Head" }, function() return featureSettings.hitboxPart end, function(part)
+				featureSettings.hitboxPart = part
+				saveFeatureSettings()
+			end)
+			card.addHint(function()
+				if featureSettings.hitboxPart == "Head" then return "Grows their head, for games that count headshots." end
+				return "Grows the invisible box their body moves with, which most games check hits against."
+			end)
+			card.addSlider({
+				text = "Size",
+				icon = { "expand", "box" },
+				min = 2, max = 25, step = 1,
+				get = function() return featureSettings.hitboxSize end,
+				set = function(value) featureSettings.hitboxSize = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs" end,
+			})
+			card.addSectionLabel("WHO", "users-round")
+			card.addSwitchGrid({ setting("Team check", "hitboxTeamCheck"), setting("Friend check", "hitboxFriendCheck"), setting("Show boxes", "hitboxVisible") })
+			card.addHint("Only your screen changes. It works in games that decide hits on your side; games that check hits on their server won't count the bigger box.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Spectate Bar: while you spectate someone (the Spectate button, or the view command), a bar at
+		-- the bottom of the screen with who you're watching, their health and how far away they are.
+		-- Its arrows, or the Left and Right arrow keys, go to the previous or next player; Stop stops.
+		safeBuild("The Spectate Bar", function()
+			local localPlayer = Players.LocalPlayer
+			local bar = menuModules.makeWindow({
+				name = "SpreadCheeksSpectate", title = "Spectating", icons = { "eye", "users-round" },
+				width = 300, height = 96, xKey = "spectateBarX", yKey = "spectateBarY",
+				defaultPosition = function(screen, size) return (screen.X - size.X) / 2, screen.Y - size.Y - 120 end,
+			})
+			local stop = Instance.new("TextButton")
+			stop.AutomaticSize = Enum.AutomaticSize.X
+			stop.Size = UDim2.fromOffset(0, 22)
+			stop.AutoButtonColor = false
+			stop.BorderSizePixel = 0
+			stop.Font = Enum.Font.GothamBold
+			stop.Text = "Stop"
+			stop.TextSize = 11
+			bindAuxiliaryUiColor(stop, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(stop, "TextColor3", "Text")
+			local stopCorner = Instance.new("UICorner")
+			stopCorner.CornerRadius = UDim.new(0, 7)
+			stopCorner.Parent = stop
+			local stopPadding = Instance.new("UIPadding")
+			stopPadding.PaddingLeft = UDim.new(0, 10)
+			stopPadding.PaddingRight = UDim.new(0, 10)
+			stopPadding.Parent = stop
+			stop.Parent = bar.headerRight
+			local function arrow(text, position)
+				local button = Instance.new("TextButton")
+				button.Position = position
+				button.Size = UDim2.fromOffset(32, 32)
+				button.AutoButtonColor = false
+				button.BorderSizePixel = 0
+				button.Font = Enum.Font.GothamBold
+				button.Text = text
+				button.TextSize = 16
+				bindAuxiliaryUiColor(button, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(button, "TextColor3", "Text")
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 8)
+				corner.Parent = button
+				button.Parent = bar.body
+				return button
+			end
+			local previous = arrow("<", UDim2.fromOffset(10, 8))
+			local nextOne = arrow(">", UDim2.new(1, -42, 0, 8))
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Position = UDim2.fromOffset(50, 6)
+			nameLabel.Size = UDim2.new(1, -100, 0, 18)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.TextSize = 14
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(nameLabel, "TextColor3", "Text")
+			nameLabel.Parent = bar.body
+			local detail = Instance.new("TextLabel")
+			detail.Position = UDim2.fromOffset(50, 26)
+			detail.Size = UDim2.new(1, -100, 0, 14)
+			detail.BackgroundTransparency = 1
+			detail.Font = Enum.Font.Gotham
+			detail.TextSize = 11
+			detail.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(detail, "TextColor3", "SubText")
+			detail.Parent = bar.body
+
+			local enabled = false
+			local function others()
+				local list = {}
+				for _, player in ipairs(Players:GetPlayers()) do
+					if player ~= localPlayer then table.insert(list, player) end
+				end
+				table.sort(list, function(left, right) return left.DisplayName:lower() < right.DisplayName:lower() end)
+				return list
+			end
+			local function subjectOf(character)
+				return character:FindFirstChildOfClass("Humanoid") or character
+			end
+			-- Watches player the way Infinite Yield's view command does, through its own viewing,
+			-- viewDied and viewChanged, so unview and the rest of Infinite Yield keep working.
+			local function watch(player)
+				if viewDied then viewDied:Disconnect() end
+				if viewChanged then viewChanged:Disconnect() end
+				viewing = player
+				local camera = workspace.CurrentCamera
+				if player.Character then camera.CameraSubject = subjectOf(player.Character) end
+				viewDied = player.CharacterAdded:Connect(function(character)
+					character:WaitForChild("HumanoidRootPart", 10)
+					if viewing == player then workspace.CurrentCamera.CameraSubject = subjectOf(character) end
+				end)
+				viewChanged = camera:GetPropertyChangedSignal("CameraSubject"):Connect(function()
+					local character = viewing == player and player.Character
+					if character and workspace.CurrentCamera.CameraSubject ~= subjectOf(character) then
+						workspace.CurrentCamera.CameraSubject = subjectOf(character)
+					end
+				end)
+			end
+			local function step(by)
+				local list = others()
+				if #list == 0 then return end
+				local index = table.find(list, viewing) or (by > 0 and 0 or 1)
+				watch(list[(index - 1 + by) % #list + 1])
+			end
+			local function refresh()
+				local watching = typeof(viewing) == "Instance" and viewing:IsA("Player") and viewing ~= localPlayer
+				-- Whoever you were watching left, so the camera comes back to you.
+				if enabled and watching and not viewing.Parent then
+					execCmd("unview", localPlayer, true)
+					watching = false
+				end
+				bar.setShown(enabled and watching)
+				if not enabled or not watching then return end
+				local list = others()
+				nameLabel.Text = menuModules.nameOf(viewing)
+				local parts = { (table.find(list, viewing) or 0) .. " of " .. #list }
+				local character = viewing.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				local root = character and getRoot(character)
+				local myRoot = localPlayer.Character and getRoot(localPlayer.Character)
+				if humanoid then table.insert(parts, math.floor(math.max(humanoid.Health, 0) + 0.5) .. " health") end
+				if root and myRoot then table.insert(parts, math.floor((root.Position - myRoot.Position).Magnitude + 0.5) .. " studs") end
+				table.insert(parts, "arrow keys switch")
+				detail.Text = table.concat(parts, "  ·  ")
+			end
+			previous.Activated:Connect(function()
+				step(-1)
+				refresh()
+			end)
+			nextOne.Activated:Connect(function()
+				step(1)
+				refresh()
+			end)
+			stop.Activated:Connect(function()
+				execCmd("unview", localPlayer, true)
+				refresh()
+			end)
+			table.insert(bar.connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if not enabled or not bar.isShown() or gameProcessed or UserInputService:GetFocusedTextBox() then return end
+				if input.KeyCode == Enum.KeyCode.Left then
+					step(-1)
+					refresh()
+				elseif input.KeyCode == Enum.KeyCode.Right then
+					step(1)
+					refresh()
+				end
+			end))
+			local sinceRefresh = 0
+			table.insert(bar.connections, RunService.Heartbeat:Connect(function(deltaTime)
+				sinceRefresh += deltaTime
+				if sinceRefresh < 0.2 then return end
+				sinceRefresh = 0
+				refresh()
+			end))
+			menuModules.spectateBar = {
+				setEnabled = function(on)
+					enabled = on
+					refresh()
+				end,
+			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Zoom Key: hold the key (Z to start with) to zoom in like a scope; scroll while holding it to
+		-- zoom further in or out. Letting go puts your view back. The key and how far it zooms are in
+		-- its settings card.
+		safeBuild("Zoom Key", function()
+			local zoom = { loop = nil, held = false, savedFov = nil, fov = 20 }
+			local function release()
+				if not zoom.held then return end
+				zoom.held = false
+				pcall(function() ContextActionService:UnbindAction("SpreadCheeksZoomWheel") end)
+				local camera = workspace.CurrentCamera
+				if camera and zoom.savedFov then camera.FieldOfView = zoom.savedFov end
+				zoom.savedFov = nil
+			end
+			local function setEnabled(on)
+				if zoom.loop then
+					zoom.loop:Disconnect()
+					zoom.loop = nil
+				end
+				release()
+				if not on then return end
+				zoom.loop = RunService.RenderStepped:Connect(function(deltaTime)
+					local keyOk, keyCode = pcall(function() return Enum.KeyCode[featureSettings.zoomKeyName] end)
+					local down = keyOk and keyCode and UserInputService:IsKeyDown(keyCode) and not UserInputService:GetFocusedTextBox()
+					local camera = workspace.CurrentCamera
+					if down and camera then
+						if not zoom.held then
+							zoom.held = true
+							zoom.savedFov = camera.FieldOfView
+							zoom.fov = featureSettings.zoomFov
+							-- The scroll wheel zooms instead of moving the camera in and out while it's held.
+							ContextActionService:BindActionAtPriority("SpreadCheeksZoomWheel", function(_, inputState, input)
+								if inputState == Enum.UserInputState.Change then
+									zoom.fov = math.clamp(zoom.fov - input.Position.Z * 3, 5, 60)
+								end
+								return Enum.ContextActionResult.Sink
+							end, false, 3000, Enum.UserInputType.MouseWheel)
+						end
+						camera.FieldOfView += (zoom.fov - camera.FieldOfView) * math.min(1, deltaTime * 18)
+					elseif zoom.held then
+						release()
+					end
+				end)
+			end
+			menuModules.zoomKey = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Zoom Key"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("KEY", "keyboard")
+			card.addChoice({ "Z", "C", "X", "V" }, function() return featureSettings.zoomKeyName end, function(key)
+				featureSettings.zoomKeyName = key
+				saveFeatureSettings()
+			end)
+			card.addSlider({
+				text = "Zoom",
+				icon = { "zoom-in", "scan" },
+				min = 5, max = 60, step = 1,
+				get = function() return featureSettings.zoomFov end,
+				set = function(value) featureSettings.zoomFov = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. "°" end,
+			})
+			card.addHint("Lower zooms in further (normal is about 70°). Scroll while holding the key to zoom more or less; it goes back when you let go.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Time of Day: holds the time on your screen at the hour in its settings card (0 is midnight,
+		-- 12 is noon), whatever the game sets. Switching it off puts the game's time back.
+		safeBuild("Time of Day", function()
+			local state = { loop = nil, changed = nil, saved = nil }
+			local function setEnabled(on)
+				if state.loop then
+					state.loop:Disconnect()
+					state.loop = nil
+				end
+				if state.changed then
+					state.changed:Disconnect()
+					state.changed = nil
+				end
+				if not on then
+					if state.saved then pcall(function() Lighting.ClockTime = state.saved end) end
+					state.saved = nil
+					return
+				end
+				state.saved = state.saved or Lighting.ClockTime
+				local function hold()
+					if Lighting.ClockTime ~= featureSettings.timeOfDayHour then Lighting.ClockTime = featureSettings.timeOfDayHour end
+				end
+				-- Every frame, and straight after anything else (Fullbright, the game) changes it.
+				state.loop = RunService.RenderStepped:Connect(hold)
+				state.changed = Lighting:GetPropertyChangedSignal("ClockTime"):Connect(hold)
+				hold()
+			end
+			menuModules.timeOfDay = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Time of Day"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("TIME", "clock", "sun-moon")
+			card.addSlider({
+				text = "Hour",
+				icon = { "sun-moon", "clock" },
+				min = 0, max = 24, step = 0.5,
+				get = function() return featureSettings.timeOfDayHour end,
+				set = function(value) featureSettings.timeOfDayHour = value end,
+				commit = saveFeatureSettings,
+				format = function(value)
+					local minutes = math.floor(value * 60 + 0.5)
+					return string.format("%02d:%02d", math.floor(minutes / 60) % 24, minutes % 60)
+				end,
+			})
+			card.addHint("0 or 24 is midnight, 6 sunrise, 12 noon and 18 sunset. Only you see it.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- FPS Boost: turns the game's graphics down so it runs smoother. Particles, trails, smoke, fire
+		-- and beams go off, decals and textures go, parts go plain and shadowless, post effects (bar
+		-- colour correction) and terrain water waves go off, and Roblox's graphics quality drops. Each
+		-- thing's old value is noted, and it all goes back when it's switched off. The menu's own
+		-- things, and your own character's (trails and so on), are left alone.
+		safeBuild("FPS Boost", function()
+			local localPlayer = Players.LocalPlayer
+			-- originals[object] = { property = old value }, for everything changed.
+			local boost = { originals = {}, connection = nil, serial = 0, quality = nil }
+			local function note(object, property, value)
+				local saved = boost.originals[object]
+				if not saved then
+					saved = {}
+					boost.originals[object] = saved
+				end
+				if saved[property] == nil then saved[property] = object[property] end
+				object[property] = value
+			end
+			local function ours(object)
+				local node = object
+				for _ = 1, 4 do
+					if not node then break end
+					if node.Name:sub(1, 12) == "SpreadCheeks" then return true end
+					node = node.Parent
+				end
+				local character = localPlayer.Character
+				return character ~= nil and object:IsDescendantOf(character)
+			end
+			local function lower(object)
+				if ours(object) then return end
+				pcall(function()
+					if object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Smoke") or object:IsA("Fire")
+						or object:IsA("Sparkles") or object:IsA("Beam") then
+						if object.Enabled then note(object, "Enabled", false) end
+					elseif object:IsA("Decal") or object:IsA("Texture") then
+						if object.Transparency < 1 then note(object, "Transparency", 1) end
+					elseif object:IsA("BasePart") then
+						if object.Material ~= Enum.Material.SmoothPlastic then note(object, "Material", Enum.Material.SmoothPlastic) end
+						if object.Reflectance ~= 0 then note(object, "Reflectance", 0) end
+						if object.CastShadow then note(object, "CastShadow", false) end
+					elseif object:IsA("PostEffect") and not object:IsA("ColorCorrectionEffect") then
+						if object.Enabled then note(object, "Enabled", false) end
+					elseif object:IsA("Clouds") then
+						if object.Enabled then note(object, "Enabled", false) end
+					end
+				end)
+			end
+			local function restore()
+				for object, saved in pairs(boost.originals) do
+					if object.Parent then
+						for property, value in pairs(saved) do
+							pcall(function() object[property] = value end)
+						end
+					end
+				end
+				table.clear(boost.originals)
+				if boost.quality then
+					pcall(function() settings().Rendering.QualityLevel = boost.quality end)
+					boost.quality = nil
+				end
+			end
+			local function setEnabled(on)
+				boost.serial += 1
+				if boost.connection then
+					boost.connection:Disconnect()
+					boost.connection = nil
+				end
+				restore()
+				if not on then return end
+				local serial = boost.serial
+				pcall(function()
+					note(Lighting, "GlobalShadows", false)
+					local terrain = workspace.Terrain
+					note(terrain, "WaterWaveSize", 0)
+					note(terrain, "WaterWaveSpeed", 0)
+					note(terrain, "WaterReflectance", 0)
+				end)
+				pcall(function() note(workspace.Terrain, "Decoration", false) end)
+				pcall(function()
+					boost.quality = settings().Rendering.QualityLevel
+					settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+				end)
+				for _, effect in ipairs(Lighting:GetChildren()) do lower(effect) end
+				boost.connection = workspace.DescendantAdded:Connect(function(object)
+					if boost.serial == serial then lower(object) end
+				end)
+				-- The map a few thousand at a time, so switching it on doesn't freeze the game.
+				task.spawn(function()
+					for index, object in ipairs(workspace:GetDescendants()) do
+						if index % 3000 == 0 then
+							task.wait()
+							if boost.serial ~= serial then return end
+						end
+						lower(object)
+					end
+				end)
+			end
+			menuModules.fpsBoost = { setEnabled = setEnabled }
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Mute Game Music and Mute Player Sounds. Sounds in other players' characters (boomboxes, gear)
+		-- are theirs; the game's music is anything outside a character that loops or lasts half a minute
+		-- or more. Muted sounds are held at zero and get their volume back when switched off.
+		safeBuild("Mute Sounds", function()
+			local localPlayer = Players.LocalPlayer
+			local mute = { sounds = {}, muted = {}, connections = {}, loop = nil }
+			local function ownerOf(sound)
+				local model = sound:FindFirstAncestorWhichIsA("Model")
+				while model do
+					local player = Players:GetPlayerFromCharacter(model)
+					if player then return player end
+					model = model:FindFirstAncestorWhichIsA("Model")
+				end
+				return nil
+			end
+			local function track(object)
+				if object:IsA("Sound") and object.Name:sub(1, 12) ~= "SpreadCheeks" then mute.sounds[object] = true end
+			end
+			local function update()
+				for sound in pairs(mute.sounds) do
+					if not sound.Parent then
+						mute.sounds[sound] = nil
+						mute.muted[sound] = nil
+					else
+						local owner = ownerOf(sound)
+						local silence
+						if owner then
+							silence = featureSettings.muteOthers and owner ~= localPlayer
+						else
+							silence = featureSettings.muteMusic and (sound.Looped or sound.TimeLength >= 30)
+						end
+						if silence then
+							if mute.muted[sound] == nil then mute.muted[sound] = sound.Volume end
+							if sound.Volume ~= 0 then sound.Volume = 0 end
+						elseif mute.muted[sound] ~= nil then
+							sound.Volume = mute.muted[sound]
+							mute.muted[sound] = nil
+						end
+					end
+				end
+			end
+			-- Either switch being on keeps the watching going; both off puts every volume back.
+			local function refresh()
+				local wanted = featureSettings.muteMusic or featureSettings.muteOthers
+				if wanted and not mute.loop then
+					local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+					for _, container in ipairs({ workspace, SoundService, playerGui }) do
+						if container then
+							for _, object in ipairs(container:GetDescendants()) do track(object) end
+							table.insert(mute.connections, container.DescendantAdded:Connect(track))
+						end
+					end
+					local last = 0
+					mute.loop = RunService.Heartbeat:Connect(function()
+						local now = os.clock()
+						if now - last < 0.5 then return end
+						last = now
+						update()
+					end)
+				elseif not wanted and mute.loop then
+					mute.loop:Disconnect()
+					mute.loop = nil
+					for _, connection in ipairs(mute.connections) do connection:Disconnect() end
+					table.clear(mute.connections)
+					table.clear(mute.sounds)
+				end
+				-- Puts back whatever's no longer meant to be muted (all of it once both are off).
+				for sound, volume in pairs(mute.muted) do
+					local owner = sound.Parent and ownerOf(sound)
+					local keep = wanted and sound.Parent and ((owner and featureSettings.muteOthers and owner ~= localPlayer)
+						or (not owner and featureSettings.muteMusic))
+					if not keep then
+						if sound.Parent then sound.Volume = volume end
+						mute.muted[sound] = nil
+					end
+				end
+				if wanted then update() end
+			end
+			menuModules.muteMusic = { setEnabled = refresh }
+			menuModules.muteOthers = { setEnabled = refresh }
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Roblox's own on-screen UI (player list, chat, backpack...) for Streamer Mode and Clean Screen.
+		-- The game's choice of what shows is noted the first time either hides anything, and put back
+		-- once neither needs anything hidden. Streamer Mode hides the player list; Clean Screen all of it.
+		safeBuild("Hiding Roblox's UI", function()
+			local coreGui = { saved = nil }
+			function menuModules.applyCoreGui()
+				local hideAll = menuModules.cleanScreenOn == true
+				local hideList = featureSettings.streamerMode == true
+				if not hideAll and not hideList then
+					if coreGui.saved then
+						for coreType, shown in pairs(coreGui.saved) do
+							pcall(function() StarterGui:SetCoreGuiEnabled(coreType, shown) end)
+						end
+						coreGui.saved = nil
+					end
+					return
+				end
+				if not coreGui.saved then
+					coreGui.saved = {}
+					for _, coreType in ipairs(Enum.CoreGuiType:GetEnumItems()) do
+						if coreType ~= Enum.CoreGuiType.All then
+							local readOk, shown = pcall(function() return StarterGui:GetCoreGuiEnabled(coreType) end)
+							if readOk then coreGui.saved[coreType] = shown end
+						end
+					end
+				end
+				for coreType, shown in pairs(coreGui.saved) do
+					local hidden = hideAll or (hideList and coreType == Enum.CoreGuiType.PlayerList)
+					pcall(function() StarterGui:SetCoreGuiEnabled(coreType, shown and not hidden) end)
+				end
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Streamer Mode: player names across the menu go by "Player 3" names (menuModules.nameOf), ESP
+		-- and its windows too, and Roblox's player list is hidden, so a stream or clip doesn't show who's
+		-- in the server. Everything showing names is told through menuModules.nameListeners.
+		safeBuild("Streamer Mode", function()
+			menuModules.streamerMode = {
+				setEnabled = function()
+					if menuModules.applyCoreGui then menuModules.applyCoreGui() end
+					for _, listener in ipairs(menuModules.nameListeners) do pcall(listener) end
+				end,
+			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Clean Screen: hides everything on screen but the game itself, for clean clips and screenshots:
+		-- the game's own UI, Roblox's buttons, this menu and its windows, and Infinite Yield's bar. Its
+		-- key (F2 to start with) brings it all back, as does the menu's own key.
+		safeBuild("Clean Screen", function()
+			local localPlayer = Players.LocalPlayer
+			local clean = { guis = {}, menuWasShown = false, topbar = nil, serial = 0 }
+			local function hideEverything()
+				table.clear(clean.guis)
+				local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+				local hiddenOk, hiddenGui = false, nil
+				if type(gethui) == "function" then hiddenOk, hiddenGui = pcall(gethui) end
+				-- The menu itself is hidden its own way (below) and left switched on, so its key can
+				-- always bring it back to switch this off.
+				local menuGui = typeof(window.main) == "Instance" and window.main:FindFirstAncestorWhichIsA("LayerCollector") or nil
+				for _, container in ipairs({ playerGui, COREGUI, hiddenOk and hiddenGui or nil }) do
+					local listOk, children = pcall(function() return container:GetChildren() end)
+					for _, gui in ipairs(listOk and children or {}) do
+						-- Everything the game shows, and the menu's own in Roblox's protected places.
+						local hideIt = gui:IsA("ScreenGui") and gui.Enabled and gui ~= menuGui
+							and (container == playerGui or gui.Name:sub(1, 12) == "SpreadCheeks")
+						if hideIt and not table.find(clean.guis, gui) then
+							gui.Enabled = false
+							table.insert(clean.guis, gui)
+						end
+					end
+				end
+				-- Infinite Yield's bar, when it has a ScreenGui of its own.
+				if typeof(PARENT) == "Instance" and PARENT:IsA("ScreenGui") and PARENT.Enabled and PARENT.Name ~= "RobloxGui" then
+					PARENT.Enabled = false
+					table.insert(clean.guis, PARENT)
+				end
+				clean.menuWasShown = not window.hidden
+				if clean.menuWasShown then pcall(function() window:ToggleHide() end) end
+				local topbarOk, topbar = pcall(function() return StarterGui:GetCore("TopbarEnabled") end)
+				clean.topbar = (not topbarOk or topbar ~= false)
+				pcall(function() StarterGui:SetCore("TopbarEnabled", false) end)
+				if menuModules.applyCoreGui then menuModules.applyCoreGui() end
+			end
+			local function showEverything()
+				for _, gui in ipairs(clean.guis) do
+					if gui.Parent then gui.Enabled = true end
+				end
+				table.clear(clean.guis)
+				if clean.menuWasShown and window.hidden then pcall(function() window:Show() end) end
+				clean.menuWasShown = false
+				if clean.topbar then pcall(function() StarterGui:SetCore("TopbarEnabled", true) end) end
+				clean.topbar = nil
+				if menuModules.applyCoreGui then menuModules.applyCoreGui() end
+			end
+			local function setEnabled(on)
+				clean.serial += 1
+				local serial = clean.serial
+				menuModules.cleanScreenOn = on
+				if not on then
+					showEverything()
+					return
+				end
+				local entry = quickToggleByName["Clean Screen"]
+				if entry and entry.key then
+					hideEverything()
+					return
+				end
+				-- With no key on it, a moment to read how to get everything back.
+				notify("Clean Screen", "Hiding everything. Your menu key brings the menu back to switch this off; a key on Clean Screen does it in one press.", 4)
+				task.delay(2.5, function()
+					if clean.serial == serial and menuModules.cleanScreenOn then hideEverything() end
+				end)
+			end
+			menuModules.cleanScreen = { setEnabled = setEnabled }
+
+			-- F2 the first time, unless something else already has it. Taken off later, it stays off.
+			local entry = quickToggleByName["Clean Screen"]
+			if entry and not featureSettings.cleanScreenKeySet then
+				featureSettings.cleanScreenKeySet = true
+				saveFeatureSettings()
+				local taken = isMenuToggleKey(Enum.KeyCode.F2)
+				for _, other in ipairs(quickToggles) do
+					if other.key == Enum.KeyCode.F2 then taken = true end
+				end
+				for _, other in ipairs(quickActions) do
+					if other.key == Enum.KeyCode.F2 then taken = true end
+				end
+				if not taken and not entry.key then
+					entry.key = Enum.KeyCode.F2
+					refreshKeyChip(entry)
+					saveQuickKeybinds()
+				end
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Health & Ping Warnings: the edges of the screen glow red while your health is under the line
+		-- in its settings card, stronger and faster the lower it goes, and a notification says when your
+		-- ping jumps well above what it's been.
+		safeBuild("Health & Ping Warnings", function()
+			local localPlayer = Players.LocalPlayer
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previousGui = playerGui:FindFirstChild("SpreadCheeksWarnings")
+			if previousGui then previousGui:Destroy() end
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksWarnings"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			-- Under the menu's windows (999), so it never covers them.
+			gui.DisplayOrder = 996
+			gui.Enabled = false
+			gui.Parent = playerGui
+			-- Four soft red edges, fading out towards the middle of the screen.
+			local edges = {}
+			for _, edge in ipairs({
+				{ UDim2.fromScale(0, 0), UDim2.fromScale(1, 0.22), 90 },
+				{ UDim2.fromScale(0, 0.78), UDim2.fromScale(1, 0.22), -90 },
+				{ UDim2.fromScale(0, 0), UDim2.fromScale(0.16, 1), 0 },
+				{ UDim2.fromScale(0.84, 0), UDim2.fromScale(0.16, 1), 180 },
+			}) do
+				local frame = Instance.new("Frame")
+				frame.Position = edge[1]
+				frame.Size = edge[2]
+				frame.BorderSizePixel = 0
+				frame.BackgroundColor3 = Color3.fromRGB(220, 38, 38)
+				frame.BackgroundTransparency = 1
+				frame.Parent = gui
+				local gradient = Instance.new("UIGradient")
+				gradient.Rotation = edge[3]
+				gradient.Transparency = NumberSequence.new(0, 1)
+				gradient.Parent = frame
+				table.insert(edges, frame)
+			end
+			-- Round trip to the server in milliseconds, the way Performance Stats reads it.
+			local function readPing()
+				local pingOk, ping = pcall(function() return localPlayer:GetNetworkPing() * 1000 end)
+				if pingOk and type(ping) == "number" and ping > 0 then return ping end
+				local statOk, statPing = pcall(function() return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+				return statOk and tonumber(statPing) or nil
+			end
+			local warning = { loop = nil, pings = {}, lastSample = 0, lastPingAlert = 0 }
+			local function setEnabled(on)
+				if warning.loop then
+					warning.loop:Disconnect()
+					warning.loop = nil
+				end
+				gui.Enabled = false
+				table.clear(warning.pings)
+				if not on then return end
+				gui.Enabled = true
+				warning.loop = RunService.RenderStepped:Connect(function()
+					local now = os.clock()
+					local strength = 0
+					if featureSettings.warnHealth then
+						local character = localPlayer.Character
+						local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+						if humanoid and humanoid.Health > 0 and humanoid.MaxHealth > 0 then
+							local percent = humanoid.Health / humanoid.MaxHealth * 100
+							if percent < featureSettings.warnHealthAt then strength = 1 - percent / featureSettings.warnHealthAt end
+						end
+					end
+					local alpha = strength > 0 and (0.25 + 0.4 * strength) * (0.75 + 0.25 * math.sin(now * (4 + strength * 4))) or 0
+					for _, frame in ipairs(edges) do frame.BackgroundTransparency = 1 - alpha end
+					-- Ping once a second: a spike is over 250 ms and more than twice what it's been.
+					if featureSettings.warnPing and now - warning.lastSample >= 1 then
+						warning.lastSample = now
+						local ping = readPing()
+						if ping then
+							local total = 0
+							for _, value in ipairs(warning.pings) do total += value end
+							local average = #warning.pings > 0 and total / #warning.pings or ping
+							if #warning.pings >= 5 and ping > 250 and ping > average * 2 and now - warning.lastPingAlert > 20 then
+								warning.lastPingAlert = now
+								notify("Ping spike", "Your ping jumped to " .. math.floor(ping + 0.5) .. " ms (it's been about " .. math.floor(average + 0.5) .. " ms)", 4)
+							end
+							table.insert(warning.pings, ping)
+							if #warning.pings > 30 then table.remove(warning.pings, 1) end
+						end
+					end
+				end)
+			end
+			menuModules.healthWarnings = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Health & Ping Warnings"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			local function setting(text, key)
+				return {
+					text = text,
+					get = function() return featureSettings[key] == true end,
+					set = function(on)
+						featureSettings[key] = on
+						saveFeatureSettings()
+					end,
+				}
+			end
+			card.addSectionLabel("WARN ME ABOUT", "triangle-alert")
+			card.addSwitchGrid({ setting("Low health", "warnHealth"), setting("Ping spikes", "warnPing") })
+			card.addSlider({
+				text = "Low health is under",
+				icon = { "heart-pulse", "heart-crack" },
+				min = 10, max = 60, step = 5,
+				get = function() return featureSettings.warnHealthAt end,
+				set = function(value) featureSettings.warnHealthAt = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. "%" end,
+			})
+			card.addHint("The glow gets stronger and faster the lower your health goes. A ping spike is over 250 ms and more than double what it's been.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Player Notes: a note of your own on anyone (by their user ID, so it follows them), written on
+		-- their card in the Players tab or with the note command. You're told when someone with a note
+		-- joins, and about anyone with one who's already here when the script starts.
+		safeBuild("Player Notes", function()
+			local localPlayer = Players.LocalPlayer
+			local function notes()
+				if type(featureSettings.playerNotes) ~= "table" then featureSettings.playerNotes = {} end
+				return featureSettings.playerNotes
+			end
+			function menuModules.noteFor(player)
+				local note = notes()[tostring(player.UserId)]
+				return type(note) == "string" and note ~= "" and note or nil
+			end
+			function menuModules.setNote(player, text)
+				text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+				-- At most 120 letters, cut between letters rather than through one.
+				local cutOk, cut = pcall(utf8.offset, text, 121)
+				if cutOk and cut then text = text:sub(1, cut - 1) end
+				local key = tostring(player.UserId)
+				local old = notes()[key]
+				notes()[key] = text ~= "" and text or nil
+				if old ~= notes()[key] then saveFeatureSettings() end
+			end
+			Players.PlayerAdded:Connect(function(player)
+				local note = menuModules.noteFor(player)
+				if note then notify(menuModules.nameOf(player) .. " joined", "Your note: " .. note, 6) end
+			end)
+			task.delay(3, function()
+				for _, player in ipairs(Players:GetPlayers()) do
+					local note = player ~= localPlayer and menuModules.noteFor(player)
+					if note then notify(menuModules.nameOf(player) .. " is here", "Your note: " .. note, 6) end
+				end
+			end)
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Outfit Viewer: a window with everything a player is wearing, from their avatar: accessories,
+		-- clothes, face and body parts, each with its picture, name, price (or off sale) and a button to
+		-- copy its ID. Opened from the Outfit button on a player's card, or the outfit command.
+		safeBuild("The Outfit Viewer", function()
+			local outfitWindow = menuModules.makeWindow({
+				name = "SpreadCheeksOutfit", title = "Outfit", icons = { "shirt" },
+				width = 320, height = 400, xKey = "outfitX", yKey = "outfitY",
+				defaultPosition = function(screen, size) return screen.X - size.X - 16, (screen.Y - size.Y) / 2 end,
+			})
+			local close = Instance.new("TextButton")
+			close.AutomaticSize = Enum.AutomaticSize.X
+			close.Size = UDim2.fromOffset(0, 22)
+			close.AutoButtonColor = false
+			close.BorderSizePixel = 0
+			close.Font = Enum.Font.GothamBold
+			close.Text = "Close"
+			close.TextSize = 11
+			bindAuxiliaryUiColor(close, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(close, "TextColor3", "Text")
+			local closeCorner = Instance.new("UICorner")
+			closeCorner.CornerRadius = UDim.new(0, 7)
+			closeCorner.Parent = close
+			local closePadding = Instance.new("UIPadding")
+			closePadding.PaddingLeft = UDim.new(0, 10)
+			closePadding.PaddingRight = UDim.new(0, 10)
+			closePadding.Parent = close
+			close.Parent = outfitWindow.headerRight
+			local summary = Instance.new("TextLabel")
+			summary.Position = UDim2.fromOffset(12, 0)
+			summary.Size = UDim2.new(1, -24, 0, 16)
+			summary.BackgroundTransparency = 1
+			summary.Font = Enum.Font.Gotham
+			summary.TextSize = 11
+			summary.TextXAlignment = Enum.TextXAlignment.Left
+			summary.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(summary, "TextColor3", "SubText")
+			summary.Parent = outfitWindow.body
+			local list = Instance.new("ScrollingFrame")
+			list.Position = UDim2.fromOffset(6, 22)
+			list.Size = UDim2.new(1, -12, 1, -28)
+			list.BackgroundTransparency = 1
+			list.BorderSizePixel = 0
+			list.ScrollBarThickness = 3
+			list.ScrollingDirection = Enum.ScrollingDirection.Y
+			list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			list.CanvasSize = UDim2.new()
+			bindAuxiliaryUiColor(list, "ScrollBarImageColor3", "Muted")
+			list.Parent = outfitWindow.body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 4)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 4)
+			listPadding.PaddingRight = UDim.new(0, 8)
+			listPadding.PaddingBottom = UDim.new(0, 6)
+			listPadding.Parent = list
+
+			local outfit = { serial = 0 }
+			close.Activated:Connect(function()
+				outfit.serial += 1
+				outfitWindow.setShown(false)
+			end)
+			local function clearRows()
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				-- Rows come and go, so their theme bindings are cleared out with them.
+				for index = #auxiliaryUiColorBindings, 1, -1 do
+					if not auxiliaryUiColorBindings[index][1].Parent then table.remove(auxiliaryUiColorBindings, index) end
+				end
+			end
+			local function makeRow(item, order)
+				local row = Instance.new("Frame")
+				row.LayoutOrder = order
+				row.Size = UDim2.new(1, 0, 0, 52)
+				row.BorderSizePixel = 0
+				bindAuxiliaryUiColor(row, "BackgroundColor3", "Inset")
+				local rowCorner = Instance.new("UICorner")
+				rowCorner.CornerRadius = UDim.new(0, 8)
+				rowCorner.Parent = row
+				row.Parent = list
+				local picture = Instance.new("ImageLabel")
+				picture.Position = UDim2.fromOffset(4, 4)
+				picture.Size = UDim2.fromOffset(44, 44)
+				picture.BorderSizePixel = 0
+				picture.Image = "rbxthumb://type=Asset&id=" .. item.id .. "&w=150&h=150"
+				bindAuxiliaryUiColor(picture, "BackgroundColor3", "Card")
+				local pictureCorner = Instance.new("UICorner")
+				pictureCorner.CornerRadius = UDim.new(0, 6)
+				pictureCorner.Parent = picture
+				picture.Parent = row
+				local name = Instance.new("TextLabel")
+				name.Position = UDim2.fromOffset(56, 8)
+				name.Size = UDim2.new(1, -124, 0, 16)
+				name.BackgroundTransparency = 1
+				name.Font = Enum.Font.GothamMedium
+				name.Text = "Item " .. item.id
+				name.TextSize = 12
+				name.TextXAlignment = Enum.TextXAlignment.Left
+				name.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(name, "TextColor3", "Text")
+				name.Parent = row
+				local detail = Instance.new("TextLabel")
+				detail.Position = UDim2.fromOffset(56, 27)
+				detail.Size = UDim2.new(1, -124, 0, 14)
+				detail.BackgroundTransparency = 1
+				detail.Font = Enum.Font.Gotham
+				detail.Text = item.kind .. "  ·  loading..."
+				detail.TextSize = 11
+				detail.TextXAlignment = Enum.TextXAlignment.Left
+				detail.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(detail, "TextColor3", "SubText")
+				detail.Parent = row
+				local copy = Instance.new("TextButton")
+				copy.AnchorPoint = Vector2.new(1, 0.5)
+				copy.Position = UDim2.new(1, -8, 0.5, 0)
+				copy.Size = UDim2.fromOffset(56, 24)
+				copy.AutoButtonColor = false
+				copy.BorderSizePixel = 0
+				copy.Font = Enum.Font.GothamMedium
+				copy.Text = "Copy ID"
+				copy.TextSize = 11
+				bindAuxiliaryUiColor(copy, "BackgroundColor3", "Card")
+				bindAuxiliaryUiColor(copy, "TextColor3", "Text")
+				local copyCorner = Instance.new("UICorner")
+				copyCorner.CornerRadius = UDim.new(0, 6)
+				copyCorner.Parent = copy
+				copy.Parent = row
+				copy.Activated:Connect(function() menuModules.copy(item.id, "the item's ID") end)
+				return { name = name, detail = detail }
+			end
+			-- Everything on a HumanoidDescription, once each: accessories first, then clothes, face and body.
+			local function itemsOf(description)
+				local items, seen = {}, {}
+				local function add(id, kind)
+					id = tonumber(id)
+					if not id or id <= 0 or seen[id] then return end
+					seen[id] = true
+					table.insert(items, { id = id, kind = kind })
+				end
+				local listOk, accessories = pcall(function() return description:GetAccessories(true) end)
+				if listOk and type(accessories) == "table" then
+					for _, accessory in ipairs(accessories) do
+						add(accessory.AssetId, accessory.AccessoryType and accessory.AccessoryType.Name or "Accessory")
+					end
+				else
+					for _, field in ipairs({ "HatAccessory", "HairAccessory", "FaceAccessory", "NeckAccessory", "ShouldersAccessory",
+						"FrontAccessory", "BackAccessory", "WaistAccessory" }) do
+						for id in tostring(description[field] or ""):gmatch("%d+") do add(id, (field:gsub("Accessory$", ""))) end
+					end
+				end
+				add(description.Shirt, "Shirt")
+				add(description.Pants, "Pants")
+				add(description.GraphicTShirt, "T-shirt")
+				add(description.Face, "Face")
+				for _, part in ipairs({ "Head", "Torso", "LeftArm", "RightArm", "LeftLeg", "RightLeg" }) do
+					add(description[part], "Body part")
+				end
+				return items
+			end
+			local function priceOf(info)
+				local price = tonumber(info.PriceInRobux)
+				if info.IsForSale and price and price > 0 then return "R$ " .. price, price end
+				if info.IsForSale then return "Free", 0 end
+				if info.IsLimited or info.IsLimitedUnique then return "Limited", nil end
+				return "Off sale", nil
+			end
+			function menuModules.openOutfit(player)
+				outfit.serial += 1
+				local serial = outfit.serial
+				local whose = menuModules.nameOf(player)
+				clearRows()
+				summary.Text = "Loading " .. whose .. "'s outfit..."
+				outfitWindow.setShown(true)
+				task.spawn(function()
+					local description = nil
+					local fetched, result = pcall(function() return Players:GetHumanoidDescriptionFromUserId(player.UserId) end)
+					if fetched and typeof(result) == "Instance" then description = result end
+					if not description then
+						local character = player.Character
+						local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+						local applied, appliedResult = pcall(function() return humanoid:GetAppliedDescription() end)
+						if applied and typeof(appliedResult) == "Instance" then description = appliedResult end
+					end
+					if serial ~= outfit.serial then return end
+					if not description then
+						summary.Text = "Couldn't load " .. whose .. "'s outfit."
+						return
+					end
+					local items = itemsOf(description)
+					if #items == 0 then
+						summary.Text = whose .. " isn't wearing anything from the catalog."
+						return
+					end
+					local rows = {}
+					for index, item in ipairs(items) do rows[index] = makeRow(item, index) end
+					summary.Text = whose .. "  ·  " .. #items .. " items  ·  loading prices..."
+					-- One at a time, so Roblox doesn't turn the requests away.
+					local total, onSale = 0, 0
+					for index, item in ipairs(items) do
+						local infoOk, info = pcall(function() return MarketplaceService:GetProductInfo(item.id, Enum.InfoType.Asset) end)
+						if serial ~= outfit.serial then return end
+						if infoOk and type(info) == "table" then
+							local priceText, price = priceOf(info)
+							rows[index].name.Text = tostring(info.Name or rows[index].name.Text)
+							rows[index].detail.Text = item.kind .. "  ·  " .. priceText
+							if price then
+								total += price
+								onSale += 1
+							end
+						else
+							rows[index].detail.Text = item.kind .. "  ·  couldn't load"
+						end
+					end
+					summary.Text = whose .. "  ·  " .. #items .. " items  ·  R$ " .. total .. " for the " .. onSale .. " on sale"
+				end)
+			end
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
+		-- on now that what they switch has been built.
+		safeBuild("Switches that were on", function()
+			for _, remembered in ipairs(menuModules.remembered) do
+				local entry = quickToggleByName[remembered.name]
+				if entry and featureSettings[remembered.key] and not entry.state then setQuickToggle(entry, true) end
+			end
+		end)
+
 		-- Player info: a card under the Player name box in the Players tab with everything about the
 		-- selected player (account age, team, health, distance, what they're holding, membership,
 		-- whether they're your friend and who they're friends with here), and quick actions.
@@ -27971,16 +30717,41 @@ if rayfieldLoaded and Rayfield then
 			friendsValue.TextWrapped = true
 			friendsValue.TextTruncate = Enum.TextTruncate.None
 
-			-- Quick actions.
+			-- Your own note on them (Player Notes), kept between sessions. It saves when you click away.
+			local noteBox = Instance.new("TextBox")
+			noteBox.LayoutOrder = 4
+			noteBox.Size = UDim2.new(1, 0, 0, 30)
+			noteBox.BorderSizePixel = 0
+			noteBox.ClearTextOnFocus = false
+			noteBox.Font = Enum.Font.Gotham
+			noteBox.PlaceholderText = "Add a note about them (only you see it)"
+			noteBox.Text = ""
+			noteBox.TextSize = 12
+			noteBox.TextXAlignment = Enum.TextXAlignment.Left
+			noteBox.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(noteBox, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(noteBox, "TextColor3", "Text")
+			bindAuxiliaryUiColor(noteBox, "PlaceholderColor3", "Muted")
+			addCorner(noteBox, UDim.new(0, 8))
+			local notePadding = Instance.new("UIPadding")
+			notePadding.PaddingLeft = UDim.new(0, 10)
+			notePadding.PaddingRight = UDim.new(0, 10)
+			notePadding.Parent = noteBox
+			noteBox.Visible = false
+			noteBox.Parent = card
+
+			-- Quick actions, wrapping onto a second line when the menu is narrow.
 			local actions = Instance.new("Frame")
-			actions.LayoutOrder = 4
-			actions.Size = UDim2.new(1, 0, 0, 28)
+			actions.LayoutOrder = 5
+			actions.Size = UDim2.fromScale(1, 0)
+			actions.AutomaticSize = Enum.AutomaticSize.Y
 			actions.BackgroundTransparency = 1
 			actions.Parent = card
 			local actionsLayout = Instance.new("UIListLayout")
 			actionsLayout.FillDirection = Enum.FillDirection.Horizontal
 			actionsLayout.Padding = UDim.new(0, 6)
 			actionsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			actionsLayout.Wraps = true
 			actionsLayout.Parent = actions
 			local function makeAction(text, order, primary)
 				local button = Instance.new("TextButton")
@@ -28006,6 +30777,7 @@ if rayfieldLoaded and Rayfield then
 			local spectateButton = makeAction("Spectate", 2)
 			local copyNameButton = makeAction("Copy name", 3)
 			local copyIdButton = makeAction("Copy ID", 4)
+			local outfitButton = makeAction("Outfit", 5)
 
 			local function formatAge(days)
 				days = tonumber(days) or 0
@@ -28039,6 +30811,7 @@ if rayfieldLoaded and Rayfield then
 					else
 						entry.you = "That's you"
 					end
+					-- The players themselves are kept, so their names show the Streamer Mode way when drawn.
 					local here, failed = {}, false
 					for _, other in ipairs(Players:GetPlayers()) do
 						if other ~= player then
@@ -28047,10 +30820,11 @@ if rayfieldLoaded and Rayfield then
 								failed = true
 								break
 							end
-							if friends then table.insert(here, other.DisplayName) end
+							if friends then table.insert(here, other) end
 						end
 					end
-					entry.here = failed and "Can't check from here" or (#here > 0 and table.concat(here, ", ") or "No one")
+					entry.failed = failed
+					entry.here = here
 					if refresh then pcall(refresh) end
 				end)
 			end
@@ -28068,11 +30842,14 @@ if rayfieldLoaded and Rayfield then
 					status.TextColor3 = theme.Muted
 					for _, label in pairs(facts) do label.Text = "--" end
 					friendsValue.Text = "--"
+					noteBox.Visible = false
 					return
 				end
 				avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=150&h=150"
-				nameLabel.Text = player.DisplayName
-				userLabel.Text = "@" .. player.Name .. "  ·  ID " .. player.UserId
+				nameLabel.Text = menuModules.nameOf(player)
+				userLabel.Text = featureSettings.streamerMode and "Names hidden by Streamer Mode" or ("@" .. player.Name .. "  ·  ID " .. player.UserId)
+				noteBox.Visible = player ~= localPlayer and menuModules.noteFor ~= nil
+				if noteBox.Visible and not noteBox:IsFocused() then noteBox.Text = menuModules.noteFor(player) or "" end
 				status.Text = player == localPlayer and "YOU" or "IN THIS SERVER"
 				status.TextColor3 = player == localPlayer and theme.AccentText or theme.Good
 				facts["Account age"].Text = formatAge(player.AccountAge)
@@ -28092,8 +30869,26 @@ if rayfieldLoaded and Rayfield then
 				lookUpFriends(player)
 				local cached = friendsCache[player.UserId]
 				facts["Your friend"].Text = cached and cached.you or "Checking..."
-				friendsValue.Text = cached and cached.here or "Checking..."
+				local friendsText = "Checking..."
+				if cached and cached.failed then
+					friendsText = "Can't check from here"
+				elseif cached and cached.here then
+					local names = {}
+					for _, other in ipairs(cached.here) do table.insert(names, menuModules.nameOf(other)) end
+					friendsText = #names > 0 and table.concat(names, ", ") or "No one"
+				end
+				friendsValue.Text = friendsText
 			end
+			table.insert(menuModules.nameListeners, function() pcall(refresh) end)
+			noteBox.FocusLost:Connect(function()
+				local player = selectedPlayer()
+				if player and menuModules.setNote then menuModules.setNote(player, noteBox.Text) end
+			end)
+			outfitButton.Activated:Connect(function()
+				local player = selectedPlayer()
+				if not player then return notify("Outfit", "Pick someone who's in this server first.") end
+				if menuModules.openOutfit then menuModules.openOutfit(player) end
+			end)
 
 			gotoButton.Activated:Connect(function() runForSelectedPlayer("goto") end)
 			spectateButton.Activated:Connect(function()
@@ -28772,6 +31567,96 @@ if rayfieldLoaded and Rayfield then
 				end)
 				if not started then notify("Join server", "Couldn't join: " .. tostring(problem), 5) end
 			end)
+
+			-- The Big Update. (Infinite Yield has its own antivoid, autorejoin, hitbox and record
+			-- commands, so the menu's versions of those go by other names or are switches only.)
+			describe("whatsnew", "Shows what the latest update added")
+			addcmd("whatsnew", {}, function()
+				if menuModules.whatsNew then menuModules.whatsNew.open() end
+			end)
+			describe("copyjobid", "Copies this server's Job ID, for Roblox Account Manager's Join Server")
+			addcmd("copyjobid", {}, function() menuModules.copy(game.JobId, "this server's Job ID") end)
+			describe("rejoinhere / rjhere", "Rejoins this server and puts you back where you're standing")
+			addcmd("rejoinhere", { "rjhere" }, function()
+				if menuModules.rejoinHere then menuModules.rejoinHere() end
+			end)
+			describe("goback", "Takes you back to where you were before your last teleport, glide or death")
+			addcmd("goback", {}, function()
+				if menuModules.goBack then menuModules.goBack() end
+			end)
+			addSwitchCommands("Safe Teleport", { { "safetp", "safeteleport" }, { "unsafetp", "unsafeteleport" }, "togglesafetp" },
+				"Teleports fly you there quickly instead, so games that kick for teleporting don't notice", "Teleports jump you straight there again")
+			describe("find [name]", "Opens the Object Finder and finds everything on the map with that in its name")
+			addcmd("find", {}, function(args)
+				setSwitch("Object Finder", true)
+				local query = tostring(getstring(1, args) or "")
+				if menuModules.objectFinder and query ~= "" then menuModules.objectFinder.find(query) end
+			end)
+			describe("collect [word]", "Adds a word to Auto Collect (coin, gem...) and turns it on")
+			addcmd("collect", {}, function(args)
+				local word = tostring(getstring(1, args) or ""):gsub("^%s+", ""):gsub("%s+$", "")
+				if word ~= "" then
+					local known = false
+					for _, existing in ipairs(featureSettings.collectWords) do
+						if tostring(existing):lower() == word:lower() then known = true end
+					end
+					if not known then table.insert(featureSettings.collectWords, word:sub(1, 40)) end
+					saveFeatureSettings()
+				end
+				-- Off and on again, so it looks for the new word too.
+				setSwitch("Auto Collect", false)
+				setSwitch("Auto Collect", true)
+			end)
+			describe("uncollect", "Turns Auto Collect off")
+			addcmd("uncollect", {}, function() setSwitch("Auto Collect", false) end)
+			addSwitchCommands("Record Movement", { { "recordmove", "recmove" }, { "unrecordmove", "unrecmove" }, "togglerecordmove" },
+				"Starts recording where you walk and jump", "Stops recording and keeps it")
+			addSwitchCommands("Play Recording", { { "playrecording", "playrec" }, { "stopplayback", "unplayrec" }, "toggleplayback" },
+				"Plays your recording back, from where it starts", "Stops playing the recording", "playback")
+			addSwitchCommands("Hitbox Expander", { { "hitboxexpander", "bighitboxes" }, { "unhitboxexpander", "unbighitboxes" }, "togglehitboxexpander" },
+				"Gives other players bigger hitboxes, so they're easier to hit", "Puts hitboxes back to normal")
+			addSwitchCommands("FPS Boost", { { "fpsboost" }, { "unfpsboost" }, "togglefpsboost" },
+				"Turns the game's graphics down so it runs smoother", "Puts the game's graphics back")
+			addSwitchCommands("Streamer Mode", { { "streamermode", "streamer" }, { "unstreamermode", "unstreamer" }, "togglestreamermode" },
+				"Hides player names in the menu, its windows, ESP and the player list", "Shows player names again")
+			describe("cleanscreen", "Hides or shows the menu, its windows and the game's buttons (F2 to start with)")
+			addcmd("cleanscreen", {}, function() setSwitch("Clean Screen", nil) end)
+			describe("timeofday [0-24]", "Sets the time on your screen, like timeofday 0 for midnight")
+			addcmd("timeofday", {}, function(args)
+				local hour = tonumber(args[1])
+				if not hour then return notify("Time of Day", "Give an hour from 0 to 24, like timeofday 0 for midnight") end
+				featureSettings.timeOfDayHour = math.clamp(hour, 0, 24)
+				saveFeatureSettings()
+				setSwitch("Time of Day", true)
+			end)
+			describe("untimeofday", "Puts the game's own time back")
+			addcmd("untimeofday", {}, function() setSwitch("Time of Day", false) end)
+			-- The player a command names, if they're in the server.
+			local function namedPlayer(args, speaker)
+				local found = getPlayer(args[1], speaker)
+				return found[1] and Players:FindFirstChild(found[1]) or nil
+			end
+			describe("note [player] [text]", "Writes a note on a player; it shows on their card in Players and when they join")
+			addcmd("note", {}, function(args, speaker)
+				local player = args[1] and namedPlayer(args, speaker)
+				local text = tostring(getstring(2, args) or "")
+				if not player or text:gsub("%s", "") == "" then return notify("Player Notes", "Give a player and the note, like note bob plays fair") end
+				menuModules.setNote(player, text)
+				notify("Player Notes", "Noted on " .. menuModules.nameOf(player), 2)
+			end)
+			describe("unnote [player]", "Takes your note off a player")
+			addcmd("unnote", {}, function(args, speaker)
+				local player = args[1] and namedPlayer(args, speaker)
+				if not player then return notify("Player Notes", "Give a player, like unnote bob") end
+				menuModules.setNote(player, "")
+				notify("Player Notes", "Took your note off " .. menuModules.nameOf(player), 2)
+			end)
+			describe("outfit [player]", "Shows everything a player is wearing, with pictures and prices")
+			addcmd("outfit", {}, function(args, speaker)
+				local player = namedPlayer(args, speaker)
+				if not player then return notify("Outfit", "Give a player who's in this server, like outfit bob") end
+				if menuModules.openOutfit then menuModules.openOutfit(player) end
+			end)
 		end
 		-- Kept separate so a problem here can't stop the rest of the menu loading.
 		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
@@ -28926,12 +31811,13 @@ if rayfieldLoaded and Rayfield then
 				text = "WELCOME BACK", font = Enum.Font.GothamBold, size = 10, role = "Muted",
 				position = UDim2.fromOffset(textX, 24), frameSize = UDim2.new(1, -textX - 14, 0, 14),
 			})
-			makeLabel(welcome, {
-				text = localPlayer.DisplayName, font = Enum.Font.GothamBold, size = 17,
+			-- Streamer Mode leaves your names off.
+			local welcomeName = makeLabel(welcome, {
+				text = featureSettings.streamerMode and "Streamer Mode" or localPlayer.DisplayName, font = Enum.Font.GothamBold, size = 17,
 				position = UDim2.fromOffset(textX, 39), frameSize = UDim2.new(1, -textX - 14, 0, 22),
 			})
 			local welcomeDetail = makeLabel(welcome, {
-				text = "@" .. localPlayer.Name, size = 11, role = "SubText",
+				text = featureSettings.streamerMode and "Names hidden" or ("@" .. localPlayer.Name), size = 11, role = "SubText",
 				position = UDim2.fromOffset(textX, 62), frameSize = UDim2.new(1, -textX - 14, 0, 15),
 			})
 
@@ -29309,7 +32195,8 @@ if rayfieldLoaded and Rayfield then
 				local session = formatDuration(time())
 				playersText.Text = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
 				sessionText.Text = session
-				local details = { "@" .. localPlayer.Name }
+				welcomeName.Text = featureSettings.streamerMode and "Streamer Mode" or localPlayer.DisplayName
+				local details = { featureSettings.streamerMode and "Names hidden" or ("@" .. localPlayer.Name) }
 				if executorName then table.insert(details, executorName) end
 				table.insert(details, session .. " on this server")
 				welcomeDetail.Text = table.concat(details, "  ·  ")
@@ -29318,6 +32205,9 @@ if rayfieldLoaded and Rayfield then
 				local keybinds = 0
 				for _, entry in ipairs(quickToggles) do
 					if entry.key then keybinds += 1 end
+				end
+				for _, action in ipairs(quickActions) do
+					if action.key then keybinds += 1 end
 				end
 				activeSummary.Text = keybinds == 1 and "1 keybind set" or (keybinds .. " keybinds set")
 				refreshActive()
