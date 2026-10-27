@@ -14770,6 +14770,24 @@ if rayfieldLoaded and Rayfield then
 			partGrabKey = "T", partPetCount = 6, partPetDistance = 5, partCarpetSpeed = 40, partStairCount = 6, partStairRise = 1,
 			partShieldShape = "Ring", partShieldRadius = 8, partShieldSpeed = 4, partFloatHeight = 15, partFloatRange = 120,
 			partFountainPower = 50, partFountainCount = 30, partBlenderSpeed = 20, partBlenderRange = 120, partShowRange = 150,
+			-- Scaredy Cat: how near your target can come (studs) before you run, and whether you follow
+			-- them from a distance. Leapfrog: how far over their head you go (studs) and the wait
+			-- between leaps (seconds). Puppy: how far from them you keep (studs), and whether you sit
+			-- when they stop and get the zoomies.
+			trollScaredDistance = 12, trollScaredFollow = true, trollLeapHeight = 2, trollLeapPause = 0.6,
+			trollPuppyDistance = 4, trollPuppySit = true, trollPuppyZoomies = true,
+			-- The Aim Trainer: its window's position, how long a round is (seconds), the targets' size
+			-- ("Small", "Medium" or "Large") and speed ("Easy", "Normal" or "Hard"), and the best score
+			-- for each mix of those, by "30 Medium Normal" and so on.
+			aimTrainerX = -1, aimTrainerY = -1, aimTrainerLength = 30, aimTrainerSize = "Medium", aimTrainerSpeed = "Normal",
+			aimTrainerBests = {},
+			-- Weather: on or off, which ("Rain", "Snow", "Fog" or "Storm") and how heavy (1 to 10).
+			weather = false, weatherStyle = "Rain", weatherAmount = 5,
+			-- Graphics Presets: on or off, the style, and how strong (percent).
+			graphicsPresets = false, graphicsStyle = "Cinematic", graphicsStrength = 100,
+			-- Panic: whether it hides the menu, puts your speed and camera back to normal, and leaves the
+			-- game, and whether it's been given its End key yet (so a key taken off it stays off).
+			panicHide = true, panicReset = true, panicLeave = false, panicKeySet = false,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14792,6 +14810,8 @@ if rayfieldLoaded and Rayfield then
 			partStairCount = { 3, 12 }, partStairRise = { 0.5, 2 }, partShieldRadius = { 5, 25 }, partShieldSpeed = { 1, 10 },
 			partFloatHeight = { 5, 40 }, partFloatRange = { 30, 400 }, partFountainPower = { 20, 120 }, partFountainCount = { 5, 60 },
 			partBlenderSpeed = { 5, 50 }, partBlenderRange = { 30, 400 }, partShowRange = { 50, 500 },
+			trollScaredDistance = { 6, 40 }, trollLeapHeight = { 1, 8 }, trollLeapPause = { 0.2, 3 }, trollPuppyDistance = { 2.5, 10 },
+			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -14986,6 +15006,8 @@ if rayfieldLoaded and Rayfield then
 			icon = spreadLogoLoaded and spreadLogo or nil,
 			subtitle = "COMMAND CENTER",
 			sidebarLayout = true,
+			-- The count under your name at the foot of the sidebar. This is before the menu's own
+			-- commands are added, so it's set again (window:SetProfile) once they are.
 			profile = tostring(#cmds) .. " commands loaded",
 			theme = makeTheme(currentPalette),
 			showName = "SpreadCheeksGUI",
@@ -15694,6 +15716,12 @@ if rayfieldLoaded and Rayfield then
 			if not menuModules.autoClicker then return false end
 			return menuModules.autoClicker.setEnabled(enabled)
 		end, "mouse-pointer-click", "hand")
+		-- Aim Trainer: a practice game in a window of its own, built further down (menuModules.aimTrainer).
+		withIcon(combatTab, "CreateSection", { name = "Practice" }, "target", "crosshair")
+		addQuickToggle(combatTab, "Aim Trainer", "A practice game: click the targets before they shrink away. Right-click for how long and how hard", function(enabled)
+			if not menuModules.aimTrainer then return false end
+			return menuModules.aimTrainer.setShown(enabled)
+		end, "target", "crosshair")
 
 		-- View: the camera, then lighting and sight.
 		withIcon(viewTab, "CreateSection", { name = "Camera" }, "camera")
@@ -15782,6 +15810,9 @@ if rayfieldLoaded and Rayfield then
 		addCommandToggle(viewTab, "X-ray", "xray", "unxray", "See through walls and buildings", "scan", "eye")
 		addRememberedToggle(viewTab, "Time of Day", "timeOfDay", "timeOfDay", "Sets the time on your screen. Right-click for the hour", "sun-moon", "clock")
 		addRememberedToggle(viewTab, "FPS Boost", "fpsBoost", "fpsBoost", "Turns the game's graphics down (shadows, effects, textures) so it runs smoother", "zap", "rocket")
+		-- Weather and Graphics Presets, built further down (menuModules.weather and .graphicsPresets).
+		addRememberedToggle(viewTab, "Weather", "weather", "weather", "Rain, snow, fog or a thunderstorm on your screen. Only you see it. Right-click for which and how heavy", "cloud-rain", "cloud")
+		addRememberedToggle(viewTab, "Graphics Presets", "graphicsPresets", "graphicsPresets", "Makes the game look better, with bloom, sun rays and colour styles. Only you see it. Right-click for the style", "palette", "sparkles")
 		withIcon(viewTab, "CreateSection", { name = "Sound" }, "volume-2", "music")
 		addRememberedToggle(viewTab, "Mute Game Music", "muteMusic", "muteMusic", "Mutes the game's music and other sounds that loop", "music", "volume-x")
 		addRememberedToggle(viewTab, "Mute Player Sounds", "muteOthers", "muteOthers", "Mutes other players' boomboxes, gear and anything else they play", "volume-x", "speaker")
@@ -15853,6 +15884,15 @@ if rayfieldLoaded and Rayfield then
 				saveFeatureSettings()
 			end
 		end, "at-sign", "message-circle")
+		-- Panic: everything off at once, and back on again after. Built further down (menuModules.panic).
+		withIcon(protectionTab, "CreateSection", { name = "Panic" }, "siren", "octagon-alert")
+		addQuickToggle(protectionTab, "Panic", "Switches everything off at once and hides the menu; switch it off to put it all back. End to start with. Right-click for what it does", function(enabled)
+			if not menuModules.panic then return false end
+			return menuModules.panic.setEnabled(enabled)
+		end, "siren", "octagon-alert")
+		-- It isn't kept in configs, and its star would put a tile on a bar it hides.
+		quickToggleByName["Panic"].noConfig = true
+		quickToggleByName["Panic"].noFavourite = true
 
 		-- Trolling: harmless fun, in a group of tabs of its own (trollTabs). Animations, walks, tricks,
 		-- moves and the player pranks play on your own character, so everyone in the server sees them;
@@ -15911,7 +15951,7 @@ if rayfieldLoaded and Rayfield then
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
 				-- Play Recording (Mobility) moves you too, so it's one of the takeovers.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo", "Scaredy Cat", "Leapfrog", "Puppy" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk", "Stare" }
 				local clashes = {}
 				local function clash(first, second)
@@ -15939,7 +15979,7 @@ if rayfieldLoaded and Rayfield then
 				-- Both of these switch Roblox's Animate script off and on as they go.
 				clash("Weeping Angel", "Copycat")
 				-- Copycat's following would keep pulling you off your post (or your spot, or the floor).
-				for _, name in ipairs({ "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Echo" }) do
+				for _, name in ipairs({ "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Echo", "Scaredy Cat", "Leapfrog", "Puppy" }) do
 					clash(name, "Copycat")
 				end
 				local function claimMovement(name)
@@ -16114,6 +16154,99 @@ if rayfieldLoaded and Rayfield then
 						end
 						if root.Parent then
 							root.CFrame = CFrame.new(root.Position + Vector3.new(0, 1.5, 0)) * facing
+							root.AssemblyAngularVelocity = Vector3.zero
+						end
+						-- A takeover started since needs PlatformStand left on.
+						if humanoid.Parent and not takeoverState.name then
+							humanoid.PlatformStand = false
+							humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+						end
+						flipping = false
+					end)
+				end
+				-- Ground Pound: a jump, a forward spin at the top of it, then a slam straight down, sat tucked
+				-- up like a cannonball (sitting through it stops your character standing itself up). It slows
+				-- just above the ground, so games with fall damage don't count it as a fall. Started in
+				-- mid-air, it spins and slams from where you are.
+				function trolling.groundPound()
+					if flipping or takeoverState.name then return end
+					local character, humanoid, root = myCharacter()
+					if not humanoid then return end
+					flipping = true
+					task.spawn(function()
+						local forward = flat(root.CFrame.LookVector)
+						forward = forward.Magnitude > 0.1 and forward.Unit or Vector3.new(0, 0, -1)
+						local facing = CFrame.lookAt(Vector3.zero, forward)
+						if humanoid.FloorMaterial ~= Enum.Material.Air then
+							humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+							root.AssemblyLinearVelocity = Vector3.new(0, 60, 0)
+							-- Up to the top of the jump.
+							local started = os.clock()
+							RunService.Heartbeat:Wait()
+							while root.Parent and root.AssemblyLinearVelocity.Y > 4 and os.clock() - started < 1.2 do
+								RunService.Heartbeat:Wait()
+							end
+						end
+						-- The spin, held in the air where you are.
+						local spot = root.Position
+						local turned = 0
+						while root.Parent and turned < math.pi * 2 do
+							turned += math.min(math.pi * 2 - turned, math.pi * 2 * RunService.Heartbeat:Wait() / 0.35)
+							humanoid.Sit = true
+							root.AssemblyLinearVelocity = Vector3.zero
+							root.AssemblyAngularVelocity = Vector3.zero
+							root.CFrame = CFrame.new(spot) * facing * CFrame.Angles(-turned, 0, 0)
+						end
+						-- The slam: straight down fast, never past the point a few studs over the ground, then
+						-- down onto it gently.
+						local started = os.clock()
+						while root.Parent and os.clock() - started < 3 do
+							local deltaTime = RunService.Heartbeat:Wait()
+							local ground = groundBelow(root.Position, { character })
+							local above = ground and root.Position.Y - ground
+							if above and above < 4.5 then break end
+							local speed = above and math.min(110, (above - 4) / math.max(deltaTime, 1 / 120)) or 110
+							root.AssemblyLinearVelocity = Vector3.new(0, -speed, 0)
+							root.AssemblyAngularVelocity = Vector3.zero
+							root.CFrame = CFrame.new(root.Position) * facing
+						end
+						if root.Parent then
+							root.AssemblyLinearVelocity = Vector3.new(0, -12, 0)
+							root.CFrame = CFrame.new(root.Position) * facing
+						end
+						humanoid.Sit = false
+						flipping = false
+					end)
+				end
+				-- Windmill: down onto your back, legs up in the air, spinning round on it like a breakdancer,
+				-- then back up onto your feet. You go limp for it (PlatformStand), so your character doesn't
+				-- stand itself up halfway.
+				function trolling.windmill()
+					if flipping or takeoverState.name then return end
+					local character, humanoid, root = myCharacter()
+					if not humanoid then return end
+					flipping = true
+					task.spawn(function()
+						local yaw = yawOf(root.CFrame.LookVector)
+						local length, spun = 2.6, 0
+						humanoid.PlatformStand = true
+						local started = os.clock()
+						while root.Parent and os.clock() - started < length do
+							local deltaTime = RunService.Heartbeat:Wait()
+							-- Up to speed quickly, and slowing for the last half second.
+							local age = os.clock() - started
+							spun += math.pi * 2 * 2.2 * math.clamp(math.min(age / 0.3, (length - age) / 0.5), 0.25, 1) * deltaTime
+							local ground = groundBelow(root.Position, { character })
+							local height = ground and ground + 1.3 or root.Position.Y
+							root.AssemblyLinearVelocity = Vector3.zero
+							root.AssemblyAngularVelocity = Vector3.zero
+							-- Tipped back past flat, so your shoulders are down and your legs are up.
+							root.CFrame = CFrame.new(root.Position.X, height, root.Position.Z) * CFrame.Angles(0, yaw + spun, 0) * CFrame.Angles(math.rad(105), 0, 0)
+						end
+						if root.Parent then
+							local ground = groundBelow(root.Position, { character })
+							local standing = isR15(humanoid) and (humanoid.HipHeight + root.Size.Y / 2) or 3
+							root.CFrame = CFrame.new(root.Position.X, (ground or root.Position.Y) + standing, root.Position.Z) * CFrame.Angles(0, yaw + spun, 0)
 							root.AssemblyAngularVelocity = Vector3.zero
 						end
 						-- A takeover started since needs PlatformStand left on.
@@ -17680,7 +17813,7 @@ if rayfieldLoaded and Rayfield then
 				-- with Stop Animations from further up.
 				withIcon(trollTabs.walks, "CreateSection", { name = "Moves" }, "zap", "sparkles")
 				trollTabs.walks:CreateText({
-					text = "Click the key box on a move to put it on a key. They're commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, diveroll, yeet, launch, fakeout).",
+					text = "Click the key box on a move to put it on a key. They're commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, diveroll, groundpound, windmill, yeet, launch, fakeout).",
 				})
 				trolling.moves = {
 					{ name = "Front Flip", description = "A jump with a full turn forwards", icons = { "rotate-cw", "refresh-cw" }, run = function() trolling.flip("front") end },
@@ -17690,6 +17823,8 @@ if rayfieldLoaded and Rayfield then
 					{ name = "Trip", description = "Fall flat over", icons = { "footprints" }, run = function() execCmd("trip", localPlayer, true) end },
 					{ name = "Tumble", description = "Go head over heels in a heap, then get back up", icons = { "dices", "shuffle" }, run = function() trolling.tumble() end },
 					{ name = "Dive Roll", description = "Dive forwards, flat out, and roll back up onto your feet", icons = { "arrow-down-right", "rotate-cw" }, run = function() trolling.diveRoll() end },
+					{ name = "Ground Pound", description = "Jump, spin in mid-air and slam straight down", icons = { "arrow-down-to-line", "chevrons-down" }, run = function() trolling.groundPound() end },
+					{ name = "Windmill", description = "A breakdance spin on your back, legs in the air, then back up", icons = { "fan", "rotate-cw" }, run = function() trolling.windmill() end },
 					{ name = "Yeet", description = "Throw yourself forwards, tumbling through the air", icons = { "wind", "rocket" }, run = function() trolling.yeet() end },
 					{ name = "Launch", description = "Shoots you high into the air. Some games give fall damage", icons = { "rocket" }, run = function() trolling.launch() end },
 					{ name = "Fakeout", description = "Vanish into the void for a second, then pop back where you were", icons = { "ghost" }, run = function() execCmd("fakeout", localPlayer, true) end },
@@ -19331,6 +19466,369 @@ if rayfieldLoaded and Rayfield then
 					addQuickToggle(trollTabs.players, "Stare", "Keep staring right at your target wherever they go, while you walk about as normal", setStare, "eye", "scan-eye")
 				end
 
+				-- Scaredy Cat: you keep away from your target. Whenever they come within the distance in its
+				-- settings card you run off, away from them and round anything in the way, and once you're
+				-- well clear you stop and turn to peek back at them (shyly, on R15); backed into a corner, you
+				-- cower. While they keep away you follow them about from a distance, too curious to leave
+				-- (unless that's off in the card). Your own keys don't move you while it's on.
+				do
+					local scaredFollower = newFollower()
+					scaredFollower.driftSpeed = 40
+					scaredFollower.driftBeyond = 80
+					scaredFollower.landWithin = 50
+					local scared = { fleeing = false, fleeTo = nil, fleeAt = 0, lastReaction = 0, track = nil }
+					local scaredParams = RaycastParams.new()
+					scaredParams.FilterType = Enum.RaycastFilterType.Exclude
+					-- Straight away from them first, then turning further off to either side.
+					local fleeAngles = { 0, math.rad(35), math.rad(-35), math.rad(70), math.rad(-70), math.rad(110), math.rad(-110) }
+					local function stopReaction()
+						if scared.track then
+							pcall(function() scared.track:Stop(0.3) end)
+							scared.track = nil
+						end
+					end
+					-- A gesture (Shy or Cower) played once, at most every few seconds. Both need R15.
+					local function react(humanoid, name)
+						local now = os.clock()
+						if now - scared.lastReaction < 5 then return end
+						local emote = emoteByName[name]
+						local id = emote and (isR15(humanoid) and emote.r15 or emote.r6)
+						if not id then return end
+						scared.lastReaction = now
+						stopReaction()
+						local track = playOnMe("rbxassetid://" .. tostring(id))
+						scared.track = track
+						if not track then return end
+						track.Looped = false
+						task.delay(2.5, function()
+							if scared.track == track then stopReaction() end
+						end)
+					end
+					-- Somewhere to run to: away from them and a good way off (less if a wall's in the way),
+					-- with floor under it. Nil when there's nowhere.
+					local function fleeSpot(character, root, theirCharacter, away)
+						scaredParams.FilterDescendantsInstances = { character, theirCharacter }
+						for _, angle in ipairs(fleeAngles) do
+							local direction = CFrame.Angles(0, angle, 0):VectorToWorldSpace(away)
+							local distance = 18
+							local wall = workspace:Raycast(root.Position, direction * distance, scaredParams)
+							if wall then distance = (wall.Position - root.Position).Magnitude - 2 end
+							if distance >= 6 then
+								local spot = root.Position + direction * distance
+								if groundBelow(spot, { character, theirCharacter }) then return spot end
+							end
+						end
+						return nil
+					end
+					local function setScaredyCat(enabled)
+						afterControls("SpreadCheeksScaredyCat", nil)
+						scaredFollower.reset()
+						stopReaction()
+						scared.fleeing, scared.fleeTo = false, nil
+						if not enabled then return end
+						local target = targetFor("Scaredy Cat")
+						if not target then return false end
+						if not myCharacter() then
+							notify("Scaredy Cat", "Your character isn't ready yet.")
+							return false
+						end
+						claimMovement("Scaredy Cat")
+						afterControls("SpreadCheeksScaredyCat", function(deltaTime)
+							if not target.Parent then
+								notify("Scaredy Cat", menuModules.nameOf(target) .. " left the server")
+								return switchOff("Scaredy Cat")
+							end
+							local character, humanoid, root = myCharacter()
+							if not humanoid then return end
+							local theirCharacter = target.Character
+							local theirRoot = theirCharacter and getRoot(theirCharacter)
+							if not theirRoot then
+								scaredFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+								return
+							end
+							local now = os.clock()
+							local away = flat(root.Position - theirRoot.Position)
+							local distance = away.Magnitude
+							if distance < 0.1 then
+								away = flat(theirRoot.CFrame.LookVector)
+								if away.Magnitude < 0.1 then away = Vector3.new(0, 0, 1) end
+							end
+							away = away.Unit
+							local scareAt = featureSettings.trollScaredDistance
+							local safeAt = scareAt + 8
+							scaredFollower.ignore = theirCharacter
+							if distance < scareAt and not scared.fleeing then
+								-- Too close: off you run.
+								scared.fleeing, scared.fleeTo = true, nil
+								stopReaction()
+							elseif scared.fleeing and distance >= safeAt then
+								-- Well clear: you stop and peek back at them.
+								scared.fleeing, scared.fleeTo = false, nil
+								scaredFollower.reset()
+								react(humanoid, "Shy")
+							end
+							if scared.fleeing then
+								-- Which way to run, worked out again every half second as they come after you.
+								if not scared.fleeTo or now - scared.fleeAt > 0.5 then
+									scared.fleeTo = fleeSpot(character, root, theirCharacter, away)
+									scared.fleeAt = now
+								end
+								if scared.fleeTo then
+									scaredFollower.step(deltaTime, character, humanoid, root, scared.fleeTo, 1.5, false)
+									return
+								end
+								-- Backed into a corner, with nowhere to run: you cower where you are.
+								if scaredFollower.drifting then scaredFollower.reset() end
+								scaredFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+								react(humanoid, "Cower")
+								return
+							end
+							if featureSettings.trollScaredFollow and distance > safeAt + 15 then
+								-- They've wandered off: creeping after them, never too close.
+								scaredFollower.step(deltaTime, character, humanoid, root, theirRoot.Position + away * safeAt, 2, false)
+								return
+							end
+							-- Keeping your distance, on the ground, turned to watch them.
+							if scaredFollower.drifting then scaredFollower.reset() end
+							scaredFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+							root.CFrame = root.CFrame:Lerp(CFrame.lookAt(root.Position, root.Position - away), math.clamp(deltaTime * 8, 0, 1))
+						end)
+					end
+					targetedSwitches["Scaredy Cat"] = setScaredyCat
+					addQuickToggle(trollTabs.players, "Scaredy Cat", "Run away whenever your target comes near, then peek back at them from a safe distance. Right-click for how near", setScaredyCat, "cat", "footprints")
+				end
+
+				-- Leapfrog: you leap right over your target's head, land on their other side, turn round and
+				-- leap back again, over and over. Each leap clears their head by the height in its settings
+				-- card, moves with them if they're walking, and passes through everything, so they never get
+				-- bumped. Between leaps you get into place a few studs from them, walking round walls and up
+				-- stairs, and flying over when they're far off. Your own keys don't move you while it's on.
+				do
+					local leapFollower = newFollower()
+					leapFollower.driftSpeed = 40
+					leapFollower.driftBeyond = 60
+					leapFollower.landWithin = 25
+					-- current: the leap under way, if any. readyAt: when the next one can start.
+					local leap = { current = nil, readyAt = 0, noclip = nil, collisions = nil }
+					local function stopNoclip()
+						if leap.noclip then
+							leap.noclip:Disconnect()
+							leap.noclip = nil
+						end
+						for part, canCollide in pairs(leap.collisions or {}) do
+							if part.Parent then part.CanCollide = canCollide end
+						end
+						leap.collisions = nil
+					end
+					-- Through everything while you leap. The humanoid keeps turning collisions back on, so
+					-- they're switched off every frame.
+					local function startNoclip(character)
+						stopNoclip()
+						leap.collisions = {}
+						for _, part in ipairs(character:GetDescendants()) do
+							if part:IsA("BasePart") then leap.collisions[part] = part.CanCollide end
+						end
+						leap.noclip = RunService.Stepped:Connect(function()
+							for part in pairs(leap.collisions) do
+								if part.Parent then part.CanCollide = false end
+							end
+						end)
+					end
+					local function endLeap()
+						leap.current = nil
+						stopNoclip()
+					end
+					local function setLeapfrog(enabled)
+						afterControls("SpreadCheeksLeapfrog", nil)
+						leapFollower.reset()
+						endLeap()
+						leap.readyAt = 0
+						if not enabled then return end
+						local target = targetFor("Leapfrog")
+						if not target then return false end
+						if not myCharacter() then
+							notify("Leapfrog", "Your character isn't ready yet.")
+							return false
+						end
+						claimMovement("Leapfrog")
+						afterControls("SpreadCheeksLeapfrog", function(deltaTime)
+							if not target.Parent then
+								notify("Leapfrog", menuModules.nameOf(target) .. " left the server")
+								return switchOff("Leapfrog")
+							end
+							local character, humanoid, root = myCharacter()
+							if not humanoid then return endLeap() end
+							local theirCharacter = target.Character
+							local theirRoot = theirCharacter and getRoot(theirCharacter)
+							if not theirRoot then
+								endLeap()
+								leapFollower.step(deltaTime, character, humanoid, root, root.Position, 1, true)
+								return
+							end
+							local now = os.clock()
+							local standing = isR15(humanoid) and (humanoid.HipHeight + root.Size.Y / 2) or 3
+							local current = leap.current
+							if current then
+								-- In the air: along an arc that moves with them, flat across the top so you're
+								-- high the whole way over them.
+								local progress = math.clamp((now - current.started) / current.duration, 0, 1)
+								local base = theirRoot.Position
+								local across = current.from:Lerp(current.to, progress)
+								local landing = groundBelow(base + current.to, { character, theirCharacter })
+								local endY = landing and landing + standing or base.Y
+								local head = theirCharacter:FindFirstChild("Head")
+								local top = head and head:IsA("BasePart") and head.Position.Y + head.Size.Y / 2 or base.Y + 2.5
+								local middle = current.startY + (endY - current.startY) * 0.5
+								local rise = math.max(2, top + featureSettings.trollLeapHeight + standing - middle)
+								local height = current.startY + (endY - current.startY) * progress + rise * (1 - (2 * progress - 1) ^ 4)
+								local position = Vector3.new(base.X + across.X, height, base.Z + across.Z)
+								root.AssemblyLinearVelocity = (position - root.Position) / math.max(deltaTime, 1 / 120)
+								root.AssemblyAngularVelocity = Vector3.zero
+								-- Leaning into it over the top.
+								root.CFrame = CFrame.lookAt(position, position + current.direction) * CFrame.Angles(-math.rad(25) * math.sin(progress * math.pi), 0, 0)
+								if progress >= 1 then
+									endLeap()
+									root.AssemblyLinearVelocity = flat(theirRoot.AssemblyLinearVelocity)
+									leap.readyAt = now + featureSettings.trollLeapPause
+									leapFollower.reset()
+								end
+								return
+							end
+							-- Into place a few studs from them, on whichever side you're on, facing them.
+							local fromThem = flat(root.Position - theirRoot.Position)
+							local side = fromThem
+							if side.Magnitude < 0.1 then
+								side = -flat(theirRoot.CFrame.LookVector)
+								if side.Magnitude < 0.1 then side = Vector3.new(0, 0, 1) end
+							end
+							side = side.Unit
+							leapFollower.ignore = theirCharacter
+							if not leapFollower.step(deltaTime, character, humanoid, root, theirRoot.Position + side * 3.5, 1.2, false) then return end
+							root.CFrame = root.CFrame:Lerp(CFrame.lookAt(root.Position, root.Position - side), math.clamp(deltaTime * 10, 0, 1))
+							-- Then over them, to the same distance on their other side.
+							if now < leap.readyAt or math.abs(root.Position.Y - theirRoot.Position.Y) > 6 then return end
+							leap.current = {
+								started = now, duration = 0.8, startY = root.Position.Y,
+								from = fromThem, to = -side * 3.5, direction = -side,
+							}
+							startNoclip(character)
+							humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+						end)
+					end
+					targetedSwitches["Leapfrog"] = setLeapfrog
+					addQuickToggle(trollTabs.players, "Leapfrog", "Keep leaping right over your target's head, back and forth, without ever touching them. Right-click for how high", setLeapfrog, "rabbit", "chevrons-up")
+				end
+
+				-- Puppy: you follow your target about like a pet dog, trotting at their heels (as close as its
+				-- settings card says). When they stop, you sit down in front of them looking up at them, with
+				-- a happy hop now and then; when they jump, you jump too. Every so often while they're on the
+				-- move you get the zoomies and race round them. Sitting and the zoomies can be switched off in
+				-- the card. Your own keys don't move you while it's on.
+				do
+					local puppyFollower = newFollower()
+					puppyFollower.driftSpeed = 40
+					puppyFollower.driftBeyond = 60
+					puppyFollower.landWithin = 25
+					local puppy = { stillSince = nil, sitting = false, rising = false, zoomUntil = 0, nextZoom = 0, angle = 0, nextHop = 0 }
+					local function standUp(humanoid)
+						if not puppy.sitting then return end
+						puppy.sitting = false
+						if humanoid and humanoid.Parent then humanoid.Sit = false end
+					end
+					local function setPuppy(enabled)
+						afterControls("SpreadCheeksPuppy", nil)
+						puppyFollower.reset()
+						local _, humanoid = myCharacter()
+						standUp(humanoid)
+						puppy.sitting, puppy.stillSince, puppy.rising, puppy.zoomUntil = false, nil, false, 0
+						if not enabled then return end
+						local target = targetFor("Puppy")
+						if not target then return false end
+						if not humanoid then
+							notify("Puppy", "Your character isn't ready yet.")
+							return false
+						end
+						claimMovement("Puppy")
+						puppy.nextZoom = os.clock() + math.random(5, 10)
+						afterControls("SpreadCheeksPuppy", function(deltaTime)
+							if not target.Parent then
+								notify("Puppy", menuModules.nameOf(target) .. " left the server")
+								return switchOff("Puppy")
+							end
+							local character, myHumanoid, root = myCharacter()
+							if not myHumanoid then return end
+							local theirCharacter = target.Character
+							local theirRoot = theirCharacter and getRoot(theirCharacter)
+							if not theirRoot then
+								standUp(myHumanoid)
+								puppyFollower.step(deltaTime, character, myHumanoid, root, root.Position, 1, true)
+								return
+							end
+							local now = os.clock()
+							local velocity = theirRoot.AssemblyLinearVelocity
+							local moving = flat(velocity).Magnitude > 2
+							puppy.stillSince = not moving and (puppy.stillSince or now) or nil
+							-- A jump: they've just started going up fast. You jump too.
+							local rising = velocity.Y > 12
+							local jumped = rising and not puppy.rising
+							puppy.rising = rising
+							local look = flat(theirRoot.CFrame.LookVector)
+							look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+							local right = Vector3.new(-look.Z, 0, look.X)
+							local distance = featureSettings.trollPuppyDistance
+							puppyFollower.ignore = theirCharacter
+							-- The zoomies: a lap or two round them, every so often while they're moving.
+							if featureSettings.trollPuppyZoomies and moving and now >= puppy.nextZoom then
+								local fromThem = flat(root.Position - theirRoot.Position)
+								puppy.angle = fromThem.Magnitude > 0.1 and math.atan2(fromThem.Z, fromThem.X) or 0
+								puppy.zoomUntil = now + 4
+								puppy.nextZoom = now + 4 + math.random(8, 16)
+							end
+							if now < puppy.zoomUntil then
+								standUp(myHumanoid)
+								local radius = distance + 2
+								puppy.angle += deltaTime * 15 / radius
+								local spot = theirRoot.Position + Vector3.new(math.cos(puppy.angle), 0, math.sin(puppy.angle)) * radius
+								puppyFollower.step(deltaTime, character, myHumanoid, root, spot, 0.5, false)
+								if jumped then myHumanoid.Jump = true end
+								return
+							end
+							-- Stopped for a moment: sat in front of them, off to one side, looking up at them.
+							if featureSettings.trollPuppySit and puppy.stillSince and now - puppy.stillSince > 1.2 then
+								if not puppy.sitting then
+									local spot = theirRoot.Position + (look * 0.85 + right * 0.5).Unit * distance
+									if puppyFollower.step(deltaTime, character, myHumanoid, root, spot, 1.2, false) and myHumanoid.FloorMaterial ~= Enum.Material.Air then
+										local facing = flat(theirRoot.Position - root.Position)
+										if facing.Magnitude > 0.1 then root.CFrame = CFrame.lookAt(root.Position, root.Position + facing) end
+										-- Sitting still isn't being stuck, so the walking starts afresh after.
+										puppyFollower.reset()
+										puppy.sitting = true
+										myHumanoid.Sit = true
+										puppy.nextHop = now + math.random(3, 7)
+									end
+									return
+								end
+								-- A happy hop now and then, and when they jump; you sit back down after.
+								if jumped or now >= puppy.nextHop then
+									standUp(myHumanoid)
+									myHumanoid.Jump = true
+									puppy.nextHop = now + math.random(4, 8)
+								end
+								return
+							end
+							-- On the move: trotting at their heels, a little off to one side.
+							standUp(myHumanoid)
+							local heel = theirRoot.Position - look * distance + right * 1.2
+							if puppyFollower.step(deltaTime, character, myHumanoid, root, heel, 1.2, false) then
+								root.CFrame = root.CFrame:Lerp(CFrame.lookAt(root.Position, root.Position + look), math.clamp(deltaTime * 10, 0, 1))
+							end
+							if jumped then myHumanoid.Jump = true end
+						end)
+					end
+					targetedSwitches["Puppy"] = setPuppy
+					addQuickToggle(trollTabs.players, "Puppy", "Follow your target like a pet dog: at their heels, sitting when they stop, zoomies now and then. Right-click for settings", setPuppy, "dog", "paw-print")
+				end
+
 				-- Parts (the Parts tab): loose parts your game lets you move, pulled into tricks and shapes.
 				-- One parts trick has the parts at a time, so switching one on switches the others off. Each
 				-- trick says where every part should be, and the parts are moved there by their velocity,
@@ -20372,7 +20870,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Loading a config doesn't play dead, freeze you or go after a player who may not be in the
 				-- server.
-				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man" }) do
+				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Scaredy Cat", "Leapfrog", "Puppy" }) do
 					if quickToggleByName[name] then quickToggleByName[name].noConfig = true end
 				end
 
@@ -20981,6 +21479,87 @@ if rayfieldLoaded and Rayfield then
 							},
 						})
 						hypeCard.addHint("A random cheer, clap or celebration, at most every couple of seconds. Swinging a sword and the like counts as an emote too. Most cheers need an R15 avatar; on R6 it's the classic cheer.")
+					end
+					local scaredCard = cardFor("Scaredy Cat")
+					if scaredCard then
+						scaredCard.addSectionLabel("PERSONAL SPACE", "cat", "users-round")
+						scaredCard.addSlider({
+							text = "Run when they're within",
+							icon = { "footprints", "ruler" },
+							min = 6, max = 40, step = 1,
+							get = function() return featureSettings.trollScaredDistance end,
+							set = function(value) featureSettings.trollScaredDistance = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return math.floor(value + 0.5) .. " studs" end,
+						})
+						scaredCard.addSwitchGrid({
+							{
+								text = "Follow them from a distance",
+								get = function() return featureSettings.trollScaredFollow == true end,
+								set = function(on)
+									featureSettings.trollScaredFollow = on
+									saveFeatureSettings()
+								end,
+							},
+						}, 1)
+						scaredCard.addHint("You run until you're well clear, then turn round to peek at them. Following, you creep after them when they walk off, never too close. Shy and Cower need an R15 avatar.")
+						scaredCard.refresh()
+					end
+					local leapCard = cardFor("Leapfrog")
+					if leapCard then
+						leapCard.addSectionLabel("LEAPS", "rabbit", "chevrons-up")
+						leapCard.addSlider({
+							text = "Height over their head",
+							icon = { "chevrons-up", "ruler" },
+							min = 1, max = 8, step = 0.5,
+							get = function() return featureSettings.trollLeapHeight end,
+							set = function(value) featureSettings.trollLeapHeight = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f studs", value) end,
+						})
+						leapCard.addSlider({
+							text = "Time between leaps",
+							icon = { "timer", "clock" },
+							min = 0.2, max = 3, step = 0.1,
+							get = function() return featureSettings.trollLeapPause end,
+							set = function(value) featureSettings.trollLeapPause = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f s", value) end,
+						})
+						leapCard.addHint("You pass through everything while you're in the air, so you never bump into them.")
+					end
+					local puppyCard = cardFor("Puppy")
+					if puppyCard then
+						puppyCard.addSectionLabel("AT THEIR HEELS", "dog", "paw-print")
+						puppyCard.addSlider({
+							text = "Distance from them",
+							icon = { "paw-print", "ruler" },
+							min = 2.5, max = 10, step = 0.5,
+							get = function() return featureSettings.trollPuppyDistance end,
+							set = function(value) featureSettings.trollPuppyDistance = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f studs", value) end,
+						})
+						puppyCard.addSwitchGrid({
+							{
+								text = "Sit when they stop",
+								get = function() return featureSettings.trollPuppySit == true end,
+								set = function(on)
+									featureSettings.trollPuppySit = on
+									saveFeatureSettings()
+								end,
+							},
+							{
+								text = "Zoomies now and then",
+								get = function() return featureSettings.trollPuppyZoomies == true end,
+								set = function(on)
+									featureSettings.trollPuppyZoomies = on
+									saveFeatureSettings()
+								end,
+							},
+						})
+						puppyCard.addHint("You jump whenever they jump. The zoomies are a lap or two round them every so often while they're moving.")
+						puppyCard.refresh()
 					end
 					local roombaCard = cardFor("Roomba")
 					if roombaCard then
@@ -27205,6 +27784,7 @@ if rayfieldLoaded and Rayfield then
 				safeTeleport = true, antiVoid = true, autoRejoin = true, objectFinder = true, spectateBar = true, zoomKey = true,
 				timeOfDay = true, fpsBoost = true, muteMusic = true, muteOthers = true, streamerMode = true, healthWarnings = true,
 				objectEsp = true, trollPanel = true, trollPanelX = true, trollPanelY = true, ctrlClickSelect = true,
+				aimTrainerX = true, aimTrainerY = true, aimTrainerBests = true, weather = true, graphicsPresets = true, panicKeySet = true,
 			}
 			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
 			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
@@ -29673,8 +30253,23 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			local menuVersion = "2026.10.27.4"
+			local menuVersion = "2026.10.28.1"
 			local releaseNotes = {
+				{
+					title = "Pranks, Practice and Panic", date = "28 October 2026",
+					notes = {
+						{ "Scaredy Cat", "Player Pranks. Run away whenever your target comes near, then peek back at them from a safe distance." },
+						{ "Leapfrog", "Player Pranks. Keep leaping right over your target's head, back and forth, without ever touching them." },
+						{ "Puppy", "Player Pranks. Follow your target like a pet dog: at their heels, sitting when they stop, and the zoomies now and then." },
+						{ "Ground Pound", "Walks & Moves. Jump, spin in mid-air and slam straight down." },
+						{ "Windmill", "Walks & Moves. A breakdance spin on your back, legs in the air." },
+						{ "Aim Trainer", "Combat tab. A practice game: click the targets before they shrink away, and beat your best score." },
+						{ "Weather", "View tab. Rain, snow, fog or a thunderstorm with lightning, on your screen only." },
+						{ "Graphics Presets", "View tab. Bloom, sun rays and colour styles like Cinematic, Vibrant, Black & White and Night Vision." },
+						{ "Panic", "Protection tab. One key (End to start with) switches everything off and hides the menu; press it again to put it all back." },
+						{ "Troll Panel", "The new pranks and moves are in the Troll Panel too, with their settings." },
+					},
+				},
 				{
 					title = "The Parts Update", date = "27 October 2026",
 					notes = {
@@ -33225,7 +33820,10 @@ if rayfieldLoaded and Rayfield then
 			end
 
 			-- Pranks: the Player Pranks tricks, on them.
-			local prankNames = { "Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare", "Glide To" }
+			local prankNames = {
+				"Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare",
+				"Scaredy Cat", "Leapfrog", "Puppy", "Glide To",
+			}
 			local pranks = newTab("Pranks", 1)
 			sectionLabel(pranks, "ON THEM  ·  CLICK AGAIN TO STOP")
 			local prankCells = grid(pranks, 2)
@@ -33264,6 +33862,19 @@ if rayfieldLoaded and Rayfield then
 				} },
 				{ name = "Hype Man", items = { switchOf("Cheer when they jump", "trollHypeJump"), switchOf("Cheer when they do an emote", "trollHypeEmote") } },
 				{ name = "Echo", items = { sliderOf("How far behind", "trollEchoDelay", 0.5, 5, 0.5, " s") } },
+				{ name = "Scaredy Cat", items = {
+					sliderOf("Run when they're within", "trollScaredDistance", 6, 40, 1, " studs"),
+					switchOf("Follow them from a distance", "trollScaredFollow"),
+				} },
+				{ name = "Leapfrog", items = {
+					sliderOf("Height over their head", "trollLeapHeight", 1, 8, 0.5, " studs"),
+					sliderOf("Time between leaps", "trollLeapPause", 0.2, 3, 0.1, " s"),
+				} },
+				{ name = "Puppy", items = {
+					sliderOf("Distance from them", "trollPuppyDistance", 2.5, 10, 0.5, " studs"),
+					switchOf("Sit when they stop", "trollPuppySit"),
+					switchOf("Zoomies now and then", "trollPuppyZoomies"),
+				} },
 				{ name = "Glide To", items = { sliderOf("Speed", "trollGlideSpeed", 10, 200, 5, " studs/s") } },
 			})
 			hint(pranks, "These make them your Player Pranks target. Switching one on shows its settings; they're the same settings as right-clicking it in the menu.")
@@ -33577,6 +34188,927 @@ if rayfieldLoaded and Rayfield then
 			menuModules.ctrlClickSelect = {
 				setEnabled = function(on) clicking.ctrl = on end,
 			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		------------------------------------------------------------------------------------------
+		-- Pranks, Practice and Panic (28 October 2026). Like The Big Update, each part is built on its
+		-- own, so a problem in one can't stop the rest; their switches are made with the others further up.
+
+		------------------------------------------------------------------------------------------
+		-- Aim Trainer: a practice game in a window of its own. Press Start and targets pop up round the
+		-- play area, shrinking as they go; click each one before it's gone. How long a round lasts, how
+		-- big the targets are and how fast they go (and so how many are up at once) are in its settings
+		-- card, and a round keeps the settings it started with. Quicker hits score more, and clicks that
+		-- miss count against your accuracy. The best score for each mix of settings is kept.
+		safeBuild("Aim Trainer", function()
+			local trainerWindow = menuModules.makeWindow({
+				name = "SpreadCheeksAimTrainer", title = "Aim Trainer", icons = { "target", "crosshair" },
+				width = 420, height = 400, xKey = "aimTrainerX", yKey = "aimTrainerY",
+				defaultPosition = function(screen, size) return (screen.X - size.X) / 2, (screen.Y - size.Y) / 2 end,
+			})
+			local body = trainerWindow.body
+			-- Each size in pixels, and for each speed how long a target lasts (seconds) and how many are up.
+			local sizes = { Small = 26, Medium = 38, Large = 52 }
+			local speeds = { Easy = { life = 2.2, count = 1 }, Normal = { life = 1.5, count = 2 }, Hard = { life = 1, count = 3 } }
+			-- The round being played (or the last one): its settings, the targets up now and how it's going.
+			local round = {
+				serial = 0, running = false, targets = {}, length = 30, size = "Medium", speed = "Normal",
+				score = 0, hits = 0, clicks = 0, missed = 0, reactionTotal = 0, endsAt = 0, lastHitAt = 0,
+			}
+			local function makeLabel(parent, textSize, font, role)
+				local label = Instance.new("TextLabel")
+				label.BackgroundTransparency = 1
+				label.Font = font
+				label.TextSize = textSize
+				label.TextWrapped = true
+				bindAuxiliaryUiColor(label, "TextColor3", role)
+				label.Parent = parent
+				return label
+			end
+
+			-- The numbers along the top.
+			local statsRow = Instance.new("Frame")
+			statsRow.Position = UDim2.fromOffset(10, 4)
+			statsRow.Size = UDim2.new(1, -20, 0, 34)
+			statsRow.BackgroundTransparency = 1
+			statsRow.Parent = body
+			local statsLayout = Instance.new("UIListLayout")
+			statsLayout.FillDirection = Enum.FillDirection.Horizontal
+			statsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			statsLayout.Parent = statsRow
+			local stats = {}
+			for index, name in ipairs({ "Score", "Hits", "Accuracy", "Time" }) do
+				local cell = Instance.new("Frame")
+				cell.LayoutOrder = index
+				cell.Size = UDim2.fromScale(0.25, 1)
+				cell.BackgroundTransparency = 1
+				cell.Parent = statsRow
+				local caption = makeLabel(cell, 10, Enum.Font.GothamBold, "Muted")
+				caption.Size = UDim2.new(1, 0, 0, 12)
+				caption.Text = name:upper()
+				local value = makeLabel(cell, 17, Enum.Font.GothamBold, "Text")
+				value.Position = UDim2.fromOffset(0, 13)
+				value.Size = UDim2.new(1, 0, 0, 20)
+				stats[name] = value
+			end
+
+			-- The play area. Clicking it anywhere but on a target is a miss. Modal frees the mouse in
+			-- games that hold it in the middle of the screen.
+			local area = Instance.new("TextButton")
+			area.Position = UDim2.fromOffset(10, 44)
+			area.Size = UDim2.new(1, -20, 1, -54)
+			area.AutoButtonColor = false
+			area.BorderSizePixel = 0
+			area.ClipsDescendants = true
+			area.Modal = true
+			area.Text = ""
+			bindAuxiliaryUiColor(area, "BackgroundColor3", "Inset")
+			area.Parent = body
+			local areaCorner = Instance.new("UICorner")
+			areaCorner.CornerRadius = UDim.new(0, 10)
+			areaCorner.Parent = area
+
+			-- Between rounds: how to play (or how the last round went), and Start.
+			local overlay = Instance.new("Frame")
+			overlay.AnchorPoint = Vector2.new(0.5, 0.5)
+			overlay.Position = UDim2.fromScale(0.5, 0.5)
+			overlay.Size = UDim2.new(1, -40, 0, 160)
+			overlay.BackgroundTransparency = 1
+			overlay.ZIndex = 5
+			overlay.Parent = area
+			local heading = makeLabel(overlay, 18, Enum.Font.GothamBold, "Text")
+			heading.Size = UDim2.new(1, 0, 0, 24)
+			heading.ZIndex = 5
+			local summary = makeLabel(overlay, 12, Enum.Font.Gotham, "SubText")
+			summary.Position = UDim2.fromOffset(0, 28)
+			summary.Size = UDim2.new(1, 0, 0, 78)
+			summary.ZIndex = 5
+			local startButton = Instance.new("TextButton")
+			startButton.AnchorPoint = Vector2.new(0.5, 0)
+			startButton.Position = UDim2.new(0.5, 0, 0, 116)
+			startButton.Size = UDim2.fromOffset(140, 34)
+			startButton.AutoButtonColor = false
+			startButton.BorderSizePixel = 0
+			startButton.Font = Enum.Font.GothamBold
+			startButton.TextSize = 14
+			startButton.ZIndex = 5
+			bindAuxiliaryUiColor(startButton, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(startButton, "TextColor3", "OnAccent")
+			startButton.Parent = overlay
+			local startCorner = Instance.new("UICorner")
+			startCorner.CornerRadius = UDim.new(0, 8)
+			startCorner.Parent = startButton
+			-- The big 3, 2, 1 before a round starts.
+			local countdown = makeLabel(area, 56, Enum.Font.GothamBold, "AccentText")
+			countdown.AnchorPoint = Vector2.new(0.5, 0.5)
+			countdown.Position = UDim2.fromScale(0.5, 0.5)
+			countdown.Size = UDim2.fromOffset(120, 70)
+			countdown.ZIndex = 5
+			countdown.Visible = false
+
+			local function mixKey(length, size, speed)
+				return tostring(length) .. " " .. tostring(size) .. " " .. tostring(speed)
+			end
+			local function bestFor(key)
+				return tonumber(featureSettings.aimTrainerBests[key]) or 0
+			end
+			local function showStats()
+				stats.Score.Text = tostring(round.score)
+				stats.Hits.Text = tostring(round.hits)
+				stats.Accuracy.Text = round.clicks > 0 and (math.floor(round.hits / round.clicks * 100 + 0.5) .. "%") or "–"
+				local left = round.running and math.max(0, round.endsAt - os.clock()) or round.length
+				stats.Time.Text = tostring(math.ceil(left))
+			end
+			local function clearTargets()
+				for _, target in ipairs(round.targets) do target.button:Destroy() end
+				table.clear(round.targets)
+			end
+			-- The overlay before any round, with the settings the next one will use.
+			local function showIntro()
+				local size = sizes[featureSettings.aimTrainerSize] and featureSettings.aimTrainerSize or "Medium"
+				local speed = speeds[featureSettings.aimTrainerSpeed] and featureSettings.aimTrainerSpeed or "Normal"
+				local best = bestFor(mixKey(featureSettings.aimTrainerLength, size, speed))
+				heading.Text = "Aim Trainer"
+				summary.Text = "Click the targets before they shrink away. Quicker hits score more; clicks that miss lower your accuracy.\n\n"
+					.. featureSettings.aimTrainerLength .. " seconds  ·  " .. size .. "  ·  " .. speed .. (best > 0 and ("  ·  best " .. best) or "")
+				startButton.Text = "Start"
+				overlay.Visible = true
+				countdown.Visible = false
+				if not round.running then
+					round.length = featureSettings.aimTrainerLength
+					showStats()
+				end
+			end
+			-- Ends the round: completed ones get their results and maybe a new best; stopped ones don't.
+			local function finish(completed)
+				round.serial += 1
+				round.running = false
+				clearTargets()
+				if not completed then return showIntro() end
+				local key = mixKey(round.length, round.size, round.speed)
+				local best = bestFor(key)
+				local newBest = round.score > best
+				if newBest then
+					featureSettings.aimTrainerBests[key] = round.score
+					saveFeatureSettings()
+				end
+				local accuracy = round.clicks > 0 and math.floor(round.hits / round.clicks * 100 + 0.5) or 0
+				local average = round.hits > 0 and math.floor(round.reactionTotal / round.hits * 1000 + 0.5) or nil
+				heading.Text = newBest and ("New best: " .. round.score .. "!") or ("Score " .. round.score)
+				summary.Text = round.hits .. " hits, " .. round.missed .. " got away  ·  " .. accuracy .. "% accuracy"
+					.. (average and ("\n" .. average .. " ms on average to hit one") or "")
+					.. "\n\n" .. round.length .. " seconds  ·  " .. round.size .. "  ·  " .. round.speed .. "  ·  best " .. math.max(best, round.score)
+				startButton.Text = "Again"
+				overlay.Visible = true
+				countdown.Visible = false
+				showStats()
+			end
+			-- A new target somewhere in the play area clear of the others. True if there was room.
+			local function spawnTarget()
+				local size = sizes[round.size]
+				local areaSize = area.AbsoluteSize
+				local margin = size / 2 + 4
+				if areaSize.X < margin * 2 + 10 or areaSize.Y < margin * 2 + 10 then return false end
+				local spot = nil
+				for _ = 1, 12 do
+					spot = Vector2.new(margin + math.random() * (areaSize.X - margin * 2), margin + math.random() * (areaSize.Y - margin * 2))
+					local clear = true
+					for _, other in ipairs(round.targets) do
+						if (spot - other.spot).Magnitude < size * 1.3 then clear = false end
+					end
+					if clear then break end
+				end
+				local button = Instance.new("TextButton")
+				button.AnchorPoint = Vector2.new(0.5, 0.5)
+				button.Position = UDim2.fromOffset(spot.X, spot.Y)
+				button.Size = UDim2.fromOffset(size, size)
+				button.AutoButtonColor = false
+				button.BorderSizePixel = 0
+				button.Text = ""
+				button.ZIndex = 3
+				button.BackgroundColor3 = auxiliaryUiTheme.Accent
+				button.Parent = area
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0.5, 0)
+				corner.Parent = button
+				local dot = Instance.new("Frame")
+				dot.AnchorPoint = Vector2.new(0.5, 0.5)
+				dot.Position = UDim2.fromScale(0.5, 0.5)
+				dot.Size = UDim2.fromScale(0.4, 0.4)
+				dot.BorderSizePixel = 0
+				dot.BackgroundColor3 = auxiliaryUiTheme.OnAccent
+				dot.ZIndex = 4
+				dot.Parent = button
+				local dotCorner = Instance.new("UICorner")
+				dotCorner.CornerRadius = UDim.new(0.5, 0)
+				dotCorner.Parent = dot
+				local target = { button = button, born = os.clock(), spot = spot, size = size }
+				table.insert(round.targets, target)
+				button.MouseButton1Down:Connect(function()
+					local index = table.find(round.targets, target)
+					if not round.running or not index then return end
+					local age = os.clock() - target.born
+					table.remove(round.targets, index)
+					round.lastHitAt = os.clock()
+					round.clicks += 1
+					round.hits += 1
+					round.score += 50 + math.floor(50 * math.clamp(1 - age / speeds[round.speed].life, 0, 1) + 0.5)
+					round.reactionTotal += age
+					-- A quick pop as it goes.
+					local pop = TweenInfo.new(0.12)
+					TweenService:Create(button, pop, { Size = UDim2.fromOffset(button.Size.X.Offset * 1.4, button.Size.Y.Offset * 1.4), BackgroundTransparency = 1 }):Play()
+					TweenService:Create(dot, pop, { BackgroundTransparency = 1 }):Play()
+					task.delay(0.13, function() button:Destroy() end)
+					showStats()
+				end)
+				return true
+			end
+			-- A miss, unless the same click hit a target (on some setups a click on a target reaches the
+			-- play area under it too).
+			area.MouseButton1Down:Connect(function()
+				if not round.running then return end
+				local clickedAt = os.clock()
+				task.defer(function()
+					if not round.running or math.abs(round.lastHitAt - clickedAt) < 0.05 then return end
+					round.clicks += 1
+					showStats()
+				end)
+			end)
+			-- 3, 2, 1, then targets until the time's up.
+			local function start()
+				round.serial += 1
+				local serial = round.serial
+				clearTargets()
+				round.running = false
+				round.length = featureSettings.aimTrainerLength
+				round.size = sizes[featureSettings.aimTrainerSize] and featureSettings.aimTrainerSize or "Medium"
+				round.speed = speeds[featureSettings.aimTrainerSpeed] and featureSettings.aimTrainerSpeed or "Normal"
+				round.score, round.hits, round.clicks, round.missed, round.reactionTotal = 0, 0, 0, 0, 0
+				overlay.Visible = false
+				showStats()
+				task.spawn(function()
+					countdown.Visible = true
+					for count = 3, 1, -1 do
+						countdown.Text = tostring(count)
+						task.wait(0.6)
+						if round.serial ~= serial then return end
+					end
+					countdown.Visible = false
+					local speed = speeds[round.speed]
+					round.endsAt = os.clock() + round.length
+					round.running = true
+					while round.serial == serial do
+						local now = os.clock()
+						if now >= round.endsAt then return finish(true) end
+						-- Each target shrinks to a quarter of its size, then it's gone.
+						for index = #round.targets, 1, -1 do
+							local target = round.targets[index]
+							local left = 1 - (now - target.born) / speed.life
+							if left <= 0 then
+								target.button:Destroy()
+								table.remove(round.targets, index)
+								round.missed += 1
+							else
+								local size = target.size * (0.25 + 0.75 * left)
+								target.button.Size = UDim2.fromOffset(size, size)
+							end
+						end
+						for _ = #round.targets + 1, speed.count do
+							if not spawnTarget() then break end
+						end
+						showStats()
+						RunService.Heartbeat:Wait()
+					end
+				end)
+			end
+			startButton.MouseButton1Click:Connect(start)
+
+			menuModules.aimTrainer = {
+				setShown = function(on)
+					trainerWindow.setShown(on)
+					-- Closing it stops a round partway through.
+					if not on and (round.running or countdown.Visible) then finish(false) end
+				end,
+			}
+			showIntro()
+
+			local entry = quickToggleByName["Aim Trainer"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			local function changed()
+				saveFeatureSettings()
+				if not round.running and not countdown.Visible and startButton.Text == "Start" then showIntro() end
+			end
+			card.addSectionLabel("ROUND", "timer", "clock")
+			card.addChoice({ "15 s", "30 s", "60 s" }, function() return featureSettings.aimTrainerLength .. " s" end, function(choice)
+				featureSettings.aimTrainerLength = tonumber((choice:gsub(" s", ""))) or 30
+				changed()
+			end)
+			card.addSectionLabel("TARGET SIZE", "target")
+			card.addChoice({ "Small", "Medium", "Large" }, function() return featureSettings.aimTrainerSize end, function(size)
+				featureSettings.aimTrainerSize = size
+				changed()
+			end)
+			card.addSectionLabel("SPEED", "gauge")
+			card.addChoice({ "Easy", "Normal", "Hard" }, function() return featureSettings.aimTrainerSpeed end, function(speed)
+				featureSettings.aimTrainerSpeed = speed
+				changed()
+			end)
+			card.addHint(function()
+				if featureSettings.aimTrainerSpeed == "Easy" then return "One target at a time, lasting 2.2 seconds." end
+				if featureSettings.aimTrainerSpeed == "Hard" then return "Three targets at a time, lasting a second each." end
+				return "Two targets at a time, lasting 1.5 seconds each."
+			end)
+			card.addHint("Your best score is kept for each mix of these. A round in play keeps the settings it started with.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Weather: rain, snow, fog or a thunderstorm, on your screen alone, as heavy as its settings card
+		-- says. Rain and snow fall from a sheet that follows your camera, so they fall indoors too. Fog
+		-- thickens the game's own haze (or adds some where it has none), and a storm is heavy rain under a
+		-- darker sky with lightning flashing now and then. It all goes when it's switched off, and the
+		-- game's haze goes back to how it was.
+		safeBuild("Weather", function()
+			local styles = { "Rain", "Snow", "Fog", "Storm" }
+			-- sky: the sheet the rain or snow falls from. fog: the Atmosphere being used, ownFog whether
+			-- it's one made here, savedFog the game's settings for it. shade: a storm's darker sky.
+			local state = { on = false, loop = nil, sky = nil, emitter = nil, fog = nil, ownFog = false, savedFog = nil, shade = nil, nextFlash = 0, flashes = {} }
+			local fogProperties = { "Density", "Offset", "Color", "Decay", "Glare", "Haze" }
+			local function styleOf()
+				return table.find(styles, featureSettings.weatherStyle) and featureSettings.weatherStyle or "Rain"
+			end
+			-- The fog at this density and haze, or none with no density.
+			local function setFog(density, haze)
+				if not density then
+					if state.fog and state.ownFog then
+						pcall(function() state.fog:Destroy() end)
+					elseif state.fog and state.savedFog and state.fog.Parent then
+						for property, value in pairs(state.savedFog) do
+							pcall(function() state.fog[property] = value end)
+						end
+					end
+					state.fog, state.ownFog, state.savedFog = nil, false, nil
+					return
+				end
+				if not state.fog or not state.fog.Parent then
+					local existing = Lighting:FindFirstChildOfClass("Atmosphere")
+					if existing then
+						state.fog, state.ownFog, state.savedFog = existing, false, {}
+						for _, property in ipairs(fogProperties) do state.savedFog[property] = existing[property] end
+					else
+						local made = Instance.new("Atmosphere")
+						made.Name = "SpreadCheeksWeatherFog"
+						made.Parent = Lighting
+						state.fog, state.ownFog, state.savedFog = made, true, nil
+					end
+				end
+				local fog = state.fog
+				fog.Density = density
+				fog.Offset = 0
+				fog.Haze = haze
+				fog.Glare = 0
+				fog.Color = Color3.fromRGB(199, 203, 210)
+				fog.Decay = Color3.fromRGB(92, 100, 115)
+			end
+			local function setShade(on)
+				if not on then
+					if state.shade then pcall(function() state.shade:Destroy() end) end
+					state.shade = nil
+					return
+				end
+				if not state.shade or not state.shade.Parent then
+					local shade = Instance.new("ColorCorrectionEffect")
+					shade.Name = "SpreadCheeksWeatherStorm"
+					shade.Parent = Lighting
+					state.shade = shade
+				end
+				state.shade.Brightness = -0.08
+				state.shade.Contrast = 0.1
+				state.shade.Saturation = -0.35
+				state.shade.TintColor = Color3.fromRGB(196, 206, 224)
+			end
+			-- Rain or snow falling round your camera, or none with no style.
+			local function setFall(style)
+				if not style then
+					if state.sky then pcall(function() state.sky:Destroy() end) end
+					state.sky, state.emitter = nil, nil
+					return
+				end
+				if not state.sky or not state.sky.Parent then
+					local sky = Instance.new("Part")
+					sky.Name = "SpreadCheeksWeather"
+					sky.Anchored = true
+					sky.CanCollide = false
+					sky.CanQuery = false
+					sky.CanTouch = false
+					sky.CastShadow = false
+					sky.Transparency = 1
+					sky.Size = Vector3.new(160, 1, 160)
+					local emitter = Instance.new("ParticleEmitter")
+					emitter.Name = "SpreadCheeksWeatherFall"
+					emitter.EmissionDirection = Enum.NormalId.Bottom
+					emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+					emitter.Parent = sky
+					sky.Parent = workspace.CurrentCamera or workspace
+					state.sky, state.emitter = sky, emitter
+				end
+				local amount = featureSettings.weatherAmount
+				local emitter = state.emitter
+				if style == "Snow" then
+					-- Little white flakes drifting down, turning as they go.
+					emitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
+					emitter.LightEmission = 0.3
+					emitter.Transparency = NumberSequence.new(0.1)
+					emitter.Size = NumberSequence.new(0.3)
+					emitter.Squash = NumberSequence.new(0)
+					emitter.Orientation = Enum.ParticleOrientation.FacingCamera
+					emitter.Speed = NumberRange.new(6, 9)
+					emitter.Lifetime = NumberRange.new(7, 9)
+					emitter.SpreadAngle = Vector2.new(30, 30)
+					emitter.Acceleration = Vector3.new(1.5, -1, 0.8)
+					emitter.Rotation = NumberRange.new(0, 360)
+					emitter.RotSpeed = NumberRange.new(-60, 60)
+					emitter.Rate = 30 * amount
+					return
+				end
+				-- Rain: thin streaks falling fast, heavier and slanting in a storm.
+				local storm = style == "Storm"
+				emitter.Color = ColorSequence.new(Color3.fromRGB(196, 212, 235))
+				emitter.LightEmission = 0.15
+				emitter.Transparency = NumberSequence.new(0.45)
+				emitter.Size = NumberSequence.new(0.12)
+				emitter.Squash = NumberSequence.new(3)
+				emitter.Orientation = Enum.ParticleOrientation.VelocityParallel
+				emitter.Speed = storm and NumberRange.new(95, 110) or NumberRange.new(75, 90)
+				emitter.Lifetime = NumberRange.new(1.1, 1.4)
+				emitter.SpreadAngle = storm and Vector2.new(8, 8) or Vector2.new(3, 3)
+				emitter.Acceleration = storm and Vector3.new(6, -20, 3) or Vector3.new(0, -20, 0)
+				emitter.Rotation = NumberRange.new(0)
+				emitter.RotSpeed = NumberRange.new(0)
+				emitter.Rate = (storm and 110 or 60) * amount
+			end
+			local function apply()
+				local style = state.on and styleOf() or nil
+				local amount = featureSettings.weatherAmount
+				setFall(style ~= "Fog" and style or nil)
+				if style == "Fog" then
+					setFog(0.3 + 0.05 * amount, 1 + 0.2 * amount)
+				elseif style == "Storm" then
+					setFog(0.3 + 0.02 * amount, 1)
+				else
+					setFog(nil)
+				end
+				setShade(style == "Storm")
+			end
+			-- Every frame: the sheet over your camera (a little ahead of it), and a storm's lightning, a
+			-- double flash every few seconds.
+			local function step()
+				local camera = workspace.CurrentCamera
+				if state.sky and camera then
+					if state.sky.Parent ~= camera then state.sky.Parent = camera end
+					local look = camera.CFrame.LookVector
+					local ahead = Vector3.new(look.X, 0, look.Z)
+					ahead = ahead.Magnitude > 0.05 and ahead.Unit * 25 or Vector3.zero
+					state.sky.CFrame = CFrame.new(camera.CFrame.Position + ahead + Vector3.new(0, 40, 0))
+				end
+				if state.shade then
+					local now = os.clock()
+					if now >= state.nextFlash then
+						state.nextFlash = now + 4 + math.random() * 8
+						state.flashes = { now, now + 0.16 }
+					end
+					local flashing = false
+					for _, at in ipairs(state.flashes) do
+						if now >= at and now < at + 0.07 then flashing = true end
+					end
+					state.shade.Brightness = flashing and 0.45 or -0.08
+				end
+			end
+			local function setEnabled(on)
+				state.on = on
+				if on and styleOf() ~= "Rain" and styleOf() ~= "Snow" then
+					-- Fog and No Fog would undo each other, so No Fog goes off while there's fog.
+					local noFog = quickToggleByName["No Fog"]
+					if noFog and noFog.state then
+						setQuickToggle(noFog, false)
+						notify("Weather", "No Fog is off while there's fog.", 3)
+					end
+				end
+				apply()
+				if state.loop then
+					state.loop:Disconnect()
+					state.loop = nil
+				end
+				if on then
+					state.nextFlash = os.clock() + 3
+					state.loop = RunService.RenderStepped:Connect(step)
+				end
+			end
+			menuModules.weather = {
+				setEnabled = setEnabled,
+				-- After the style or amount changes.
+				refresh = function()
+					if state.on then setEnabled(true) end
+				end,
+			}
+
+			local entry = quickToggleByName["Weather"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("WEATHER", "cloud-rain", "cloud")
+			card.addChoice(styles, styleOf, function(style)
+				featureSettings.weatherStyle = style
+				saveFeatureSettings()
+				menuModules.weather.refresh()
+			end)
+			card.addHint(function()
+				local style = styleOf()
+				if style == "Snow" then return "Snowflakes drifting down all round you." end
+				if style == "Fog" then return "Thick fog, as if a cloud's come down. No Fog goes off while it's on." end
+				if style == "Storm" then return "Heavy rain under a dark sky, with lightning every few seconds." end
+				return "Rain pouring down all round you."
+			end)
+			card.addSectionLabel("HOW HEAVY", "gauge")
+			card.addSlider({
+				text = "Amount",
+				icon = { "gauge", "cloud" },
+				min = 1, max = 10, step = 1,
+				get = function() return featureSettings.weatherAmount end,
+				set = function(value)
+					featureSettings.weatherAmount = value
+					menuModules.weather.refresh()
+				end,
+				commit = saveFeatureSettings,
+				format = function(value) return tostring(math.floor(value + 0.5)) end,
+			})
+			card.addHint("Only you see it. Rain and snow fall indoors too, as they can't tell where the roofs are.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Graphics Presets: makes the game look better on your screen, with Roblox's own post effects
+		-- (bloom, sun rays, colour correction and depth of field) set up in the style picked in its
+		-- settings card, as strong as the card says. They go on top of the game's own and are taken away
+		-- again when it's switched off; nothing of the game's is changed.
+		safeBuild("Graphics Presets", function()
+			-- bloom: intensity, size, threshold. rays: intensity, spread. color: brightness, contrast,
+			-- saturation and tint. focus: far blur, focus distance, in-focus radius.
+			local presets = {
+				{ name = "Cinematic", bloom = { 0.5, 24, 1.2 }, rays = { 0.06, 0.6 }, color = { 0.02, 0.18, 0.12, Color3.fromRGB(255, 244, 232) }, focus = { 0.25, 40, 50 },
+					hint = "A soft glow, sun rays and richer contrast, with faraway things a touch blurred, like a film." },
+				{ name = "Vibrant", bloom = { 0.4, 20, 1.4 }, rays = { 0.05, 0.5 }, color = { 0.03, 0.12, 0.45 },
+					hint = "Bright, punchy colours." },
+				{ name = "Warm", bloom = { 0.3, 24, 1.3 }, rays = { 0.08, 0.7 }, color = { 0.03, 0.05, 0.1, Color3.fromRGB(255, 226, 196) },
+					hint = "A golden, late-afternoon glow." },
+				{ name = "Cold", bloom = { 0.25, 20, 1.5 }, color = { 0, 0.08, -0.1, Color3.fromRGB(205, 225, 255) },
+					hint = "Cool blue tones, like a winter morning." },
+				{ name = "Black & White", color = { 0, 0.2, -1 },
+					hint = "No colour at all, with a little extra contrast." },
+				{ name = "Vintage", bloom = { 0.3, 30, 1.2 }, color = { 0.02, -0.05, -0.4, Color3.fromRGB(255, 224, 178) },
+					hint = "Faded, sepia colours, like an old photo." },
+				{ name = "Dreamy", bloom = { 1, 40, 0.9 }, rays = { 0.1, 0.8 }, color = { 0.05, -0.05, 0.15, Color3.fromRGB(255, 236, 250) }, focus = { 0.4, 30, 30 },
+					hint = "A strong soft glow, with the distance in a haze." },
+				{ name = "Night Vision", bloom = { 0.6, 18, 1 }, color = { 0.15, 0.25, -1, Color3.fromRGB(120, 255, 140) },
+					hint = "Bright green, like night-vision goggles." },
+			}
+			local function presetNamed(name)
+				for _, preset in ipairs(presets) do
+					if preset.name == name then return preset end
+				end
+				return presets[1]
+			end
+			-- A style from a typed name, ignoring case, spaces and punctuation, for the graphics command.
+			local aliases = { bw = "Black & White", blackandwhite = "Black & White", greyscale = "Black & White", grayscale = "Black & White", nv = "Night Vision" }
+			local function styleNamed(text)
+				local wanted = tostring(text or ""):lower():gsub("[%s%p]", "")
+				if wanted == "" then return nil end
+				if aliases[wanted] then return aliases[wanted] end
+				for pass = 1, 2 do
+					for _, preset in ipairs(presets) do
+						local simple = preset.name:lower():gsub("[%s%p]", "")
+						if simple == wanted or (pass == 2 and simple:sub(1, #wanted) == wanted) then return preset.name end
+					end
+				end
+				return nil
+			end
+			local state = { on = false, effects = {}, serial = 0 }
+			-- The effect of this kind made here, made if it isn't there yet (or the game took it away).
+			local function effect(kind, className)
+				local made = state.effects[kind]
+				if made and made.Parent then return made end
+				made = Instance.new(className)
+				made.Name = "SpreadCheeksGraphics" .. kind
+				made.Parent = Lighting
+				state.effects[kind] = made
+				return made
+			end
+			local function drop(kind)
+				local made = state.effects[kind]
+				if made then pcall(function() made:Destroy() end) end
+				state.effects[kind] = nil
+			end
+			local function apply()
+				if not state.on then
+					for _, kind in ipairs({ "Bloom", "SunRays", "Color", "Focus" }) do drop(kind) end
+					return
+				end
+				local preset = presetNamed(featureSettings.graphicsStyle)
+				local strength = featureSettings.graphicsStrength / 100
+				if preset.bloom then
+					local bloom = effect("Bloom", "BloomEffect")
+					bloom.Intensity = preset.bloom[1] * strength
+					bloom.Size = preset.bloom[2]
+					bloom.Threshold = preset.bloom[3]
+				else
+					drop("Bloom")
+				end
+				if preset.rays then
+					local rays = effect("SunRays", "SunRaysEffect")
+					rays.Intensity = preset.rays[1] * strength
+					rays.Spread = preset.rays[2]
+				else
+					drop("SunRays")
+				end
+				local color = effect("Color", "ColorCorrectionEffect")
+				color.Brightness = preset.color[1] * strength
+				color.Contrast = preset.color[2] * strength
+				color.Saturation = preset.color[3] * strength
+				color.TintColor = Color3.new(1, 1, 1):Lerp(preset.color[4] or Color3.new(1, 1, 1), strength)
+				if preset.focus then
+					local focus = effect("Focus", "DepthOfFieldEffect")
+					focus.FarIntensity = preset.focus[1] * strength
+					focus.FocusDistance = preset.focus[2]
+					focus.InFocusRadius = preset.focus[3]
+					focus.NearIntensity = 0
+				else
+					drop("Focus")
+				end
+			end
+			local function setEnabled(on)
+				state.on = on
+				state.serial += 1
+				apply()
+				if not on then return end
+				-- Put back now and then, in case the game clears the lighting's effects.
+				local serial = state.serial
+				task.spawn(function()
+					while state.serial == serial do
+						task.wait(2)
+						if state.serial ~= serial then return end
+						for _, made in pairs(state.effects) do
+							if not made.Parent then
+								pcall(apply)
+								break
+							end
+						end
+					end
+				end)
+			end
+			menuModules.graphicsPresets = {
+				setEnabled = setEnabled,
+				styleNamed = styleNamed,
+				refresh = function() pcall(apply) end,
+			}
+
+			local entry = quickToggleByName["Graphics Presets"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("STYLE", "palette", "sparkles")
+			-- Two rows of four, both for the one setting.
+			for row = 1, 2 do
+				local options = {}
+				for index = row * 4 - 3, row * 4 do table.insert(options, presets[index].name) end
+				card.addChoice(options, function() return presetNamed(featureSettings.graphicsStyle).name end, function(name)
+					featureSettings.graphicsStyle = name
+					saveFeatureSettings()
+					apply()
+				end)
+			end
+			card.addHint(function() return presetNamed(featureSettings.graphicsStyle).hint end)
+			card.addSectionLabel("STRENGTH", "gauge")
+			card.addSlider({
+				text = "Strength",
+				icon = { "gauge", "sun" },
+				min = 10, max = 100, step = 5,
+				get = function() return featureSettings.graphicsStrength end,
+				set = function(value)
+					featureSettings.graphicsStrength = value
+					apply()
+				end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. "%" end,
+			})
+			card.addHint("Only you see it. It goes on top of the game's own look and comes off cleanly.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Panic: switches everything off at once, from its key (End to start with) or its switch: every
+		-- switch that changes your character, the world or your screen, and the aimbot. Its settings card
+		-- says what else it does: hide the menu, its windows and Infinite Yield's bar; put your walk speed,
+		-- jump, gravity and camera back to normal (which stops spectating, flying and emotes too); and
+		-- leave the game. Your safety switches, alerts, Streamer Mode and the menu's windows and settings
+		-- stay as they are. Switching it off (its key again) brings the menu back and switches back on
+		-- everything it switched off.
+		safeBuild("Panic", function()
+			local localPlayer = Players.LocalPlayer
+			-- Left as they are: Panic itself, and the switches that keep you safe, tell you things, or are
+			-- the menu's own windows and settings rather than tricks.
+			local leaveAlone = {}
+			for _, name in ipairs({
+				"Panic", "Anti-Fling", "No Fall Damage", "Anti-AFK", "Anti-Void", "Auto Rejoin", "Cheater Detector", "Staff Watch",
+				"Join Alerts", "Mention Alerts", "Performance Stats", "Radar", "Logs", "Favourites Bar", "Health & Ping Warnings",
+				"Streamer Mode", "Clean Screen", "Ctrl+Click Select", "Troll Panel", "Spectate Bar", "Zoom Key", "Time of Day",
+				"FPS Boost", "Mute Game Music", "Mute Player Sounds", "First Person", "Weather", "Graphics Presets", "Emote Wheel",
+			}) do
+				leaveAlone[name] = true
+			end
+			-- switchedOff: the switches it switched off, to switch back on. hidden: the screens it hid.
+			local panic = { switchedOff = {}, aimbot = false, hidden = {}, menuWasShown = false, gravity = workspace.Gravity }
+			-- What the game gave each character: its walk speed and jump, noted a moment after it spawns.
+			local spawnValues = setmetatable({}, { __mode = "k" })
+			local function noteSpawn(character)
+				local humanoid = character:WaitForChild("Humanoid", 10)
+				if not humanoid then return end
+				task.wait(1)
+				if spawnValues[humanoid] == nil and humanoid.Parent then
+					spawnValues[humanoid] = { WalkSpeed = humanoid.WalkSpeed, JumpPower = humanoid.JumpPower, JumpHeight = humanoid.JumpHeight }
+				end
+			end
+			if localPlayer.Character then task.spawn(noteSpawn, localPlayer.Character) end
+			localPlayer.CharacterAdded:Connect(noteSpawn)
+
+			-- Quietly: the switches going off don't each pop up a notification over the game.
+			local function quietly(work)
+				local speak = notify
+				notify = function() end
+				local worked, problem = pcall(work)
+				notify = speak
+				if not worked then warn("[SpreadCheeksGUI] Panic: " .. tostring(problem)) end
+			end
+			-- The menu, its windows and Infinite Yield's bar, hidden, and noted so they come back.
+			local function hideMenu()
+				table.clear(panic.hidden)
+				local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+				local hiddenOk, hiddenGui = false, nil
+				if type(gethui) == "function" then hiddenOk, hiddenGui = pcall(gethui) end
+				local menuGui = typeof(window.main) == "Instance" and window.main:FindFirstAncestorWhichIsA("LayerCollector") or nil
+				for _, container in ipairs({ playerGui, COREGUI, hiddenOk and hiddenGui or nil }) do
+					local listOk, children = pcall(function() return container:GetChildren() end)
+					for _, gui in ipairs(listOk and children or {}) do
+						if gui:IsA("ScreenGui") and gui.Enabled and gui ~= menuGui and gui.Name:sub(1, 12) == "SpreadCheeks" and not table.find(panic.hidden, gui) then
+							gui.Enabled = false
+							table.insert(panic.hidden, gui)
+						end
+					end
+				end
+				if typeof(PARENT) == "Instance" and PARENT:IsA("ScreenGui") and PARENT.Enabled and PARENT.Name ~= "RobloxGui" then
+					PARENT.Enabled = false
+					table.insert(panic.hidden, PARENT)
+				end
+				panic.menuWasShown = not window.hidden
+				if panic.menuWasShown then pcall(function() window:ToggleHide() end) end
+			end
+			local function showMenu()
+				for _, gui in ipairs(panic.hidden) do
+					-- A window that was switched off meanwhile has faded right out, so it stays hidden.
+					local panel = gui.Parent and gui:FindFirstChild("Window")
+					local faded = panel ~= nil and panel:IsA("GuiObject") and panel.BackgroundTransparency > 0.99
+					if gui.Parent and not faded then gui.Enabled = true end
+				end
+				table.clear(panic.hidden)
+				if panic.menuWasShown and window.hidden then pcall(function() window:Show() end) end
+				panic.menuWasShown = false
+			end
+			-- Your walk speed, jump, gravity and camera as the game had them, and nothing still moving you:
+			-- no spectating (stopped as Infinite Yield's unview does, without its message), no flying, no
+			-- emotes, no sitting or lying where there's no seat.
+			local function backToNormal()
+				if viewing ~= nil then
+					viewing = nil
+					if viewDied then pcall(function() viewDied:Disconnect() end) end
+					if viewChanged then pcall(function() viewChanged:Disconnect() end) end
+				end
+				if FLYING and type(NOFLY) == "function" then pcall(NOFLY) end
+				if trolling.stopAnimations then pcall(trolling.stopAnimations) end
+				workspace.Gravity = panic.gravity
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					for property, value in pairs(spawnValues[humanoid] or {}) do
+						pcall(function() humanoid[property] = value end)
+					end
+					if not humanoid.SeatPart then
+						humanoid.Sit = false
+						humanoid.PlatformStand = false
+					end
+				end
+				local camera = workspace.CurrentCamera
+				if camera then
+					camera.CameraType = Enum.CameraType.Custom
+					if humanoid then camera.CameraSubject = humanoid end
+					camera.FieldOfView = 70
+				end
+			end
+			local function setEnabled(on)
+				if on then
+					table.clear(panic.switchedOff)
+					if featureSettings.panicHide then hideMenu() end
+					quietly(function()
+						for _, entry in ipairs(quickToggles) do
+							if entry.state and not leaveAlone[entry.name] then
+								table.insert(panic.switchedOff, entry)
+								pcall(setQuickToggle, entry, false)
+							end
+						end
+						panic.aimbot = aimbotState.enabled
+						if aimbotState.enabled then
+							applyAimbot(false)
+							pcall(function() aimbotToggle:Set(false, true) end)
+						end
+						if featureSettings.panicReset then backToNormal() end
+					end)
+					if featureSettings.panicLeave then
+						-- Auto Rejoin would only bring you straight back, so it stops listening first.
+						if menuModules.autoRejoin then pcall(menuModules.autoRejoin.setEnabled, false) end
+						task.delay(0.2, function() localPlayer:Kick("You left the game.") end)
+						return
+					end
+					if not featureSettings.panicHide then
+						local count = #panic.switchedOff + (panic.aimbot and 1 or 0)
+						notify("Panic", count .. (count == 1 and " thing" or " things") .. " switched off. Switch Panic off to put them back.", 3)
+					end
+					return
+				end
+				-- Back again: everything it switched off goes back on, then the menu comes back.
+				local count = #panic.switchedOff + (panic.aimbot and 1 or 0)
+				for _, entry in ipairs(panic.switchedOff) do
+					if not entry.state then pcall(setQuickToggle, entry, true) end
+				end
+				table.clear(panic.switchedOff)
+				if panic.aimbot and not aimbotState.enabled then
+					applyAimbot(true)
+					pcall(function() aimbotToggle:Set(true, true) end)
+				end
+				panic.aimbot = false
+				showMenu()
+				notify("Panic", count > 0 and ("Put back " .. count .. (count == 1 and " thing" or " things")) or "Nothing to put back", 2)
+			end
+			menuModules.panic = { setEnabled = setEnabled }
+
+			-- End the first time, unless something else already has it. Taken off later, it stays off.
+			local entry = quickToggleByName["Panic"]
+			if entry and not featureSettings.panicKeySet then
+				featureSettings.panicKeySet = true
+				saveFeatureSettings()
+				local taken = isMenuToggleKey(Enum.KeyCode.End)
+				for _, other in ipairs(quickToggles) do
+					if other.key == Enum.KeyCode.End then taken = true end
+				end
+				for _, other in ipairs(quickActions) do
+					if other.key == Enum.KeyCode.End then taken = true end
+				end
+				if not taken and not entry.key then
+					entry.key = Enum.KeyCode.End
+					refreshKeyChip(entry)
+					saveQuickKeybinds()
+				end
+			end
+
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("WHEN YOU PANIC", "siren", "octagon-alert")
+			card.addSwitchGrid({
+				{
+					text = "Hide the menu",
+					get = function() return featureSettings.panicHide == true end,
+					set = function(on)
+						featureSettings.panicHide = on
+						saveFeatureSettings()
+					end,
+				},
+				{
+					text = "Back to normal",
+					get = function() return featureSettings.panicReset == true end,
+					set = function(on)
+						featureSettings.panicReset = on
+						saveFeatureSettings()
+					end,
+				},
+				{
+					text = "Leave the game",
+					get = function() return featureSettings.panicLeave == true end,
+					set = function(on)
+						featureSettings.panicLeave = on
+						saveFeatureSettings()
+					end,
+				},
+			}, 1)
+			card.addHint("Every switch that changes you, the world or your screen goes off, and the aimbot. Your safety switches, alerts, Streamer Mode and the menu's windows stay as they are. Switch Panic off (its key again) to put it all back.")
+			card.addHint("Hide the menu hides it, its windows and Infinite Yield's bar. Back to normal puts your speed, jump, gravity and camera back, and stops spectating, flying and emotes. Leave the game leaves straight after, so nothing is put back.")
+			card.refresh()
 		end)
 
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
@@ -34460,6 +35992,10 @@ if rayfieldLoaded and Rayfield then
 			addcmd("tumble", {}, function() if trolling.tumble then trolling.tumble() end end)
 			describe("diveroll / dive", "Dive forwards, flat out, and roll back up onto your feet")
 			addcmd("diveroll", { "dive" }, function() if trolling.diveRoll then trolling.diveRoll() end end)
+			describe("groundpound / pound", "Jump, spin in mid-air and slam straight down")
+			addcmd("groundpound", { "pound" }, function() if trolling.groundPound then trolling.groundPound() end end)
+			describe("windmill", "A breakdance spin on your back, legs in the air, then back up")
+			addcmd("windmill", {}, function() if trolling.windmill then trolling.windmill() end end)
 			describe("yeet", "Throws you forwards, tumbling through the air")
 			addcmd("yeet", {}, function() if trolling.yeet then trolling.yeet() end end)
 			describe("launch", "Shoots you high into the air")
@@ -34557,6 +36093,24 @@ if rayfieldLoaded and Rayfield then
 				if chooseTarget(args, speaker, "Stare") then setSwitch("Stare", true) end
 			end)
 			addcmd("unstaredown", {}, function() setSwitch("Stare", false) end)
+			describe("scaredycat [player]", "Run away whenever a player comes near, then peek back at them from a safe distance (your Player Pranks target if you leave the name out)")
+			describe("unscaredycat", "Stops running away")
+			addcmd("scaredycat", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Scaredy Cat") then setSwitch("Scaredy Cat", true) end
+			end)
+			addcmd("unscaredycat", {}, function() setSwitch("Scaredy Cat", false) end)
+			describe("leapfrog [player]", "Keep leaping right over a player's head, back and forth (your Player Pranks target if you leave the name out)")
+			describe("unleapfrog", "Stops the leaping")
+			addcmd("leapfrog", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Leapfrog") then setSwitch("Leapfrog", true) end
+			end)
+			addcmd("unleapfrog", {}, function() setSwitch("Leapfrog", false) end)
+			describe("puppy [player]", "Follow a player about like a pet dog: at their heels, sitting when they stop (your Player Pranks target if you leave the name out)")
+			describe("unpuppy", "Stops following them about")
+			addcmd("puppy", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Puppy") then setSwitch("Puppy", true) end
+			end)
+			addcmd("unpuppy", {}, function() setSwitch("Puppy", false) end)
 			describe("parttornado / tpparts [player]", "Pull every loose part you can over to a player and swirl it round them (your Player Pranks target if you leave the name out)")
 			describe("unparttornado / untpparts", "Drops the parts where they are")
 			addcmd("parttornado", { "tpparts" }, function(args, speaker)
@@ -34811,12 +36365,50 @@ if rayfieldLoaded and Rayfield then
 			end)
 			describe("unobjectesp", "Turns Object ESP off")
 			addcmd("unobjectesp", {}, function() setSwitch("Object ESP", false) end)
+
+			-- Pranks, Practice and Panic.
+			addSwitchCommands("Aim Trainer", { { "aimtrainer" }, { "unaimtrainer" }, "toggleaimtrainer" },
+				"Opens the Aim Trainer: click the targets before they shrink away", "Closes the Aim Trainer")
+			describe("weather [rain/snow/fog/storm]", "Rain, snow, fog or a thunderstorm on your screen, only you see it (with no style, turns Weather on)")
+			addcmd("weather", {}, function(args)
+				local styles = { rain = "Rain", snow = "Snow", fog = "Fog", storm = "Storm", thunder = "Storm" }
+				local wanted = firstArgument(args)
+				if wanted ~= "" then
+					if not styles[wanted] then return notify("Weather", "Choose rain, snow, fog or storm, like weather snow") end
+					featureSettings.weatherStyle = styles[wanted]
+					saveFeatureSettings()
+					if menuModules.weather then menuModules.weather.refresh() end
+				end
+				setSwitch("Weather", true)
+			end)
+			describe("unweather", "Clears the weather off your screen")
+			addcmd("unweather", {}, function() setSwitch("Weather", false) end)
+			describe("graphics / shaders [style]", "Makes the game look better: cinematic, vibrant, warm, cold, bw, vintage, dreamy or nightvision (with no style, turns Graphics Presets on)")
+			addcmd("graphics", { "shaders" }, function(args)
+				local wanted = tostring(getstring(1, args) or ""):lower():gsub("[%s%p]", "")
+				if wanted ~= "" then
+					local style = menuModules.graphicsPresets and menuModules.graphicsPresets.styleNamed(wanted)
+					if not style then return notify("Graphics Presets", "Choose cinematic, vibrant, warm, cold, bw, vintage, dreamy or nightvision") end
+					featureSettings.graphicsStyle = style
+					saveFeatureSettings()
+					menuModules.graphicsPresets.refresh()
+				end
+				setSwitch("Graphics Presets", true)
+			end)
+			describe("ungraphics / unshaders", "Puts the game's own look back")
+			addcmd("ungraphics", { "unshaders" }, function() setSwitch("Graphics Presets", false) end)
+			describe("panic", "Switches everything off at once and hides the menu, like the Panic key (End to start with)")
+			addcmd("panic", {}, function() setSwitch("Panic", true) end)
+			describe("unpanic", "Puts back everything Panic switched off")
+			addcmd("unpanic", {}, function() setSwitch("Panic", false) end)
 		end
 		-- Kept separate so a problem here can't stop the rest of the menu loading.
 		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
 		if not menuCommandsOk then
 			warn("[SpreadCheeksGUI] The menu's commands couldn't be added: " .. tostring(menuCommandsError))
 		end
+		-- Now they're all in, the count under your name says so (Home keeps it up to date after).
+		pcall(function() window:SetProfile(#cmds .. " commands loaded") end)
 
 		-- Home: a dashboard of this session, drawn with our own cards inside the tab's page and
 		-- refreshed twice a second for as long as the menu exists.
@@ -35323,6 +36915,15 @@ if rayfieldLoaded and Rayfield then
 				ringTween = TweenService:Create(ringAngle, info, { Value = ringTarget })
 				ringTween:Play()
 			end
+			-- The count under your name at the foot of the sidebar, kept at the real count (plugins
+			-- can add commands later) through Rayfield's own SetProfile, whenever it changes.
+			local profile = { shown = nil }
+			local function updateProfile()
+				local text = #cmds .. " commands loaded"
+				if text == profile.shown then return end
+				profile.shown = text
+				pcall(function() window:SetProfile(text) end)
+			end
 			local function update()
 				local now = os.clock()
 				local fps = frames / math.max(now - lastSample, 0.001)
@@ -35355,6 +36956,7 @@ if rayfieldLoaded and Rayfield then
 				table.insert(details, session .. " on this server")
 				welcomeDetail.Text = table.concat(details, "  ·  ")
 				serverDetail.Text = "Place " .. game.PlaceId .. "  ·  " .. #cmds .. " commands"
+				updateProfile()
 
 				local keybinds = 0
 				for _, entry in ipairs(quickToggles) do
