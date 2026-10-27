@@ -14755,6 +14755,8 @@ if rayfieldLoaded and Rayfield then
 			-- labels, how far it reaches (studs) and whether names match "Exact"ly or just "Contains".
 			objectEsp = false, objectEspRules = {}, objectEspStyle = "Box", objectEspNames = true, objectEspDistance = true,
 			objectEspRange = 500, objectEspMatch = "Contains",
+			-- The Troll Panel (shown while you spectate someone) and its position, and Ctrl+Click Select.
+			trollPanel = true, trollPanelX = -1, trollPanelY = -1, ctrlClickSelect = true,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -15890,7 +15892,7 @@ if rayfieldLoaded and Rayfield then
 				-- Turning one on turns off the ones it clashes with.
 				-- Play Recording (Mobility) moves you too, so it's one of the takeovers.
 				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo" }
-				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk" }
+				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk", "Stare" }
 				local clashes = {}
 				local function clash(first, second)
 					clashes[first] = clashes[first] or {}
@@ -15908,6 +15910,10 @@ if rayfieldLoaded and Rayfield then
 				end
 				clash("Moonwalk", "Crab Walk")
 				clash("Drunk Walk", "Zoomies")
+				-- These all turn you their own way.
+				clash("Stare", "Moonwalk")
+				clash("Stare", "Crab Walk")
+				clash("Stare", "Zoomies")
 				-- Fake Lag's stutter unanchors you, which would let a statue wander off.
 				clash("Fake Lag", "Statue")
 				-- Both of these switch Roblox's Animate script off and on as they go.
@@ -16477,6 +16483,21 @@ if rayfieldLoaded and Rayfield then
 						end
 					end
 					return false
+				end
+				-- Plays the emote called name once, over everything, without the Emote switch (the Troll
+				-- Panel's emotes). Returns its track, or nil and why not.
+				function trolling.playEmoteOnce(name)
+					local _, humanoid = myCharacter()
+					if not humanoid then return nil, "Your character isn't ready yet." end
+					local emote = emoteByName[name]
+					if not emote then return nil, "There's no emote called " .. tostring(name) .. "." end
+					local id = isR15(humanoid) and emote.r15 or emote.r6
+					if not id then return nil, emote.name .. " needs an R15 avatar, and this game has you as R6." end
+					if emoteState.once then pcall(function() emoteState.once:Stop(0.2) end) end
+					local track = playOnMe("rbxassetid://" .. tostring(id))
+					emoteState.once = track
+					if track then track.Looped = false end
+					return track
 				end
 				withIcon(trollTabs.emotes, "CreateSection", { name = "Emotes" }, "smile", "music")
 				addQuickToggle(trollTabs.emotes, "Emote", "Loops the emote picked below (or right-click to pick by category). Everyone sees it", function(enabled)
@@ -18023,7 +18044,7 @@ if rayfieldLoaded and Rayfield then
 				local function targetFor(feature)
 					local player = currentTarget()
 					if not player then
-						notify(feature, "Pick someone first: use Choose Player or Nearest Player on the Player Pranks tab.")
+						notify(feature, "Pick someone first: Choose Player or Nearest Player on the Player Pranks tab, or Ctrl+click them.")
 					end
 					return player
 				end
@@ -18070,6 +18091,23 @@ if rayfieldLoaded and Rayfield then
 						notify("Target", menuModules.nameOf(nearest) .. ", " .. math.floor(nearestDistance + 0.5) .. " studs away", 2.5)
 					end,
 				}, "locate-fixed", "crosshair")
+				-- Ctrl+Click Select (menuModules.ctrlClickSelect) and the Troll Panel (menuModules.trollPanel)
+				-- are built further down; both are remembered between sessions. Spectate Target watches your
+				-- target, which brings the Troll Panel up for them.
+				addRememberedToggle(trollTabs.players, "Ctrl+Click Select", "ctrlClickSelect", "ctrlClickSelect", "Hold Ctrl and click a player to make them your target", "mouse-pointer-click", "crosshair")
+				do
+					local function spectateTarget()
+						local target = currentTarget()
+						if not target then return notify("Spectate", "Pick someone first: Choose Player, Nearest Player, or Ctrl+click them.") end
+						if menuModules.spectateBar and menuModules.spectateBar.watch then menuModules.spectateBar.watch(target) end
+					end
+					addQuickAction("Spectate Target", spectateTarget, withIcon(trollTabs.players, "CreateButton", {
+						name = "Spectate Target",
+						description = "Watch your target, with the Troll Panel of pranks just for them",
+						callback = spectateTarget,
+					}, "eye", "video"))
+				end
+				addRememberedToggle(trollTabs.players, "Troll Panel", "trollPanel", "trollPanel", "While you spectate someone, a panel of pranks, emotes, moves and tools just for them", "drama", "layout-grid")
 
 				-- Picking someone else moves whichever of these are on over to them.
 				local targetedSwitches = {}
@@ -19213,6 +19251,44 @@ if rayfieldLoaded and Rayfield then
 					end
 					targetedSwitches["Echo"] = setEcho
 					addQuickToggle(trollTabs.players, "Echo", "Do exactly what your target did a couple of seconds ago, like a delayed shadow. Right-click for how far behind", setEcho, "audio-waveform", "repeat")
+				end
+
+				-- Stare: you keep turning to stare straight at your target wherever they go, and walk about as
+				-- normal while you do. Creepy, and harmless.
+				do
+					local stare = { humanoid = nil, autoRotate = true }
+					local function letGo()
+						if stare.humanoid and stare.humanoid.Parent then stare.humanoid.AutoRotate = stare.autoRotate end
+						stare.humanoid = nil
+					end
+					local function setStare(enabled)
+						afterControls("SpreadCheeksStare", nil)
+						letGo()
+						if not enabled then return end
+						local target = targetFor("Stare")
+						if not target then return false end
+						claimMovement("Stare")
+						afterControls("SpreadCheeksStare", function()
+							if not target.Parent then
+								notify("Stare", menuModules.nameOf(target) .. " left the server")
+								return switchOff("Stare")
+							end
+							local _, humanoid, root = myCharacter()
+							if not humanoid then return end
+							-- Your own turning is off while it stares, on each new character too.
+							if stare.humanoid ~= humanoid then
+								letGo()
+								stare.humanoid, stare.autoRotate = humanoid, humanoid.AutoRotate
+								humanoid.AutoRotate = false
+							end
+							local theirRoot = target.Character and getRoot(target.Character)
+							if not theirRoot then return end
+							local towards = flat(theirRoot.Position - root.Position)
+							if towards.Magnitude > 0.1 then root.CFrame = CFrame.lookAt(root.Position, root.Position + towards) end
+						end)
+					end
+					targetedSwitches["Stare"] = setStare
+					addQuickToggle(trollTabs.players, "Stare", "Keep staring right at your target wherever they go, while you walk about as normal", setStare, "eye", "scan-eye")
 				end
 
 				-- Only you can see: these change your own screen and nobody else's.
@@ -26237,7 +26313,7 @@ if rayfieldLoaded and Rayfield then
 				spectateBarX = true, spectateBarY = true, outfitX = true, outfitY = true, playerNotes = true, cleanScreenKeySet = true,
 				safeTeleport = true, antiVoid = true, autoRejoin = true, objectFinder = true, spectateBar = true, zoomKey = true,
 				timeOfDay = true, fpsBoost = true, muteMusic = true, muteOthers = true, streamerMode = true, healthWarnings = true,
-				objectEsp = true,
+				objectEsp = true, trollPanel = true, trollPanelX = true, trollPanelY = true, ctrlClickSelect = true,
 			}
 			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
 			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
@@ -28693,8 +28769,17 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			local menuVersion = "2026.10.27.2"
+			local menuVersion = "2026.10.27.3"
 			local releaseNotes = {
+				{
+					title = "The Troll Panel", date = "27 October 2026",
+					notes = {
+						{ "Troll Panel", "Spectate someone and a panel just for them pops up: pranks, 24 emotes, moves, your tricks, and tools like Their eyes, Highlight them and Go behind them." },
+						{ "Ctrl+Click Select", "Hold Ctrl and click anyone to make them your target. While you spectate, it watches them instead." },
+						{ "Spectate Target", "Player Pranks tab. Watch your target, with the Troll Panel ready." },
+						{ "Stare", "Player Pranks tab. Keep staring right at your target wherever they go." },
+					},
+				},
 				{
 					title = "More Fun and Tools", date = "27 October 2026",
 					notes = {
@@ -30210,6 +30295,16 @@ if rayfieldLoaded and Rayfield then
 					enabled = on
 					refresh()
 				end,
+				-- For the Troll Panel and Ctrl+Click Select: on to the previous (-1) or next (1) player,
+				-- or straight to one.
+				step = function(by)
+					step(by)
+					refresh()
+				end,
+				watch = function(player)
+					watch(player)
+					refresh()
+				end,
 			}
 		end)
 
@@ -31651,6 +31746,542 @@ if rayfieldLoaded and Rayfield then
 			card.refresh()
 		end)
 
+		------------------------------------------------------------------------------------------
+		-- Troll Panel: while you spectate someone, a panel of everything you can do to and with that one
+		-- player, so you can watch it happen from their side. Pranks puts the Player Pranks tricks on them,
+		-- Emotes turns you to face them and plays one, Moves has your moves and body tricks, and Tools
+		-- takes you to them, shows you what they see, highlights them, copies their name or ID, opens their
+		-- outfit and keeps a note on them. It goes when you stop spectating; the Troll Panel switch in
+		-- Player Pranks turns it off altogether.
+		safeBuild("The Troll Panel", function()
+			local localPlayer = Players.LocalPlayer
+			local panel = menuModules.makeWindow({
+				name = "SpreadCheeksTrollPanel", title = "Troll Panel", icons = { "drama", "laugh" },
+				width = 340, height = 470, xKey = "trollPanelX", yKey = "trollPanelY",
+				defaultPosition = function(screen, size) return screen.X - size.X - 16, 70 end,
+			})
+			local body = panel.body
+			-- player: who it's for right now; tab: the tab showing.
+			local shown = { player = nil, tab = "Pranks", enabled = false }
+			local function flat(vector)
+				return Vector3.new(vector.X, 0, vector.Z)
+			end
+			local function addCorner(object, radius)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = radius
+				corner.Parent = object
+			end
+			local function makeText(parent, font, size, role)
+				local label = Instance.new("TextLabel")
+				label.BackgroundTransparency = 1
+				label.Font = font
+				label.TextSize = size
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(label, "TextColor3", role)
+				label.Parent = parent
+				return label
+			end
+
+			-- Stop spectating, in the header.
+			local stop = Instance.new("TextButton")
+			stop.AutomaticSize = Enum.AutomaticSize.X
+			stop.Size = UDim2.fromOffset(0, 22)
+			stop.AutoButtonColor = false
+			stop.BorderSizePixel = 0
+			stop.Font = Enum.Font.GothamBold
+			stop.Text = "Stop watching"
+			stop.TextSize = 11
+			bindAuxiliaryUiColor(stop, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(stop, "TextColor3", "Text")
+			addCorner(stop, UDim.new(0, 7))
+			local stopPadding = Instance.new("UIPadding")
+			stopPadding.PaddingLeft = UDim.new(0, 10)
+			stopPadding.PaddingRight = UDim.new(0, 10)
+			stopPadding.Parent = stop
+			stop.Parent = panel.headerRight
+			stop.Activated:Connect(function() execCmd("unview", localPlayer, true) end)
+
+			-- Who: their picture, their name, and how they're doing.
+			local avatar = Instance.new("ImageLabel")
+			avatar.Position = UDim2.fromOffset(12, 2)
+			avatar.Size = UDim2.fromOffset(44, 44)
+			avatar.BorderSizePixel = 0
+			bindAuxiliaryUiColor(avatar, "BackgroundColor3", "Inset")
+			addCorner(avatar, UDim.new(1, 0))
+			avatar.Parent = body
+			local nameLabel = makeText(body, Enum.Font.GothamBold, 14, "Text")
+			nameLabel.Position = UDim2.fromOffset(66, 6)
+			nameLabel.Size = UDim2.new(1, -78, 0, 18)
+			local detailLabel = makeText(body, Enum.Font.Gotham, 11, "SubText")
+			detailLabel.Position = UDim2.fromOffset(66, 26)
+			detailLabel.Size = UDim2.new(1, -78, 0, 14)
+
+			local tabRow = Instance.new("Frame")
+			tabRow.Position = UDim2.fromOffset(10, 54)
+			tabRow.Size = UDim2.new(1, -20, 0, 26)
+			tabRow.BackgroundTransparency = 1
+			tabRow.Parent = body
+			local tabLayout = Instance.new("UIListLayout")
+			tabLayout.FillDirection = Enum.FillDirection.Horizontal
+			tabLayout.Padding = UDim.new(0, 6)
+			tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			tabLayout.Parent = tabRow
+			local list = Instance.new("ScrollingFrame")
+			list.Position = UDim2.fromOffset(6, 88)
+			list.Size = UDim2.new(1, -12, 1, -94)
+			list.BackgroundTransparency = 1
+			list.BorderSizePixel = 0
+			list.ScrollBarThickness = 3
+			list.ScrollingDirection = Enum.ScrollingDirection.Y
+			list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			list.CanvasSize = UDim2.new()
+			bindAuxiliaryUiColor(list, "ScrollBarImageColor3", "Muted")
+			list.Parent = body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 4)
+			listPadding.PaddingRight = UDim.new(0, 8)
+			listPadding.PaddingBottom = UDim.new(0, 8)
+			listPadding.Parent = list
+
+			-- Buttons. Those that switch something on and off have isOn, and show the accent while on.
+			local tabs, tabPills, buttons = {}, {}, {}
+			local function paint()
+				local theme = auxiliaryUiTheme
+				local player = shown.player
+				for _, item in ipairs(buttons) do
+					local on = item.isOn ~= nil and player ~= nil and item.isOn(player) == true
+					item.button.BackgroundColor3 = on and theme.Accent or theme.Inset
+					item.button.TextColor3 = on and theme.OnAccent or theme.Text
+				end
+				for name, pill in pairs(tabPills) do
+					local selected = name == shown.tab
+					pill.BackgroundColor3 = selected and theme.Accent or theme.Inset
+					pill.TextColor3 = selected and theme.OnAccent or theme.SubText
+				end
+			end
+			table.insert(auxiliaryUiThemeListeners, paint)
+			local function newTab(name, order)
+				local frame = Instance.new("Frame")
+				frame.LayoutOrder = order
+				frame.Size = UDim2.fromScale(1, 0)
+				frame.AutomaticSize = Enum.AutomaticSize.Y
+				frame.BackgroundTransparency = 1
+				frame.Visible = name == shown.tab
+				frame.Parent = list
+				local layout = Instance.new("UIListLayout")
+				layout.Padding = UDim.new(0, 6)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				layout.Parent = frame
+				local tab = { frame = frame, order = 0 }
+				tabs[name] = tab
+				local pill = Instance.new("TextButton")
+				pill.LayoutOrder = order
+				pill.Size = UDim2.new(0.25, -5, 1, 0)
+				pill.AutoButtonColor = false
+				pill.BorderSizePixel = 0
+				pill.Font = Enum.Font.GothamMedium
+				pill.Text = name
+				pill.TextSize = 12
+				addCorner(pill, UDim.new(0, 8))
+				pill.Parent = tabRow
+				tabPills[name] = pill
+				pill.Activated:Connect(function()
+					shown.tab = name
+					for tabName, each in pairs(tabs) do each.frame.Visible = tabName == name end
+					list.CanvasPosition = Vector2.zero
+					paint()
+				end)
+				return tab
+			end
+			local function nextIn(tab)
+				tab.order += 1
+				return tab.order
+			end
+			local function sectionLabel(tab, text)
+				local label = makeText(tab.frame, Enum.Font.GothamBold, 10, "Muted")
+				label.LayoutOrder = nextIn(tab)
+				label.Size = UDim2.new(1, 0, 0, 16)
+				label.TextYAlignment = Enum.TextYAlignment.Bottom
+				label.Text = text
+			end
+			local function hint(tab, text)
+				local label = makeText(tab.frame, Enum.Font.Gotham, 11, "SubText")
+				label.LayoutOrder = nextIn(tab)
+				label.Size = UDim2.new(1, 0, 0, 14)
+				label.AutomaticSize = Enum.AutomaticSize.Y
+				label.TextWrapped = true
+				label.TextTruncate = Enum.TextTruncate.None
+				label.Text = text
+			end
+			local function grid(tab, columns)
+				local frame = Instance.new("Frame")
+				frame.LayoutOrder = nextIn(tab)
+				frame.Size = UDim2.fromScale(1, 0)
+				frame.AutomaticSize = Enum.AutomaticSize.Y
+				frame.BackgroundTransparency = 1
+				frame.Parent = tab.frame
+				local layout = Instance.new("UIGridLayout")
+				layout.CellSize = UDim2.new(1 / columns, -6 * (columns - 1) / columns, 0, 30)
+				layout.CellPadding = UDim2.fromOffset(6, 6)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				layout.Parent = frame
+				return { frame = frame, count = 0 }
+			end
+			-- run gets the player the panel is for; isOn (for a switch) says whether it's on for them.
+			local function button(cells, text, run, isOn)
+				cells.count += 1
+				local item = Instance.new("TextButton")
+				item.LayoutOrder = cells.count
+				item.AutoButtonColor = false
+				item.BorderSizePixel = 0
+				item.Font = Enum.Font.GothamMedium
+				item.Text = text
+				item.TextSize = 12
+				item.TextTruncate = Enum.TextTruncate.AtEnd
+				addCorner(item, UDim.new(0, 8))
+				item.Parent = cells.frame
+				item.Activated:Connect(function()
+					local player = shown.player
+					if not player or not player.Parent then return end
+					run(player)
+					task.defer(paint)
+				end)
+				table.insert(buttons, { button = item, isOn = isOn })
+				return item
+			end
+
+			-- Makes player the Player Pranks target, if they aren't already.
+			local function isTarget(player)
+				return menuModules.selectedPlayerName ~= nil and menuModules.selectedPlayerName() == player.Name
+			end
+			local function makeTarget(player)
+				if not isTarget(player) and menuModules.selectPlayer then
+					menuModules.selectPlayer(player.Name, menuModules.labelOf(player, "  "))
+				end
+			end
+			-- A Player Pranks trick, on them: on makes them your target first; on for them, it goes off.
+			local function prankSwitch(cells, name)
+				button(cells, name, function(player)
+					local entry = quickToggleByName[name]
+					if not entry then return end
+					if entry.state and isTarget(player) then
+						setQuickToggle(entry, false)
+					else
+						makeTarget(player)
+						setQuickToggle(entry, true)
+					end
+				end, function(player)
+					local entry = quickToggleByName[name]
+					return entry ~= nil and entry.state and isTarget(player)
+				end)
+			end
+			-- One of your own switches.
+			local function selfSwitch(cells, name)
+				button(cells, name, function()
+					local entry = quickToggleByName[name]
+					if entry then setQuickToggle(entry, not entry.state) end
+				end, function()
+					local entry = quickToggleByName[name]
+					return entry ~= nil and entry.state
+				end)
+			end
+			local function faceThem(player)
+				local character = localPlayer.Character
+				local root = character and getRoot(character)
+				local theirRoot = player.Character and getRoot(player.Character)
+				if not root or not theirRoot then return end
+				local towards = flat(theirRoot.Position - root.Position)
+				if towards.Magnitude > 0.1 then root.CFrame = CFrame.lookAt(root.Position, root.Position + towards) end
+			end
+			-- Takes you next to them, in front of them (facing them) or behind them, by Safe Teleport's
+			-- flight when that's on.
+			local function goNear(player, where)
+				local theirRoot = player.Character and getRoot(player.Character)
+				if not theirRoot then return notify("Troll Panel", menuModules.nameOf(player) .. " has no character right now.") end
+				local look = flat(theirRoot.CFrame.LookVector)
+				look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+				local offset = where == "front" and look * 4 or where == "behind" and -look * 3 or Vector3.new(-look.Z, 0, look.X) * 3
+				local spot = theirRoot.Position + offset
+				local facing = where == "front" and -look or look
+				if menuModules.teleportTo then menuModules.teleportTo(CFrame.lookAt(spot, spot + facing)) end
+			end
+
+			-- Their eyes: your camera where their head is, looking where they look.
+			local eyes = { on = false, savedType = nil }
+			local function setEyes(on)
+				eyes.on = on
+				pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksTheirEyes") end)
+				local camera = workspace.CurrentCamera
+				if not on then
+					if eyes.savedType and camera then camera.CameraType = eyes.savedType end
+					eyes.savedType = nil
+					return
+				end
+				eyes.savedType = camera and camera.CameraType or Enum.CameraType.Custom
+				-- After the camera scripts (and the aimbot), so this has the last word.
+				RunService:BindToRenderStep("SpreadCheeksTheirEyes", Enum.RenderPriority.Camera.Value + 2, function()
+					local player = shown.player
+					local head = player and player.Character and player.Character:FindFirstChild("Head")
+					local current = workspace.CurrentCamera
+					if not head or not current then return end
+					current.CameraType = Enum.CameraType.Scriptable
+					current.CFrame = head.CFrame * CFrame.new(0, 0.3, -0.8)
+				end)
+			end
+			-- A highlight on them through walls, on your screen only.
+			local mark = { on = false, highlight = nil }
+			local function updateMark()
+				local character = mark.on and shown.player and shown.player.Character
+				if not character then
+					if mark.highlight then
+						mark.highlight:Destroy()
+						mark.highlight = nil
+					end
+					return
+				end
+				if not mark.highlight then
+					local highlight = Instance.new("Highlight")
+					highlight.Name = "SpreadCheeksTrollMark"
+					highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					highlight.FillTransparency = 0.7
+					highlight.Parent = COREGUI
+					mark.highlight = highlight
+				end
+				mark.highlight.Adornee = character
+				mark.highlight.FillColor = auxiliaryUiTheme.AccentText
+				mark.highlight.OutlineColor = auxiliaryUiTheme.AccentText
+			end
+
+			-- Pranks: the Player Pranks tricks, on them.
+			local prankNames = { "Headsit", "Orbit", "Copycat", "Bow Down", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Echo", "Stare", "Glide To" }
+			local pranks = newTab("Pranks", 1)
+			sectionLabel(pranks, "ON THEM  ·  CLICK AGAIN TO STOP")
+			local prankCells = grid(pranks, 2)
+			for _, name in ipairs(prankNames) do
+				if quickToggleByName[name] then prankSwitch(prankCells, name) end
+			end
+			local stopCells = grid(pranks, 1)
+			button(stopCells, "Stop all pranks", function()
+				for _, name in ipairs(prankNames) do
+					local entry = quickToggleByName[name]
+					if entry and entry.state then setQuickToggle(entry, false) end
+				end
+			end)
+			hint(pranks, "These make them your Player Pranks target. Right-click a trick on the Player Pranks tab for its settings.")
+
+			-- Emotes: you turn to face them, then play it once.
+			local emotes = newTab("Emotes", 2)
+			sectionLabel(emotes, "TURN TO THEM AND...")
+			local emoteCells = grid(emotes, 3)
+			for _, name in ipairs({
+				"Wave", "Point", "Laugh", "Cheer", "Dance 1", "Haha", "Get Out", "Beckon", "Salute", "Shrug", "Applaud", "Louder",
+				"Confused", "Bored", "Cower", "Agree", "Disagree", "Jumping Wave", "Tantrum", "Floss Dance", "Shrek Roar", "Godlike",
+				"Bodybuilder", "Hot To Go!",
+			}) do
+				button(emoteCells, name, function(player)
+					faceThem(player)
+					if not trolling.playEmoteOnce then return end
+					local track, why = trolling.playEmoteOnce(name)
+					if not track and why then notify("Troll Panel", why) end
+				end)
+			end
+			hint(emotes, "The first five work on any avatar; the rest need R15, which most games use.")
+
+			-- Moves: your moves (turned to them first) and your own tricks.
+			local moves = newTab("Moves", 3)
+			sectionLabel(moves, "AT THEM")
+			local moveCells = grid(moves, 3)
+			for _, move in ipairs(trolling.moves or {}) do
+				button(moveCells, move.name, function(player)
+					faceThem(player)
+					move.run()
+				end)
+			end
+			sectionLabel(moves, "YOU  ·  CLICK AGAIN TO STOP")
+			local bodyCells = grid(moves, 3)
+			for _, name in ipairs({
+				"Emote", "Fake Dead", "Ragdoll", "Fake Lag", "Vibrate", "Spin", "Statue", "Handstand", "Crawl", "Helicopter",
+				"Superman", "Marble Ball", "Moonwalk", "Zoomies", "Bunny Hop", "Wall Walk",
+			}) do
+				if quickToggleByName[name] then selfSwitch(bodyCells, name) end
+			end
+			hint(moves, "Emote loops the emote picked on the Emotes tab.")
+
+			-- Tools: getting to them, watching them, and about them.
+			local tools = newTab("Tools", 4)
+			sectionLabel(tools, "GET TO THEM")
+			local goCells = grid(tools, 3)
+			button(goCells, "Next to them", function(player) goNear(player, "side") end)
+			button(goCells, "In front", function(player) goNear(player, "front") end)
+			button(goCells, "Behind", function(player) goNear(player, "behind") end)
+			sectionLabel(tools, "WATCHING")
+			local watchCells = grid(tools, 2)
+			button(watchCells, "Their eyes", function() setEyes(not eyes.on) end, function() return eyes.on end)
+			button(watchCells, "Highlight them", function()
+				mark.on = not mark.on
+				updateMark()
+			end, function() return mark.on end)
+			button(watchCells, "Previous player", function()
+				if menuModules.spectateBar and menuModules.spectateBar.step then menuModules.spectateBar.step(-1) end
+			end)
+			button(watchCells, "Next player", function()
+				if menuModules.spectateBar and menuModules.spectateBar.step then menuModules.spectateBar.step(1) end
+			end)
+			sectionLabel(tools, "ABOUT THEM")
+			local aboutCells = grid(tools, 3)
+			button(aboutCells, "Copy name", function(player) menuModules.copy(player.Name, "their username") end)
+			button(aboutCells, "Copy ID", function(player) menuModules.copy(player.UserId, "their user ID") end)
+			button(aboutCells, "Outfit", function(player)
+				if menuModules.openOutfit then menuModules.openOutfit(player) end
+			end)
+			local noteBox = Instance.new("TextBox")
+			noteBox.LayoutOrder = nextIn(tools)
+			noteBox.Size = UDim2.new(1, 0, 0, 30)
+			noteBox.BorderSizePixel = 0
+			noteBox.ClearTextOnFocus = false
+			noteBox.Font = Enum.Font.Gotham
+			noteBox.PlaceholderText = "A note about them (only you see it)"
+			noteBox.Text = ""
+			noteBox.TextSize = 12
+			noteBox.TextXAlignment = Enum.TextXAlignment.Left
+			noteBox.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(noteBox, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(noteBox, "TextColor3", "Text")
+			bindAuxiliaryUiColor(noteBox, "PlaceholderColor3", "Muted")
+			addCorner(noteBox, UDim.new(0, 8))
+			local notePadding = Instance.new("UIPadding")
+			notePadding.PaddingLeft = UDim.new(0, 10)
+			notePadding.PaddingRight = UDim.new(0, 10)
+			notePadding.Parent = noteBox
+			noteBox.Parent = tools.frame
+			noteBox.FocusLost:Connect(function()
+				if shown.player and menuModules.setNote then menuModules.setNote(shown.player, noteBox.Text) end
+			end)
+			hint(tools, "Their eyes shows what they're looking at. Only you see the highlight. Your note is kept for next time, and shows when they join.")
+
+			-- Four times a second: shown while you spectate someone, and kept up to date about them.
+			local function refresh()
+				local player = typeof(viewing) == "Instance" and viewing:IsA("Player") and viewing ~= localPlayer and viewing.Parent ~= nil and viewing or nil
+				local visible = shown.enabled and player ~= nil
+				panel.setShown(visible)
+				if not visible then
+					if eyes.on then setEyes(false) end
+					shown.player = nil
+					updateMark()
+					return
+				end
+				if player ~= shown.player then
+					shown.player = player
+					avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=150&h=150"
+					if not noteBox:IsFocused() then noteBox.Text = menuModules.noteFor and menuModules.noteFor(player) or "" end
+				end
+				nameLabel.Text = menuModules.nameOf(player)
+				local parts = {}
+				local character = player.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				local root = character and getRoot(character)
+				local myRoot = localPlayer.Character and getRoot(localPlayer.Character)
+				table.insert(parts, humanoid and (math.floor(math.max(humanoid.Health, 0) + 0.5) .. " health") or "No character")
+				if root and myRoot then table.insert(parts, math.floor((root.Position - myRoot.Position).Magnitude + 0.5) .. " studs away") end
+				if player.Team then table.insert(parts, player.Team.Name) end
+				if isTarget(player) then table.insert(parts, "your target") end
+				detailLabel.Text = table.concat(parts, "  ·  ")
+				updateMark()
+				paint()
+			end
+			local sinceRefresh = 0
+			table.insert(panel.connections, RunService.Heartbeat:Connect(function(deltaTime)
+				sinceRefresh += deltaTime
+				if sinceRefresh < 0.25 then return end
+				sinceRefresh = 0
+				refresh()
+			end))
+			table.insert(menuModules.nameListeners, refresh)
+			paint()
+			menuModules.trollPanel = {
+				setEnabled = function(on)
+					shown.enabled = on
+					refresh()
+				end,
+			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Ctrl+Click Select: hold Ctrl and click a player (or near one) to make them your target, for the
+		-- Player Pranks tricks, the Players tab and the commands. A flash shows who you picked. While you
+		-- spectate, it watches them instead, so the Troll Panel follows.
+		safeBuild("Ctrl+Click Select", function()
+			local localPlayer = Players.LocalPlayer
+			local clicking = { connection = nil }
+			local clickParams = RaycastParams.new()
+			clickParams.FilterType = Enum.RaycastFilterType.Exclude
+			-- The player at a point on the screen: the one whose character is under it, or else whoever's
+			-- nearest to it on screen, within 60 pixels.
+			local function playerAt(point)
+				local camera = workspace.CurrentCamera
+				if not camera then return nil end
+				local ray = camera:ViewportPointToRay(point.X, point.Y)
+				clickParams.FilterDescendantsInstances = { localPlayer.Character }
+				local hit = workspace:Raycast(ray.Origin, ray.Direction * 2000, clickParams)
+				local model = hit and hit.Instance:FindFirstAncestorWhichIsA("Model")
+				while model do
+					local player = Players:GetPlayerFromCharacter(model)
+					if player then return player end
+					model = model:FindFirstAncestorWhichIsA("Model")
+				end
+				local nearest, nearestGap = nil, 60
+				for _, player in ipairs(Players:GetPlayers()) do
+					local root = player ~= localPlayer and player.Character and getRoot(player.Character)
+					if root then
+						local screenPoint, onScreen = camera:WorldToViewportPoint(root.Position)
+						local gap = (Vector2.new(screenPoint.X, screenPoint.Y) - point).Magnitude
+						if onScreen and gap < nearestGap then nearest, nearestGap = player, gap end
+					end
+				end
+				return nearest
+			end
+			local function flash(player)
+				local character = player.Character
+				if not character then return end
+				local highlight = Instance.new("Highlight")
+				highlight.Name = "SpreadCheeksSelectFlash"
+				highlight.Adornee = character
+				highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				highlight.FillColor = auxiliaryUiTheme.AccentText
+				highlight.OutlineColor = auxiliaryUiTheme.AccentText
+				highlight.FillTransparency = 0.45
+				highlight.Parent = COREGUI
+				TweenService:Create(highlight, TweenInfo.new(0.9), { FillTransparency = 1, OutlineTransparency = 1 }):Play()
+				task.delay(1, function() highlight:Destroy() end)
+			end
+			local function setEnabled(on)
+				if clicking.connection then
+					clicking.connection:Disconnect()
+					clicking.connection = nil
+				end
+				if not on then return end
+				clicking.connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+					if input.UserInputType ~= Enum.UserInputType.MouseButton1 or gameProcessed then return end
+					if not (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)) then return end
+					if UserInputService:GetFocusedTextBox() or pointerOverMenu() then return end
+					local player = playerAt(UserInputService:GetMouseLocation())
+					if not player then return end
+					if menuModules.selectPlayer then menuModules.selectPlayer(player.Name, menuModules.labelOf(player, "  ")) end
+					flash(player)
+					local watching = typeof(viewing) == "Instance" and viewing:IsA("Player") and viewing ~= localPlayer
+					if watching and viewing ~= player and menuModules.spectateBar and menuModules.spectateBar.watch then
+						menuModules.spectateBar.watch(player)
+					end
+					notify("Target", menuModules.nameOf(player) .. " is your target", 2)
+				end)
+			end
+			menuModules.ctrlClickSelect = { setEnabled = setEnabled }
+		end)
+
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
 		-- on now that what they switch has been built.
 		safeBuild("Switches that were on", function()
@@ -32622,6 +33253,24 @@ if rayfieldLoaded and Rayfield then
 				saveFeatureSettings()
 				notify("Echo", featureSettings.trollEchoDelay .. " seconds behind", 2)
 			end)
+			-- (Infinite Yield's own stare command turns you to someone once; the Stare switch goes by staredown.)
+			describe("staredown [player]", "Keep staring right at a player wherever they go (your Player Pranks target if you leave the name out)")
+			describe("unstaredown", "Stops the staring")
+			addcmd("staredown", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Stare") then setSwitch("Stare", true) end
+			end)
+			addcmd("unstaredown", {}, function() setSwitch("Stare", false) end)
+
+			-- Spectating.
+			describe("spectatetarget", "Watches your Player Pranks target, with the Troll Panel of pranks just for them")
+			addcmd("spectatetarget", {}, function()
+				local action = quickActionByName["Spectate Target"]
+				if action then action.run() end
+			end)
+			addSwitchCommands("Troll Panel", { { "trollpanel" }, { "untrollpanel" }, "toggletrollpanel" },
+				"While you spectate someone, shows a panel of pranks and tools just for them", "Stops the panel showing", "the Troll Panel")
+			addSwitchCommands("Ctrl+Click Select", { { "ctrlclickselect" }, { "unctrlclickselect" }, "togglectrlclickselect" },
+				"Hold Ctrl and click a player to make them your target", "Ctrl+click does nothing again")
 
 			-- Only you can see.
 			addSwitchCommands("Disco Mode", { { "disco" }, { "undisco" }, "toggledisco" },
