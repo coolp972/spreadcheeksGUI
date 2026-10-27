@@ -14744,6 +14744,17 @@ if rayfieldLoaded and Rayfield then
 			playerNotes = {}, outfitX = -1, outfitY = -1,
 			-- Whether Clean Screen has been given its F2 key yet, so a key taken off it stays off.
 			cleanScreenKeySet = false,
+			-- Fake Lag's strength (1 to 10, 5 as it always was) and whether it only lags you while you
+			-- move. Echo: how many seconds behind your target you copy them.
+			trollLagStrength = 5, trollLagMoving = false, trollEchoDelay = 2,
+			-- Speed Hack: how fast (studs a second) and how: "WalkSpeed" or "Push".
+			speedHackSpeed = 50, speedHackMethod = "WalkSpeed",
+			-- Auto Clicker: clicks a second, and "Left" or "Right".
+			clickerCps = 10, clickerButton = "Left",
+			-- Object ESP: on or off, the words to highlight ({ text, color } each), "Box" or "Glow", the
+			-- labels, how far it reaches (studs) and whether names match "Exact"ly or just "Contains".
+			objectEsp = false, objectEspRules = {}, objectEspStyle = "Box", objectEspNames = true, objectEspDistance = true,
+			objectEspRange = 500, objectEspMatch = "Contains",
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14759,6 +14770,7 @@ if rayfieldLoaded and Rayfield then
 			parkourAirJumps = { 1, 3 }, grappleRange = { 50, 500 }, grapplePullSpeed = { 30, 150 },
 			safeTeleportSpeed = { 30, 300 }, collectRange = { 25, 1000 }, collectSpeed = { 20, 150 }, recordSpeed = { 0.5, 3 },
 			aimbotPredictTime = { 0, 0.5 }, hitboxSize = { 2, 25 }, zoomFov = { 5, 60 }, timeOfDayHour = { 0, 24 }, warnHealthAt = { 10, 60 },
+			trollLagStrength = { 1, 10 }, trollEchoDelay = { 0.5, 5 }, speedHackSpeed = { 16, 300 }, clickerCps = { 1, 30 }, objectEspRange = { 50, 3000 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15528,6 +15540,11 @@ if rayfieldLoaded and Rayfield then
 		withIcon(mobilityTab, "CreateSection", { name = "Getting around" }, "footprints")
 		addCommandToggle(mobilityTab, "Noclip", "noclip", "clip", nil, "ghost")
 		addCommandToggle(mobilityTab, "Infinite Jump", "infjump", "uninfjump", nil, "chevrons-up")
+		-- Speed Hack, built further down (menuModules.speedHack). Its key box toggles it.
+		addQuickToggle(mobilityTab, "Speed Hack", "Move faster, at the speed you pick. Right-click for the speed and how it works", function(enabled)
+			if not menuModules.speedHack then return false end
+			return menuModules.speedHack.setEnabled(enabled)
+		end, "gauge", "fast-forward")
 		-- Safe Teleport, Go Back and the Movement Recorder are built further down (The Big Update);
 		-- these are their switches and buttons, made here so they're in this tab with key boxes.
 		addRememberedToggle(mobilityTab, "Safe Teleport", "safeTeleport", "safeTeleport", "Teleports fly you there quickly instead, so games that kick for teleporting don't notice. Right-click for the speed", "shield-check", "plane-landing")
@@ -15566,6 +15583,8 @@ if rayfieldLoaded and Rayfield then
 		addCommandToggle(combatTab, "ESP", "esp", "noesp", "Right-click or use the arrow for ESP settings", "scan-eye")
 		-- ESP's row has the settings arrow where the key box would go, so it gets no keybind.
 		quickToggleByName["ESP"].noKeybind = true
+		-- Object ESP highlights things by name rather than players; built further down (menuModules.objectEsp).
+		addRememberedToggle(combatTab, "Object ESP", "objectEsp", "objectEsp", "Highlights things on the map by name, like crates or chests, through walls. Right-click to choose what and how", "box", "scan-eye")
 		-- Aimbot sits right under ESP. Rayfield lists rows in the order they're made, so its switch
 		-- is made here; the aim key box, its settings and the aiming itself come from buildAimbot
 		-- further down, once everything they use exists.
@@ -15646,6 +15665,13 @@ if rayfieldLoaded and Rayfield then
 				end
 			end
 		end, "footprints")
+
+		-- Auto Clicker, built further down (menuModules.autoClicker). Its key box toggles it.
+		withIcon(combatTab, "CreateSection", { name = "Clicking" }, "mouse-pointer-click")
+		addQuickToggle(combatTab, "Auto Clicker", "Clicks for you, fast. Right-click for how fast and which button", function(enabled)
+			if not menuModules.autoClicker then return false end
+			return menuModules.autoClicker.setEnabled(enabled)
+		end, "mouse-pointer-click", "hand")
 
 		-- View: the camera, then lighting and sight.
 		withIcon(viewTab, "CreateSection", { name = "Camera" }, "camera")
@@ -15863,8 +15889,8 @@ if rayfieldLoaded and Rayfield then
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
 				-- Play Recording (Mobility) moves you too, so it's one of the takeovers.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording" }
-				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo" }
+				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk" }
 				local clashes = {}
 				local function clash(first, second)
 					clashes[first] = clashes[first] or {}
@@ -15887,7 +15913,7 @@ if rayfieldLoaded and Rayfield then
 				-- Both of these switch Roblox's Animate script off and on as they go.
 				clash("Weeping Angel", "Copycat")
 				-- Copycat's following would keep pulling you off your post (or your spot, or the floor).
-				for _, name in ipairs({ "Bodyguard", "Nothing Personal", "Hype Man", "Roomba" }) do
+				for _, name in ipairs({ "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Echo" }) do
 					clash(name, "Copycat")
 				end
 				local function claimMovement(name)
@@ -16026,6 +16052,51 @@ if rayfieldLoaded and Rayfield then
 					if not root then return end
 					local spin = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
 					tumble(Vector3.new(0, 18, 0) + flat(root.CFrame.LookVector) * 6, (spin.Magnitude > 0.01 and spin.Unit or Vector3.xAxis) * 14, 1.6)
+				end
+				-- Dive Roll: a dive forwards, stretched out flat, then a forward roll along the ground and
+				-- back up onto your feet, facing the way you dived. You go limp for it (PlatformStand), so
+				-- your character doesn't stand itself up halfway.
+				function trolling.diveRoll()
+					if flipping or takeoverState.name then return end
+					local character, humanoid, root = myCharacter()
+					if not humanoid then return end
+					flipping = true
+					task.spawn(function()
+						local forward = flat(root.CFrame.LookVector)
+						forward = forward.Magnitude > 0.1 and forward.Unit or Vector3.new(0, 0, -1)
+						local facing = CFrame.lookAt(Vector3.zero, forward)
+						humanoid.PlatformStand = true
+						root.AssemblyLinearVelocity = forward * 40 + Vector3.new(0, 26, 0)
+						root.AssemblyAngularVelocity = Vector3.zero
+						-- The dive: flat out and nose down until you're about to hit the ground.
+						local started = os.clock()
+						while root.Parent and os.clock() - started < 1.2 do
+							RunService.Heartbeat:Wait()
+							root.AssemblyAngularVelocity = Vector3.zero
+							root.CFrame = CFrame.new(root.Position) * facing * CFrame.Angles(-math.rad(75), 0, 0)
+							local ground = groundBelow(root.Position, { character })
+							if os.clock() - started > 0.2 and ground and root.Position.Y - ground < 2.2 then break end
+						end
+						-- The roll: one full turn forwards, carrying on along the ground.
+						local turned = 0
+						while root.Parent and turned < math.pi * 2 do
+							turned += math.min(math.pi * 2 - turned, math.pi * 2 * RunService.Heartbeat:Wait() / 0.45)
+							local velocity = root.AssemblyLinearVelocity
+							root.AssemblyLinearVelocity = Vector3.new(forward.X * 20, math.min(velocity.Y, 0), forward.Z * 20)
+							root.AssemblyAngularVelocity = Vector3.zero
+							root.CFrame = CFrame.new(root.Position) * facing * CFrame.Angles(-math.rad(75) - turned, 0, 0)
+						end
+						if root.Parent then
+							root.CFrame = CFrame.new(root.Position + Vector3.new(0, 1.5, 0)) * facing
+							root.AssemblyAngularVelocity = Vector3.zero
+						end
+						-- A takeover started since needs PlatformStand left on.
+						if humanoid.Parent and not takeoverState.name then
+							humanoid.PlatformStand = false
+							humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+						end
+						flipping = false
+					end)
 				end
 
 				trollTabs.emotes:CreateText({
@@ -16937,7 +17008,10 @@ if rayfieldLoaded and Rayfield then
 				addQuickToggle(trollTabs.tricks, "Fake Dead", "Drop down and lie still as if you died. Jump to get back up. Right-click for the pose", setFakeDead, "skull")
 
 				-- Fake Lag: makes you look laggy to everyone. Stutter freezes you for moments at a time,
-				-- Rubber-band snaps you back to where you just were, and Glitch twitches you about.
+				-- Rubber-band snaps you back to where you just were, Glitch twitches you about, Spikes runs
+				-- smoothly and then hits you with one big freeze and a snap back, and Mixed changes between
+				-- those every few seconds. Strength (5 is how it always was) makes it longer and wilder, and
+				-- "Only while moving" leaves you alone while you stand still. All in its settings card.
 				local fakeLagState = { serial = 0, anchoredRoot = nil }
 				local function releaseLagAnchor()
 					if fakeLagState.anchoredRoot then
@@ -16952,36 +17026,161 @@ if rayfieldLoaded and Rayfield then
 					if not enabled then return end
 					claimMovement("Fake Lag")
 					task.spawn(function()
+						local mixedStyles = { "Stutter", "Rubber-band", "Glitch", "Spikes" }
+						local mixedStyle, mixedUntil = "Stutter", 0
 						while fakeLagState.serial == serial do
-							local _, _, root = myCharacter()
+							local _, humanoid, root = myCharacter()
+							-- 1 at the usual strength of 5, from 0.2 up to 2.
+							local strength = featureSettings.trollLagStrength / 5
 							local style = featureSettings.trollLagStyle
-							if not root then
-								task.wait(0.3)
+							if style == "Mixed" then
+								if os.clock() > mixedUntil then
+									mixedStyle = mixedStyles[math.random(#mixedStyles)]
+									mixedUntil = os.clock() + 3 + math.random() * 3
+								end
+								style = mixedStyle
+							end
+							if not root or (featureSettings.trollLagMoving and humanoid.MoveDirection.Magnitude < 0.1) then
+								task.wait(0.2)
 							elseif style == "Rubber-band" then
 								local from = root.Position
-								task.wait(0.25 + math.random() * 0.2)
+								task.wait((0.25 + math.random() * 0.2) * math.sqrt(strength))
 								if fakeLagState.serial ~= serial then break end
 								if root.Parent and (root.Position - from).Magnitude > 1.5 then
 									root.CFrame = root.CFrame.Rotation + from
 								end
-								task.wait(0.2 + math.random() * 0.45)
+								task.wait((0.2 + math.random() * 0.45) / math.sqrt(strength))
 							elseif style == "Glitch" then
-								if math.random() < 0.35 then
-									root.CFrame = root.CFrame * CFrame.new((math.random() - 0.5) * 1.2, 0, (math.random() - 0.5) * 1.2)
-										* CFrame.Angles(0, math.rad(math.random(-30, 30)), 0)
+								if math.random() < math.min(0.35 * strength, 0.9) then
+									local reach = 1.2 * strength
+									root.CFrame = root.CFrame * CFrame.new((math.random() - 0.5) * reach, 0, (math.random() - 0.5) * reach)
+										* CFrame.Angles(0, math.rad(math.random(-30, 30) * math.min(strength, 2)), 0)
 								end
 								RunService.Heartbeat:Wait()
+							elseif style == "Spikes" then
+								-- Smooth for a few seconds, then frozen, then snapped back to where it hit.
+								task.wait(1.5 + math.random() * 3)
+								local _, _, spikeRoot = myCharacter()
+								if fakeLagState.serial ~= serial or not spikeRoot then continue end
+								local from = spikeRoot.Position
+								spikeRoot.Anchored = true
+								fakeLagState.anchoredRoot = spikeRoot
+								task.wait((0.4 + math.random() * 0.4) * strength)
+								releaseLagAnchor()
+								task.wait(0.35)
+								if fakeLagState.serial == serial and spikeRoot.Parent and (spikeRoot.Position - from).Magnitude > 1.5 then
+									spikeRoot.CFrame = spikeRoot.CFrame.Rotation + from
+								end
 							else
 								root.Anchored = true
 								fakeLagState.anchoredRoot = root
-								task.wait(0.08 + math.random() * 0.17)
+								task.wait((0.08 + math.random() * 0.17) * strength)
 								releaseLagAnchor()
-								task.wait(0.1 + math.random() * 0.3)
+								task.wait((0.1 + math.random() * 0.3) / math.sqrt(strength))
 							end
 						end
 					end)
 				end
-				addQuickToggle(trollTabs.tricks, "Fake Lag", "Makes you look like you're lagging. Right-click for the style", setFakeLag, "wifi-off", "wifi")
+				addQuickToggle(trollTabs.tricks, "Fake Lag", "Makes you look like you're lagging. Right-click for the style, strength and more", setFakeLag, "wifi-off", "wifi")
+
+				-- Ragdoll: you go limp and flop over, arms and legs loose, until you jump or switch it off.
+				-- Your joints are swapped for loose ball joints while it's on, so your body really falls and
+				-- tumbles; everyone sees you collapse.
+				do
+					local ragdoll = { joints = {}, collisions = {}, humanoid = nil, loop = nil, spaceDown = true }
+					local function standUp()
+						if ragdoll.loop then
+							ragdoll.loop:Disconnect()
+							ragdoll.loop = nil
+						end
+						for _, joint in ipairs(ragdoll.joints) do
+							if joint.motor.Parent then joint.motor.Enabled = true end
+							joint.socket:Destroy()
+							joint.attachment0:Destroy()
+							joint.attachment1:Destroy()
+						end
+						table.clear(ragdoll.joints)
+						for part, canCollide in pairs(ragdoll.collisions) do
+							if part.Parent then part.CanCollide = canCollide end
+						end
+						table.clear(ragdoll.collisions)
+						local humanoid = ragdoll.humanoid
+						ragdoll.humanoid = nil
+						holdAnimate("Ragdoll", false)
+						if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
+						humanoid.PlatformStand = false
+						local root = getRoot(humanoid.Parent)
+						if root then
+							-- Upright again, just above where you lay.
+							local look = flat(root.CFrame.LookVector)
+							look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+							local position = root.Position + Vector3.new(0, 2, 0)
+							root.CFrame = CFrame.lookAt(position, position + look)
+							root.AssemblyLinearVelocity = Vector3.zero
+							root.AssemblyAngularVelocity = Vector3.zero
+						end
+						humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+					end
+					local function setRagdoll(enabled)
+						standUp()
+						if not enabled then return end
+						local character, humanoid, root = myCharacter()
+						if not humanoid then
+							notify("Ragdoll", "Your character isn't ready yet.")
+							return false
+						end
+						claimMovement("Ragdoll")
+						ragdoll.humanoid = humanoid
+						holdAnimate("Ragdoll", true)
+						humanoid.PlatformStand = true
+						for _, motor in ipairs(character:GetDescendants()) do
+							-- Every joint but the one holding your root part to your body.
+							if motor:IsA("Motor6D") and motor.Part0 and motor.Part1 and motor.Part0 ~= root and motor.Part1 ~= root then
+								local attachment0 = Instance.new("Attachment")
+								attachment0.Name = "SpreadCheeksRagdoll"
+								attachment0.CFrame = motor.C0
+								attachment0.Parent = motor.Part0
+								local attachment1 = Instance.new("Attachment")
+								attachment1.Name = "SpreadCheeksRagdoll"
+								attachment1.CFrame = motor.C1
+								attachment1.Parent = motor.Part1
+								local socket = Instance.new("BallSocketConstraint")
+								socket.Name = "SpreadCheeksRagdoll"
+								socket.Attachment0 = attachment0
+								socket.Attachment1 = attachment1
+								-- Loose, but not so loose that limbs bend the wrong way round.
+								socket.LimitsEnabled = true
+								socket.UpperAngle = motor.Name:find("Neck") and 30 or 70
+								socket.TwistLimitsEnabled = true
+								socket.TwistLowerAngle = -40
+								socket.TwistUpperAngle = 40
+								socket.Parent = motor.Part0
+								motor.Enabled = false
+								table.insert(ragdoll.joints, { motor = motor, socket = socket, attachment0 = attachment0, attachment1 = attachment1 })
+							end
+						end
+						-- Loose limbs have to hit the floor to flop about on it.
+						for _, part in ipairs(character:GetChildren()) do
+							if part:IsA("BasePart") and part ~= root then
+								ragdoll.collisions[part] = part.CanCollide
+								part.CanCollide = true
+							end
+						end
+						-- A shove to topple you over.
+						root.AssemblyLinearVelocity += flat(root.CFrame.LookVector) * 6 + Vector3.new(0, 4, 0)
+						root.AssemblyAngularVelocity = root.CFrame.RightVector * -4
+						-- Space gets you back up; one already held when it starts doesn't count.
+						ragdoll.spaceDown = true
+						ragdoll.loop = RunService.Heartbeat:Connect(function()
+							if not humanoid.Parent or humanoid.Health <= 0 then return switchOff("Ragdoll") end
+							humanoid.PlatformStand = true
+							local down = UserInputService:IsKeyDown(Enum.KeyCode.Space) and not UserInputService:GetFocusedTextBox()
+							if down and not ragdoll.spaceDown then return switchOff("Ragdoll") end
+							ragdoll.spaceDown = down
+						end)
+					end
+					addQuickToggle(trollTabs.tricks, "Ragdoll", "Go limp and flop over like a ragdoll. Jump to get back up", setRagdoll, "person-standing", "bone")
+				end
 
 				-- Spin: turns you round and round like a top. The speed is in its settings card. During
 				-- Handstand it's a headspin.
@@ -17440,7 +17639,7 @@ if rayfieldLoaded and Rayfield then
 				-- with Stop Animations from further up.
 				withIcon(trollTabs.walks, "CreateSection", { name = "Moves" }, "zap", "sparkles")
 				trollTabs.walks:CreateText({
-					text = "These are commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, yeet, launch, fakeout), so you can put them on keys in IY Settings.",
+					text = "Click the key box on a move to put it on a key. They're commands too (frontflip, backflip, cartwheel, triplespin, trip, tumble, diveroll, yeet, launch, fakeout).",
 				})
 				trolling.moves = {
 					{ name = "Front Flip", description = "A jump with a full turn forwards", icons = { "rotate-cw", "refresh-cw" }, run = function() trolling.flip("front") end },
@@ -17449,6 +17648,7 @@ if rayfieldLoaded and Rayfield then
 					{ name = "Triple Spin", description = "A jump with three spins, like a figure skater", icons = { "refresh-cw", "tornado" }, run = function() trolling.flip("spin") end },
 					{ name = "Trip", description = "Fall flat over", icons = { "footprints" }, run = function() execCmd("trip", localPlayer, true) end },
 					{ name = "Tumble", description = "Go head over heels in a heap, then get back up", icons = { "dices", "shuffle" }, run = function() trolling.tumble() end },
+					{ name = "Dive Roll", description = "Dive forwards, flat out, and roll back up onto your feet", icons = { "arrow-down-right", "rotate-cw" }, run = function() trolling.diveRoll() end },
 					{ name = "Yeet", description = "Throw yourself forwards, tumbling through the air", icons = { "wind", "rocket" }, run = function() trolling.yeet() end },
 					{ name = "Launch", description = "Shoots you high into the air. Some games give fall damage", icons = { "rocket" }, run = function() trolling.launch() end },
 					{ name = "Fakeout", description = "Vanish into the void for a second, then pop back where you were", icons = { "ghost" }, run = function() execCmd("fakeout", localPlayer, true) end },
@@ -17682,6 +17882,121 @@ if rayfieldLoaded and Rayfield then
 						grapple.keyDown = true
 						afterControls("SpreadCheeksGrapple", step)
 					end, "anchor", "link")
+				end
+
+				-- Wall Walk: walk into a wall and you climb straight up it like Spider-Man, sideways too as
+				-- you steer along it, and pull yourself over the top. Climb up into a ceiling and you hang
+				-- under it upside down and crawl along it until it ends or you jump. Letting go of the keys
+				-- on a wall lets go of it, and jumping kicks you off. It's your own character, so everyone
+				-- sees you climb.
+				do
+					local wallParams = RaycastParams.new()
+					wallParams.FilterType = Enum.RaycastFilterType.Exclude
+					local climbIds = { r15 = 507765644, r6 = 180436334 }
+					local wall = { track = nil, ceiling = false, ledgeUntil = 0, spaceDown = true, yaw = 0 }
+					local function stopClimbAnimation()
+						if wall.track then
+							wall.track:Stop(0.2)
+							wall.track = nil
+						end
+					end
+					local function climbAnimation(humanoid, speed)
+						if not wall.track then
+							wall.track = playOnMe("rbxassetid://" .. (isR15(humanoid) and climbIds.r15 or climbIds.r6))
+						end
+						if wall.track then wall.track:AdjustSpeed(speed) end
+					end
+					local function leaveCeiling(humanoid, root)
+						if not wall.ceiling then return end
+						wall.ceiling = false
+						humanoid.PlatformStand = false
+						-- The right way up as you drop.
+						root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, wall.yaw, 0)
+						humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+					end
+					-- The ceiling just over you (a surface facing down), or nil.
+					local function ceilingAbove(root)
+						local hit = workspace:Raycast(root.Position, Vector3.new(0, 4.5, 0), wallParams)
+						return hit and hit.Normal.Y < -0.7 and hit or nil
+					end
+					local function step(deltaTime)
+						local character, humanoid, root = myCharacter()
+						if not humanoid then
+							stopClimbAnimation()
+							wall.ceiling = false
+							return
+						end
+						wallParams.FilterDescendantsInstances = { character }
+						local move = flat(humanoid.MoveDirection)
+						local speed = math.max(humanoid.WalkSpeed, 8)
+						local frame = math.max(deltaTime, 1 / 120)
+						local spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space) and not UserInputService:GetFocusedTextBox()
+						local jumped = spaceDown and not wall.spaceDown
+						wall.spaceDown = spaceDown
+						if humanoid.Sit then return stopClimbAnimation() end
+						-- Under a ceiling: crawling along it upside down, feet to the ceiling.
+						if wall.ceiling then
+							local above = ceilingAbove(root)
+							if not above or jumped then
+								stopClimbAnimation()
+								return leaveCeiling(humanoid, root)
+							end
+							humanoid.PlatformStand = true
+							if move.Magnitude > 0.1 then wall.yaw = yawOf(move) end
+							local reach = isR15(humanoid) and (humanoid.HipHeight + root.Size.Y / 2) or 3
+							local hangY = above.Position.Y - reach
+							root.AssemblyLinearVelocity = move * speed + Vector3.new(0, math.clamp((hangY - root.Position.Y) / frame, -40, 40), 0)
+							root.AssemblyAngularVelocity = Vector3.zero
+							root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, wall.yaw, 0) * CFrame.Angles(0, 0, math.pi)
+							climbAnimation(humanoid, move.Magnitude > 0.1 and 1 or 0)
+							return
+						end
+						if humanoid.PlatformStand then return stopClimbAnimation() end
+						-- A wall the way you're walking, that you're pushing into.
+						local hit = move.Magnitude > 0.1 and workspace:Raycast(root.Position, move.Unit * 2.4, wallParams)
+						local into = hit and math.abs(hit.Normal.Y) < 0.4 and -flat(hit.Normal)
+						if into and into.Magnitude > 0.1 then into = into.Unit else into = nil end
+						local push = into and move:Dot(into) or 0
+						if not into or push < 0.3 or os.clock() < wall.ledgeUntil then
+							return stopClimbAnimation()
+						end
+						-- Climbed up into a ceiling: hang under it.
+						if ceilingAbove(root) then
+							wall.ceiling = true
+							wall.yaw = yawOf(into)
+							return
+						end
+						-- Nothing in front of your head any more: pull yourself up and over the top.
+						if not workspace:Raycast(root.Position + Vector3.new(0, 2.5, 0), into * 3, wallParams) then
+							wall.ledgeUntil = os.clock() + 0.35
+							stopClimbAnimation()
+							root.AssemblyLinearVelocity = into * 14 + Vector3.new(0, speed + 14, 0)
+							return
+						end
+						if jumped then
+							-- Kick off the wall, backwards.
+							wall.ledgeUntil = os.clock() + 0.4
+							stopClimbAnimation()
+							root.AssemblyLinearVelocity = -into * 30 + Vector3.new(0, 40, 0)
+							return
+						end
+						-- Climbing: up as you push into it, sideways as you steer along it, held against it.
+						local along = move - into * move:Dot(into)
+						root.AssemblyLinearVelocity = Vector3.new(0, push * speed, 0) + along * speed * 0.7 + into * 4
+						root.CFrame = CFrame.lookAt(root.Position, root.Position + into)
+						climbAnimation(humanoid, math.max(push, 0.4))
+					end
+					addQuickToggle(trollTabs.walks, "Wall Walk", "Walk into a wall to climb straight up it like Spider-Man, and crawl along ceilings upside down. Jump to let go", function(enabled)
+						stopClimbAnimation()
+						local _, humanoid, root = myCharacter()
+						if humanoid then leaveCeiling(humanoid, root) end
+						wall.ceiling = false
+						if not enabled then return afterControls("SpreadCheeksWallWalk", nil) end
+						claimMovement("Wall Walk")
+						-- A key already held when it's switched on doesn't count as a jump.
+						wall.spaceDown = true
+						afterControls("SpreadCheeksWallWalk", step)
+					end, "footprints", "arrow-up-to-line")
 				end
 
 				-- Player Pranks: the tricks played on someone else use the player picked here, which is the
@@ -18812,6 +19127,94 @@ if rayfieldLoaded and Rayfield then
 				targetedSwitches["Hype Man"] = setHypeMan
 				addQuickToggle(trollTabs.players, "Hype Man", "Stand by your target and cheer every time they jump or do an emote. Right-click for what sets you off", setHypeMan, "party-popper", "megaphone")
 
+				-- Echo: you do exactly what your target did a moment ago (2 seconds to start with, in its
+				-- settings card): the same path, the same turns and the same jumps, like a delayed shadow.
+				-- Starting far from them, you walk or fly over to catch up first. Your own keys don't move
+				-- you while it's on.
+				do
+					local echoFollower = newFollower()
+					echoFollower.driftSpeed = 50
+					echoFollower.driftBeyond = 40
+					local echo = { samples = {}, lastSample = 0, wasJumping = false, catchingUp = false }
+					local function setEcho(enabled)
+						afterControls("SpreadCheeksEcho", nil)
+						echoFollower.reset()
+						table.clear(echo.samples)
+						echo.lastSample, echo.wasJumping, echo.catchingUp = 0, false, false
+						if not enabled then return end
+						local target = targetFor("Echo")
+						if not target then return false end
+						if not myCharacter() then
+							notify("Echo", "Your character isn't ready yet.")
+							return false
+						end
+						claimMovement("Echo")
+						notify("Echo", "Copying " .. menuModules.nameOf(target) .. ", " .. featureSettings.trollEchoDelay .. " seconds behind", 2.5)
+						afterControls("SpreadCheeksEcho", function(deltaTime)
+							if not target.Parent then
+								notify("Echo", menuModules.nameOf(target) .. " left the server")
+								return switchOff("Echo")
+							end
+							local character, humanoid, root = myCharacter()
+							if not humanoid then return end
+							local now = os.clock()
+							local theirCharacter = target.Character
+							local theirRoot = theirCharacter and getRoot(theirCharacter)
+							local theirHumanoid = theirCharacter and theirCharacter:FindFirstChildOfClass("Humanoid")
+							-- What they're doing now, twenty times a second, to do later.
+							if theirRoot and now - echo.lastSample >= 0.05 then
+								echo.lastSample = now
+								local jumping = theirHumanoid ~= nil and theirHumanoid:GetState() == Enum.HumanoidStateType.Jumping
+								table.insert(echo.samples, {
+									at = now, position = theirRoot.Position, yaw = yawOf(theirRoot.CFrame.LookVector),
+									jump = jumping and not echo.wasJumping,
+								})
+								echo.wasJumping = jumping
+							end
+							-- On to the moment you're copying, jumping where they jumped on the way.
+							local playTime = now - featureSettings.trollEchoDelay
+							local samples = echo.samples
+							local jump = false
+							while samples[2] and samples[2].at <= playTime do
+								if table.remove(samples, 1).jump then jump = true end
+							end
+							local current, upcoming = samples[1], samples[2]
+							-- Too soon to copy anything yet: wait where you are.
+							if not current or current.at > playTime then
+								humanoid:Move(Vector3.zero, false)
+								humanoid.Jump = false
+								return
+							end
+							local alpha = upcoming and math.clamp((playTime - current.at) / math.max(upcoming.at - current.at, 0.001), 0, 1) or 0
+							local wanted = upcoming and current.position:Lerp(upcoming.position, alpha) or current.position
+							local offset = wanted - root.Position
+							-- A long way off: walk (or fly) over first.
+							if offset.Magnitude > 8 then
+								echo.catchingUp = true
+								echoFollower.ignore = theirCharacter
+								echoFollower.step(deltaTime, character, humanoid, root, wanted, 2, false)
+								return
+							end
+							if echo.catchingUp then
+								echo.catchingUp = false
+								echoFollower.reset()
+							end
+							-- Walking the way they walked, kept on their path, turned the way they faced.
+							local travel = upcoming and flat(upcoming.position - current.position) or Vector3.zero
+							humanoid:Move(travel.Magnitude > 0.05 and travel.Unit or Vector3.zero, false)
+							humanoid.Jump = jump
+							local frame = math.max(deltaTime, 1 / 120)
+							local horizontal = flat(offset) / frame
+							if horizontal.Magnitude > 60 then horizontal = horizontal.Unit * 60 end
+							local vertical = math.abs(offset.Y) > 4 and math.clamp(offset.Y / frame, -60, 60) or root.AssemblyLinearVelocity.Y
+							root.AssemblyLinearVelocity = Vector3.new(horizontal.X, vertical, horizontal.Z)
+							root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, current.yaw, 0)
+						end)
+					end
+					targetedSwitches["Echo"] = setEcho
+					addQuickToggle(trollTabs.players, "Echo", "Do exactly what your target did a couple of seconds ago, like a delayed shadow. Right-click for how far behind", setEcho, "audio-waveform", "repeat")
+				end
+
 				-- Only you can see: these change your own screen and nobody else's.
 				withIcon(trollTabs.screen, "CreateSection", { name = "Only you can see these" }, "eye", "monitor")
 				-- Disco Mode: a colour tint that cycles through the rainbow, with a flash on every beat.
@@ -19312,10 +19715,54 @@ if rayfieldLoaded and Rayfield then
 							Stutter = "Freezes you for moments at a time, like a bad connection.",
 							["Rubber-band"] = "Snaps you back to where you just were as you move.",
 							Glitch = "Twitches you around on the spot.",
+							Spikes = "Smooth for a few seconds, then one big freeze and a snap back, like a lag spike.",
+							Mixed = "Changes between the other four every few seconds.",
 						}
 						lagCard.addSectionLabel("STYLE", "wifi-off", "wifi")
-						addSettingChoice(lagCard, "trollLagStyle", { "Stutter", "Rubber-band", "Glitch" })
+						addChoiceGrid(lagCard, { "Stutter", "Rubber-band", "Glitch", "Spikes", "Mixed" }, 3, function()
+							return featureSettings.trollLagStyle
+						end, function(style)
+							featureSettings.trollLagStyle = style
+							saveFeatureSettings()
+						end)
 						lagCard.addHint(function() return styleHints[featureSettings.trollLagStyle] end)
+						lagCard.addSectionLabel("HOW BAD", "gauge")
+						lagCard.addSlider({
+							text = "Strength",
+							icon = { "gauge", "activity" },
+							min = 1, max = 10, step = 1,
+							get = function() return featureSettings.trollLagStrength end,
+							set = function(value) featureSettings.trollLagStrength = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return tostring(math.floor(value + 0.5)) end,
+						})
+						lagCard.addSwitchGrid({
+							{
+								text = "Only while moving",
+								get = function() return featureSettings.trollLagMoving == true end,
+								set = function(on)
+									featureSettings.trollLagMoving = on
+									saveFeatureSettings()
+								end,
+							},
+						}, 1)
+						lagCard.addHint("5 is the usual amount. Higher freezes you for longer and throws you about more; lower is subtler. Only while moving leaves you be while you stand still, like real lag.")
+						lagCard.refresh()
+					end
+					local echoCard = cardFor("Echo")
+					if echoCard then
+						echoCard.addSectionLabel("DELAY", "timer")
+						echoCard.addSlider({
+							text = "How far behind",
+							icon = { "timer", "repeat" },
+							min = 0.5, max = 5, step = 0.5,
+							get = function() return featureSettings.trollEchoDelay end,
+							set = function(value) featureSettings.trollEchoDelay = value end,
+							commit = saveFeatureSettings,
+							format = function(value) return string.format("%.1f s", value) end,
+						})
+						echoCard.addHint("Longer makes it creepier: they'll look round and see you doing what they did ages ago.")
+						echoCard.refresh()
 					end
 					local spinCard = cardFor("Spin")
 					if spinCard then
@@ -19651,7 +20098,7 @@ if rayfieldLoaded and Rayfield then
 				function trolling.applySettings()
 					local choices = {
 						trollDeadPose = { "On your back", "Face down" },
-						trollLagStyle = { "Stutter", "Rubber-band", "Glitch" },
+						trollLagStyle = { "Stutter", "Rubber-band", "Glitch", "Spikes", "Mixed" },
 						trollCrawlStyle = { "Worm", "Belly Slide", "Log Roll" },
 						trollSitSpot = { "Head", "Back" },
 						trollCopyFollow = { "Off", "Behind", "Beside" },
@@ -25790,6 +26237,7 @@ if rayfieldLoaded and Rayfield then
 				spectateBarX = true, spectateBarY = true, outfitX = true, outfitY = true, playerNotes = true, cleanScreenKeySet = true,
 				safeTeleport = true, antiVoid = true, autoRejoin = true, objectFinder = true, spectateBar = true, zoomKey = true,
 				timeOfDay = true, fpsBoost = true, muteMusic = true, muteOthers = true, streamerMode = true, healthWarnings = true,
+				objectEsp = true,
 			}
 			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
 			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
@@ -28245,8 +28693,21 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			local menuVersion = "2026.10.27"
+			local menuVersion = "2026.10.27.2"
 			local releaseNotes = {
+				{
+					title = "More Fun and Tools", date = "27 October 2026",
+					notes = {
+						{ "Speed Hack", "Mobility tab. Move faster at the speed you pick, on a key of your own. Right-click for the speed and how it works." },
+						{ "Object ESP", "Combat tab. Highlight crates, chests or anything else by name through walls, each word in its own colour." },
+						{ "Auto Clicker", "Combat tab. Clicks for you, up to 30 times a second, with the left or right button." },
+						{ "Fake Lag", "Body Tricks. New Spikes and Mixed styles, a strength slider, and Only while moving." },
+						{ "Ragdoll", "Body Tricks. Go limp and flop over; jump to get back up." },
+						{ "Wall Walk", "Walks & Moves. Climb straight up walls and crawl along ceilings like Spider-Man." },
+						{ "Dive Roll", "Walks & Moves. Dive forwards and roll back up onto your feet." },
+						{ "Echo", "Player Pranks. Copy your target's every move a couple of seconds later, like a delayed shadow." },
+					},
+				},
 				{
 					title = "The Big Update", date = "27 October 2026",
 					notes = {
@@ -30565,6 +31026,631 @@ if rayfieldLoaded and Rayfield then
 		end)
 
 		------------------------------------------------------------------------------------------
+		------------------------------------------------------------------------------------------
+		-- Speed Hack: you move at the speed in its settings card (50 to start with; walking is 16).
+		-- WalkSpeed holds your walk speed there, the way the game's own speed boosts do; Push leaves your
+		-- walk speed as the game set it and pushes you along faster, for games that keep putting your walk
+		-- speed back. Its key box turns it on and off like any switch.
+		safeBuild("Speed Hack", function()
+			local localPlayer = Players.LocalPlayer
+			-- humanoid and saved: the humanoid WalkSpeed mode is holding, and its walk speed before that.
+			local speed = { loop = nil, changed = nil, humanoid = nil, saved = nil }
+			local wallParams = RaycastParams.new()
+			wallParams.FilterType = Enum.RaycastFilterType.Exclude
+			-- Lets go of the humanoid WalkSpeed mode was holding, with its walk speed put back.
+			local function letGo()
+				if speed.changed then
+					speed.changed:Disconnect()
+					speed.changed = nil
+				end
+				local humanoid = speed.humanoid
+				if humanoid and humanoid.Parent and speed.saved then humanoid.WalkSpeed = speed.saved end
+				speed.humanoid, speed.saved = nil, nil
+			end
+			local function setEnabled(on)
+				if speed.loop then
+					speed.loop:Disconnect()
+					speed.loop = nil
+				end
+				letGo()
+				if not on then return end
+				speed.loop = RunService.Heartbeat:Connect(function(deltaTime)
+					local character = localPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local root = character and getRoot(character)
+					if not humanoid or not root or humanoid.Health <= 0 then return end
+					local wanted = featureSettings.speedHackSpeed
+					if featureSettings.speedHackMethod == "Push" then
+						if speed.humanoid then letGo() end
+						local move = Vector3.new(humanoid.MoveDirection.X, 0, humanoid.MoveDirection.Z)
+						local extra = wanted - humanoid.WalkSpeed
+						if move.Magnitude < 0.05 or extra <= 0 or humanoid.Sit or humanoid.PlatformStand then return end
+						local direction = move.Unit
+						local distance = math.min(move.Magnitude, 1) * extra * deltaTime
+						-- Never through a wall: it stops short of anything in the way.
+						wallParams.FilterDescendantsInstances = { character }
+						local hit = workspace:Raycast(root.Position, direction * (distance + 1.5), wallParams)
+						if hit then distance = math.max(0, (hit.Position - root.Position).Magnitude - 1.5) end
+						if distance > 0 then root.CFrame += direction * distance end
+						return
+					end
+					-- WalkSpeed: held at the speed, on this character and on each new one.
+					if speed.humanoid ~= humanoid then
+						letGo()
+						speed.humanoid, speed.saved = humanoid, humanoid.WalkSpeed
+						speed.changed = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+							if humanoid.WalkSpeed ~= featureSettings.speedHackSpeed then humanoid.WalkSpeed = featureSettings.speedHackSpeed end
+						end)
+					end
+					if humanoid.WalkSpeed ~= wanted then humanoid.WalkSpeed = wanted end
+				end)
+			end
+			menuModules.speedHack = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Speed Hack"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("SPEED", "gauge", "fast-forward")
+			card.addSlider({
+				text = "Speed",
+				icon = { "gauge", "fast-forward" },
+				min = 16, max = 300, step = 1,
+				get = function() return featureSettings.speedHackSpeed end,
+				set = function(value) featureSettings.speedHackSpeed = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs/s" end,
+			})
+			card.addSectionLabel("HOW", "zap")
+			card.addChoice({ "WalkSpeed", "Push" }, function() return featureSettings.speedHackMethod end, function(method)
+				featureSettings.speedHackMethod = method
+				saveFeatureSettings()
+			end)
+			card.addHint(function()
+				if featureSettings.speedHackMethod == "Push" then
+					return "Leaves your walk speed alone and pushes you along faster, for games that keep resetting your speed. It stops short of walls."
+				end
+				return "Sets your walk speed, like the game's own speed boosts. If the game keeps putting it back, try Push."
+			end)
+			card.addHint("Walking is 16. Click the key box on the switch to put it on a key.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Auto Clicker: clicks for you while it's on, as many times a second as its settings card says
+		-- (10 to start with), with the left or right mouse button, wherever the pointer is. Put it on a
+		-- key with its key box. It waits while the pointer is over this menu, so the menu still works,
+		-- and while you're typing.
+		safeBuild("Auto Clicker", function()
+			local localPlayer = Players.LocalPlayer
+			local virtualInput = nil
+			pcall(function() virtualInput = game:GetService("VirtualInputManager") end)
+			local clicker = { serial = 0 }
+			-- One click: the executor's own mouse functions when it has them, then Roblox's virtual
+			-- input, and for the left button the tool you're holding as a last resort.
+			local function click()
+				local right = featureSettings.clickerButton == "Right"
+				local press = right and mouse2press or mouse1press
+				local release = right and mouse2release or mouse1release
+				if type(press) == "function" and type(release) == "function" then
+					pcall(press)
+					pcall(release)
+					return
+				end
+				local clickOnce = right and mouse2click or mouse1click
+				if type(clickOnce) == "function" then
+					pcall(clickOnce)
+					return
+				end
+				if virtualInput then
+					local cursor = UserInputService:GetMouseLocation()
+					local sent = pcall(function()
+						virtualInput:SendMouseButtonEvent(cursor.X, cursor.Y, right and 1 or 0, true, game, 0)
+						virtualInput:SendMouseButtonEvent(cursor.X, cursor.Y, right and 1 or 0, false, game, 0)
+					end)
+					if sent then return end
+				end
+				if not right then
+					local character = localPlayer.Character
+					local tool = character and character:FindFirstChildOfClass("Tool")
+					if tool then pcall(function() tool:Activate() end) end
+				end
+			end
+			local function setEnabled(on)
+				clicker.serial += 1
+				if not on then return end
+				local serial = clicker.serial
+				task.spawn(function()
+					local nextAt = os.clock()
+					while clicker.serial == serial do
+						if not pointerOverMenu() and not UserInputService:GetFocusedTextBox() then click() end
+						-- Kept to the rate even when a frame runs long.
+						nextAt += 1 / featureSettings.clickerCps
+						local pause = nextAt - os.clock()
+						if pause > 0 then
+							task.wait(pause)
+						else
+							nextAt = os.clock()
+							task.wait()
+						end
+					end
+				end)
+			end
+			menuModules.autoClicker = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Auto Clicker"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("CLICKS", "mouse-pointer-click")
+			card.addSlider({
+				text = "Clicks a second",
+				icon = { "mouse-pointer-click", "gauge" },
+				min = 1, max = 30, step = 1,
+				get = function() return featureSettings.clickerCps end,
+				set = function(value) featureSettings.clickerCps = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " a second" end,
+			})
+			card.addSectionLabel("BUTTON", "mouse-pointer-2")
+			card.addChoice({ "Left", "Right" }, function() return featureSettings.clickerButton end, function(button)
+				featureSettings.clickerButton = button
+				saveFeatureSettings()
+			end)
+			card.addHint("It clicks wherever your pointer is, and waits while it's over this menu or you're typing. Click the key box on the switch to put it on a key.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Object ESP: highlights things on the map by name (crates, chests, keys, doors...) through walls,
+		-- with their name and how far away they are. Each word in its settings card has its own colour;
+		-- click the colour to change it. Box draws a see-through box round every one in range; Glow
+		-- outlines the nearest 20 instead, as Roblox only draws so many outlines at once. The range,
+		-- labels and whether names have to match exactly are in the card too.
+		safeBuild("Object ESP", function()
+			local localPlayer = Players.LocalPlayer
+			-- The colours a word can have; clicking a word's colour moves it on to the next.
+			local palette = {
+				{ "Red", Color3.fromRGB(239, 68, 68) }, { "Orange", Color3.fromRGB(249, 115, 22) },
+				{ "Yellow", Color3.fromRGB(234, 179, 8) }, { "Green", Color3.fromRGB(34, 197, 94) },
+				{ "Cyan", Color3.fromRGB(6, 182, 212) }, { "Blue", Color3.fromRGB(59, 130, 246) },
+				{ "Purple", Color3.fromRGB(168, 85, 247) }, { "Pink", Color3.fromRGB(236, 72, 153) },
+				{ "White", Color3.fromRGB(245, 245, 245) },
+			}
+			local function paletteIndex(name)
+				for index, color in ipairs(palette) do
+					if color[1] == name then return index end
+				end
+				return 1
+			end
+			-- The saved words, each { text = word, color = colour name }.
+			local function savedRules()
+				if type(featureSettings.objectEspRules) ~= "table" then featureSettings.objectEspRules = {} end
+				return featureSettings.objectEspRules
+			end
+			-- tracked[object] = { rule, and its box, glow, label and text while it's drawn }.
+			local esp = { tracked = {}, connections = {}, loop = nil, folder = nil, serial = 0, rules = {} }
+			local function ruleFor(object)
+				if not (object:IsA("BasePart") or object:IsA("Model")) then return nil end
+				local name = object.Name:lower()
+				local exact = featureSettings.objectEspMatch == "Exact"
+				for _, rule in ipairs(esp.rules) do
+					if (exact and name == rule.text) or (not exact and name:find(rule.text, 1, true)) then return rule end
+				end
+				return nil
+			end
+			-- Inside a player's character, or inside something already highlighted (a part named Crate in
+			-- a model named Crate counts once).
+			local function skipped(object)
+				if object:IsA("Model") and Players:GetPlayerFromCharacter(object) then return true end
+				local model = object:FindFirstAncestorWhichIsA("Model")
+				while model do
+					if esp.tracked[model] or Players:GetPlayerFromCharacter(model) then return true end
+					model = model:FindFirstAncestorWhichIsA("Model")
+				end
+				return false
+			end
+			local function anchorOf(object)
+				if object:IsA("BasePart") then return object end
+				return object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart", true)
+			end
+			local function positionOf(object)
+				if object:IsA("BasePart") then return object.Position end
+				local pivotOk, pivot = pcall(function() return object:GetPivot() end)
+				return pivotOk and pivot.Position or nil
+			end
+			-- How far above its anchor part the top of the thing is, for its label.
+			local function topOf(object, anchor)
+				if object:IsA("Model") then
+					local boxOk, boundsCFrame, boundsSize = pcall(object.GetBoundingBox, object)
+					if boxOk then return boundsCFrame.Position.Y + boundsSize.Y / 2 - anchor.Position.Y end
+				end
+				return anchor.Size.Y / 2
+			end
+			local function undraw(info)
+				for _, key in ipairs({ "box", "glow", "label" }) do
+					if info[key] then
+						info[key]:Destroy()
+						info[key] = nil
+					end
+				end
+				info.text = nil
+			end
+			local function draw(object, info, distance, nearest)
+				local anchor = anchorOf(object)
+				if not anchor then return undraw(info) end
+				local color = palette[paletteIndex(info.rule.color)][2]
+				local glowing = featureSettings.objectEspStyle == "Glow"
+				if glowing and nearest then
+					if not info.glow then
+						local glow = Instance.new("Highlight")
+						glow.Adornee = object
+						glow.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+						glow.FillTransparency = 0.75
+						glow.OutlineTransparency = 0
+						glow.Parent = esp.folder
+						info.glow = glow
+					end
+					info.glow.FillColor, info.glow.OutlineColor = color, color
+				elseif info.glow then
+					info.glow:Destroy()
+					info.glow = nil
+				end
+				if not glowing then
+					if not info.box then
+						local box = Instance.new("BoxHandleAdornment")
+						box.Adornee = anchor
+						box.AlwaysOnTop = true
+						box.ZIndex = 5
+						box.Transparency = 0.55
+						box.Size = anchor.Size
+						-- A model's box goes round all of it.
+						if object:IsA("Model") then
+							local boxOk, boundsCFrame, boundsSize = pcall(object.GetBoundingBox, object)
+							if boxOk then
+								box.CFrame = anchor.CFrame:ToObjectSpace(boundsCFrame)
+								box.Size = boundsSize
+							end
+						end
+						box.Parent = esp.folder
+						info.box = box
+					end
+					info.box.Color3 = color
+				elseif info.box then
+					info.box:Destroy()
+					info.box = nil
+				end
+				if featureSettings.objectEspNames or featureSettings.objectEspDistance then
+					if not info.label then
+						local label = Instance.new("BillboardGui")
+						label.Adornee = anchor
+						label.AlwaysOnTop = true
+						label.LightInfluence = 0
+						label.MaxDistance = math.huge
+						label.Size = UDim2.fromOffset(200, 22)
+						label.StudsOffsetWorldSpace = Vector3.new(0, topOf(object, anchor) + 1.2, 0)
+						label.Parent = esp.folder
+						local text = Instance.new("TextLabel")
+						text.Size = UDim2.fromScale(1, 1)
+						text.BackgroundTransparency = 1
+						text.Font = Enum.Font.GothamBold
+						text.TextSize = 12
+						text.TextStrokeTransparency = 0.4
+						text.Parent = label
+						info.label, info.text = label, text
+					end
+					local parts = {}
+					if featureSettings.objectEspNames then table.insert(parts, object.Name) end
+					if featureSettings.objectEspDistance then table.insert(parts, math.floor(distance + 0.5) .. "m") end
+					info.text.Text = table.concat(parts, "  ")
+					info.text.TextColor3 = color
+				elseif info.label then
+					info.label:Destroy()
+					info.label, info.text = nil, nil
+				end
+			end
+			-- Four times a second: everything in range drawn, nearest first (up to 300), the rest not.
+			local function update()
+				local character = localPlayer.Character
+				local root = character and getRoot(character)
+				local camera = workspace.CurrentCamera
+				local from = root and root.Position or (camera and camera.CFrame.Position) or Vector3.zero
+				local inRange = {}
+				for object, info in pairs(esp.tracked) do
+					local position = object.Parent and positionOf(object)
+					local distance = position and (position - from).Magnitude
+					if not object.Parent then
+						undraw(info)
+						esp.tracked[object] = nil
+					elseif distance and distance <= featureSettings.objectEspRange then
+						table.insert(inRange, { object = object, info = info, distance = distance })
+					else
+						undraw(info)
+					end
+				end
+				table.sort(inRange, function(left, right) return left.distance < right.distance end)
+				for index, item in ipairs(inRange) do
+					if index <= 300 then
+						draw(item.object, item.info, item.distance, index <= 20)
+					else
+						undraw(item.info)
+					end
+				end
+			end
+			local function stop()
+				esp.serial += 1
+				if esp.loop then
+					esp.loop:Disconnect()
+					esp.loop = nil
+				end
+				for _, connection in ipairs(esp.connections) do connection:Disconnect() end
+				table.clear(esp.connections)
+				if esp.folder then
+					esp.folder:Destroy()
+					esp.folder = nil
+				end
+				table.clear(esp.tracked)
+			end
+			local function consider(object)
+				if esp.tracked[object] then return end
+				local rule = ruleFor(object)
+				if rule and not skipped(object) then esp.tracked[object] = { rule = rule } end
+			end
+			local function setEnabled(on)
+				stop()
+				if not on then return end
+				esp.rules = {}
+				for _, rule in ipairs(savedRules()) do
+					if type(rule) == "table" and type(rule.text) == "string" and rule.text ~= "" then
+						table.insert(esp.rules, { text = rule.text:lower(), color = rule.color })
+					end
+				end
+				if #esp.rules == 0 then
+					notify("Object ESP", "Right-click Object ESP and add what to highlight first, like crate.", 5)
+					return false
+				end
+				local serial = esp.serial
+				local folder = Instance.new("Folder")
+				folder.Name = "SpreadCheeksObjectEsp"
+				folder.Parent = COREGUI
+				esp.folder = folder
+				table.insert(esp.connections, workspace.DescendantAdded:Connect(function(object)
+					if esp.serial == serial then consider(object) end
+				end))
+				table.insert(esp.connections, workspace.DescendantRemoving:Connect(function(object)
+					local info = esp.tracked[object]
+					if info then
+						undraw(info)
+						esp.tracked[object] = nil
+					end
+				end))
+				-- The map a few thousand at a time, so switching it on doesn't freeze the game.
+				task.spawn(function()
+					for index, object in ipairs(workspace:GetDescendants()) do
+						if index % 4000 == 0 then
+							task.wait()
+							if esp.serial ~= serial then return end
+						end
+						consider(object)
+					end
+				end)
+				local last = 0
+				esp.loop = RunService.Heartbeat:Connect(function()
+					local now = os.clock()
+					if now - last < 0.25 then return end
+					last = now
+					update()
+				end)
+			end
+			local entry = quickToggleByName["Object ESP"]
+			-- Starting again with the words as they are now, if it's on.
+			local function restart()
+				if entry and entry.state and setEnabled(true) == false then setQuickToggle(entry, false) end
+			end
+			menuModules.objectEsp = {
+				setEnabled = setEnabled,
+				-- Adds a word (the next colour along) and starts again with it; false if it was already there.
+				addWord = function(word)
+					word = tostring(word or ""):gsub("^%s+", ""):gsub("%s+$", "")
+					if word == "" or #word > 40 then return false end
+					local rules = savedRules()
+					for _, rule in ipairs(rules) do
+						if type(rule) == "table" and tostring(rule.text):lower() == word:lower() then return false end
+					end
+					table.insert(rules, { text = word, color = palette[#rules % #palette + 1][1] })
+					saveFeatureSettings()
+					restart()
+					return true
+				end,
+			}
+
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("WHAT TO HIGHLIGHT", "scan-eye", "box")
+			card.addHint("Anything with one of these words in its name. Click a word's colour to change it.")
+			local addRow = Instance.new("Frame")
+			addRow.LayoutOrder = card.nextOrder()
+			addRow.Size = UDim2.new(1, 0, 0, 30)
+			addRow.BackgroundTransparency = 1
+			addRow.Parent = card.content
+			local wordBox = Instance.new("TextBox")
+			wordBox.Size = UDim2.new(1, -78, 1, 0)
+			wordBox.BorderSizePixel = 0
+			wordBox.ClearTextOnFocus = false
+			wordBox.Font = Enum.Font.Gotham
+			wordBox.PlaceholderText = "A word, like crate"
+			wordBox.Text = ""
+			wordBox.TextSize = 12
+			wordBox.TextXAlignment = Enum.TextXAlignment.Left
+			bindAuxiliaryUiColor(wordBox, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(wordBox, "TextColor3", "Text")
+			bindAuxiliaryUiColor(wordBox, "PlaceholderColor3", "Muted")
+			local wordCorner = Instance.new("UICorner")
+			wordCorner.CornerRadius = UDim.new(0, 8)
+			wordCorner.Parent = wordBox
+			local wordPadding = Instance.new("UIPadding")
+			wordPadding.PaddingLeft = UDim.new(0, 10)
+			wordPadding.PaddingRight = UDim.new(0, 10)
+			wordPadding.Parent = wordBox
+			wordBox.Parent = addRow
+			local addButton = Instance.new("TextButton")
+			addButton.AnchorPoint = Vector2.new(1, 0)
+			addButton.Position = UDim2.fromScale(1, 0)
+			addButton.Size = UDim2.new(0, 70, 1, 0)
+			addButton.AutoButtonColor = false
+			addButton.BorderSizePixel = 0
+			addButton.Font = Enum.Font.GothamBold
+			addButton.Text = "Add"
+			addButton.TextSize = 12
+			bindAuxiliaryUiColor(addButton, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(addButton, "TextColor3", "OnAccent")
+			local addCorner = Instance.new("UICorner")
+			addCorner.CornerRadius = UDim.new(0, 8)
+			addCorner.Parent = addButton
+			addButton.Parent = addRow
+			local wordsFrame = Instance.new("Frame")
+			wordsFrame.LayoutOrder = card.nextOrder()
+			wordsFrame.Size = UDim2.fromScale(1, 0)
+			wordsFrame.AutomaticSize = Enum.AutomaticSize.Y
+			wordsFrame.BackgroundTransparency = 1
+			wordsFrame.Parent = card.content
+			local wordsLayout = Instance.new("UIListLayout")
+			wordsLayout.Padding = UDim.new(0, 4)
+			wordsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			wordsLayout.Parent = wordsFrame
+			local function wordsChanged()
+				saveFeatureSettings()
+				card.refresh()
+				restart()
+			end
+			table.insert(card.refreshers, function()
+				for _, child in ipairs(wordsFrame:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				local theme = auxiliaryUiTheme
+				local rules = savedRules()
+				if #rules == 0 then
+					local none = Instance.new("TextLabel")
+					none.Size = UDim2.new(1, 0, 0, 18)
+					none.BackgroundTransparency = 1
+					none.Font = Enum.Font.Gotham
+					none.Text = "Nothing to highlight yet."
+					none.TextSize = 11
+					none.TextXAlignment = Enum.TextXAlignment.Left
+					none.TextColor3 = theme.Muted
+					none.Parent = wordsFrame
+					return
+				end
+				for index, rule in ipairs(rules) do
+					local row = Instance.new("Frame")
+					row.LayoutOrder = index
+					row.Size = UDim2.new(1, 0, 0, 28)
+					row.BorderSizePixel = 0
+					row.BackgroundColor3 = theme.Inset
+					local rowCorner = Instance.new("UICorner")
+					rowCorner.CornerRadius = UDim.new(0, 7)
+					rowCorner.Parent = row
+					row.Parent = wordsFrame
+					local swatch = Instance.new("TextButton")
+					swatch.AnchorPoint = Vector2.new(0, 0.5)
+					swatch.Position = UDim2.new(0, 6, 0.5, 0)
+					swatch.Size = UDim2.fromOffset(18, 18)
+					swatch.AutoButtonColor = false
+					swatch.BorderSizePixel = 0
+					swatch.Text = ""
+					swatch.BackgroundColor3 = palette[paletteIndex(rule.color)][2]
+					local swatchCorner = Instance.new("UICorner")
+					swatchCorner.CornerRadius = UDim.new(1, 0)
+					swatchCorner.Parent = swatch
+					swatch.Parent = row
+					-- A new table rather than a change to the old one, which a saved config may share.
+					swatch.Activated:Connect(function()
+						rules[index] = { text = rule.text, color = palette[paletteIndex(rule.color) % #palette + 1][1] }
+						wordsChanged()
+					end)
+					local label = Instance.new("TextLabel")
+					label.Position = UDim2.fromOffset(32, 0)
+					label.Size = UDim2.new(1, -112, 1, 0)
+					label.BackgroundTransparency = 1
+					label.Font = Enum.Font.GothamMedium
+					label.Text = tostring(rule.text) .. "  ·  " .. tostring(rule.color)
+					label.TextSize = 12
+					label.TextXAlignment = Enum.TextXAlignment.Left
+					label.TextTruncate = Enum.TextTruncate.AtEnd
+					label.TextColor3 = theme.Text
+					label.Parent = row
+					local remove = Instance.new("TextButton")
+					remove.AnchorPoint = Vector2.new(1, 0.5)
+					remove.Position = UDim2.new(1, -4, 0.5, 0)
+					remove.Size = UDim2.fromOffset(70, 22)
+					remove.AutoButtonColor = false
+					remove.BorderSizePixel = 0
+					remove.Font = Enum.Font.GothamMedium
+					remove.Text = "Remove"
+					remove.TextSize = 11
+					remove.BackgroundColor3 = theme.Card
+					remove.TextColor3 = theme.SubText
+					local removeCorner = Instance.new("UICorner")
+					removeCorner.CornerRadius = UDim.new(0, 6)
+					removeCorner.Parent = remove
+					remove.Parent = row
+					remove.Activated:Connect(function()
+						table.remove(rules, index)
+						wordsChanged()
+					end)
+				end
+			end)
+			local function addTypedWord()
+				if menuModules.objectEsp.addWord(wordBox.Text) then card.refresh() end
+				wordBox.Text = ""
+			end
+			addButton.Activated:Connect(addTypedWord)
+			wordBox.FocusLost:Connect(function(enterPressed)
+				if enterPressed then addTypedWord() end
+			end)
+			card.addSectionLabel("LOOK", "palette")
+			card.addChoice({ "Box", "Glow" }, function() return featureSettings.objectEspStyle end, function(style)
+				featureSettings.objectEspStyle = style
+				saveFeatureSettings()
+			end)
+			card.addHint(function()
+				if featureSettings.objectEspStyle == "Glow" then
+					return "Outlines the nearest 20, as Roblox can only draw about 30 outlines at once (player ESP uses some too). The rest still get labels."
+				end
+				return "A see-through box round every one in range, however many there are."
+			end)
+			local function setting(text, key)
+				return {
+					text = text,
+					get = function() return featureSettings[key] == true end,
+					set = function(on)
+						featureSettings[key] = on
+						saveFeatureSettings()
+					end,
+				}
+			end
+			card.addSwitchGrid({ setting("Show names", "objectEspNames"), setting("Show distance", "objectEspDistance") })
+			card.addSwitchGrid({
+				{
+					text = "Exact names only",
+					get = function() return featureSettings.objectEspMatch == "Exact" end,
+					set = function(on)
+						featureSettings.objectEspMatch = on and "Exact" or "Contains"
+						saveFeatureSettings()
+						restart()
+					end,
+				},
+			}, 1)
+			card.addSlider({
+				text = "Range",
+				icon = { "ruler", "eye" },
+				min = 50, max = 3000, step = 50,
+				get = function() return featureSettings.objectEspRange end,
+				set = function(value) featureSettings.objectEspRange = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs" end,
+			})
+			card.refresh()
+		end)
+
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
 		-- on now that what they switch has been built.
 		safeBuild("Switches that were on", function()
@@ -31254,7 +32340,7 @@ if rayfieldLoaded and Rayfield then
 					return false
 				end
 				if menuModules.selectPlayer then
-					menuModules.selectPlayer(target.Name, target.DisplayName .. "  (@" .. target.Name .. ")")
+					menuModules.selectPlayer(target.Name, menuModules.labelOf(target, "  "))
 				end
 				return true
 			end
@@ -31370,21 +32456,37 @@ if rayfieldLoaded and Rayfield then
 				saveFeatureSettings()
 				notify("Grapple Hook", style, 2)
 			end)
+			-- (Infinite Yield's own wallwalk command loads a different script, so this one goes by spiderman.)
+			addSwitchCommands("Wall Walk", { { "spiderman", "climbwalls" }, { "unspiderman", "unclimbwalls" }, "togglewallwalk" },
+				"Walk into a wall to climb straight up it, and crawl along ceilings upside down", "Stops the wall climbing", "Wall Walk")
 
 			-- Body tricks.
 			addSwitchCommands("Fake Dead", { { "fakedead", "playdead" }, { "unfakedead", "unplaydead" }, "togglefakedead" },
 				"Drop down and lie still as if you died. Jump to get back up", "Gets you back up")
 			addSwitchCommands("Fake Lag", { { "fakelag" }, { "unfakelag" }, "togglefakelag" },
 				"Makes you look like you're lagging to everyone", "Stops the fake lag")
-			describe("fakelagstyle [stutter/rubberband/glitch]", "How Fake Lag looks: freezing, snapping back, or twitching about")
+			describe("fakelagstyle [stutter/rubberband/glitch/spikes/mixed]", "How Fake Lag looks: freezing, snapping back, twitching about, big lag spikes, or all of them in turn")
 			addcmd("fakelagstyle", {}, function(args)
-				local styles = { stutter = "Stutter", rubberband = "Rubber-band", ["rubber-band"] = "Rubber-band", glitch = "Glitch" }
+				local styles = {
+					stutter = "Stutter", rubberband = "Rubber-band", ["rubber-band"] = "Rubber-band", glitch = "Glitch",
+					spikes = "Spikes", spike = "Spikes", mixed = "Mixed", mix = "Mixed",
+				}
 				local style = styles[firstArgument(args)]
-				if not style then return notify("Fake Lag", "Choose stutter, rubberband or glitch, like fakelagstyle glitch") end
+				if not style then return notify("Fake Lag", "Choose stutter, rubberband, glitch, spikes or mixed, like fakelagstyle spikes") end
 				featureSettings.trollLagStyle = style
 				saveFeatureSettings()
 				notify("Fake Lag", style, 2)
 			end)
+			describe("fakelagstrength [1-10]", "How bad Fake Lag is: 5 is the usual, 10 is wild")
+			addcmd("fakelagstrength", {}, function(args)
+				local strength = tonumber(args[1])
+				if not strength then return notify("Fake Lag", "Give a strength from 1 to 10, like fakelagstrength 8") end
+				featureSettings.trollLagStrength = math.clamp(math.floor(strength + 0.5), 1, 10)
+				saveFeatureSettings()
+				notify("Fake Lag", "Strength " .. featureSettings.trollLagStrength, 2)
+			end)
+			addSwitchCommands("Ragdoll", { { "ragdoll", "flop" }, { "unragdoll", "unflop" }, "toggleragdoll" },
+				"Go limp and flop over like a ragdoll. Jump to get back up", "Gets you back up")
 			addSwitchCommands("Vibrate", { { "vibrate" }, { "unvibrate" }, "togglevibrate" },
 				"Shake on the spot like a phone going off", "Stops the shaking")
 			addSwitchCommands("Handstand", { { "handstand" }, { "unhandstand" }, "togglehandstand" },
@@ -31428,6 +32530,8 @@ if rayfieldLoaded and Rayfield then
 			addcmd("triplespin", { "spinjump" }, function() if trolling.flip then trolling.flip("spin") end end)
 			describe("tumble", "Go head over heels in a heap, then get back up")
 			addcmd("tumble", {}, function() if trolling.tumble then trolling.tumble() end end)
+			describe("diveroll / dive", "Dive forwards, flat out, and roll back up onto your feet")
+			addcmd("diveroll", { "dive" }, function() if trolling.diveRoll then trolling.diveRoll() end end)
 			describe("yeet", "Throws you forwards, tumbling through the air")
 			addcmd("yeet", {}, function() if trolling.yeet then trolling.yeet() end end)
 			describe("launch", "Shoots you high into the air")
@@ -31504,6 +32608,20 @@ if rayfieldLoaded and Rayfield then
 				if chooseTarget(args, speaker, "Hype Man") then setSwitch("Hype Man", true) end
 			end)
 			addcmd("unhypeman", {}, function() setSwitch("Hype Man", false) end)
+			describe("echo [player]", "Do exactly what a player did a couple of seconds ago, like a delayed shadow (your Player Pranks target if you leave the name out)")
+			describe("unecho", "Stops copying them")
+			addcmd("echo", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Echo") then setSwitch("Echo", true) end
+			end)
+			addcmd("unecho", {}, function() setSwitch("Echo", false) end)
+			describe("echodelay [0.5-5]", "How many seconds behind your target Echo copies them (2 to start with)")
+			addcmd("echodelay", {}, function(args)
+				local delay = tonumber(args[1])
+				if not delay then return notify("Echo", "Give a number of seconds from 0.5 to 5, like echodelay 3") end
+				featureSettings.trollEchoDelay = math.clamp(math.floor(delay * 2 + 0.5) / 2, 0.5, 5)
+				saveFeatureSettings()
+				notify("Echo", featureSettings.trollEchoDelay .. " seconds behind", 2)
+			end)
 
 			-- Only you can see.
 			addSwitchCommands("Disco Mode", { { "disco" }, { "undisco" }, "toggledisco" },
@@ -31657,6 +32775,37 @@ if rayfieldLoaded and Rayfield then
 				if not player then return notify("Outfit", "Give a player who's in this server, like outfit bob") end
 				if menuModules.openOutfit then menuModules.openOutfit(player) end
 			end)
+
+			-- More Fun and Tools. (Infinite Yield has its own autoclick command, so the menu's Auto
+			-- Clicker goes by autoclicker.)
+			addSwitchCommands("Speed Hack", { { "speedhack" }, { "unspeedhack" }, "togglespeedhack" },
+				"Makes you move faster, at the Speed Hack speed (50 to start with)", "Back to your normal speed")
+			describe("speedhackspeed [16-300]", "How fast Speed Hack moves you, in studs a second (walking is 16)")
+			addcmd("speedhackspeed", {}, function(args)
+				local value = tonumber(args[1])
+				if not value then return notify("Speed Hack", "Give a speed from 16 to 300, like speedhackspeed 80") end
+				featureSettings.speedHackSpeed = math.clamp(math.floor(value + 0.5), 16, 300)
+				saveFeatureSettings()
+				notify("Speed Hack", featureSettings.speedHackSpeed .. " studs a second", 2)
+			end)
+			addSwitchCommands("Auto Clicker", { { "autoclicker" }, { "unautoclicker" }, "toggleautoclicker" },
+				"Clicks for you, as fast as Auto Clicker is set (10 a second to start with)", "Stops the clicking")
+			describe("clickspeed [1-30]", "How many times a second Auto Clicker clicks")
+			addcmd("clickspeed", {}, function(args)
+				local value = tonumber(args[1])
+				if not value then return notify("Auto Clicker", "Give a number from 1 to 30, like clickspeed 15") end
+				featureSettings.clickerCps = math.clamp(math.floor(value + 0.5), 1, 30)
+				saveFeatureSettings()
+				notify("Auto Clicker", featureSettings.clickerCps .. " clicks a second", 2)
+			end)
+			describe("objectesp [word]", "Highlights everything with that word in its name through walls, like objectesp crate (with no word, turns Object ESP on)")
+			addcmd("objectesp", {}, function(args)
+				local word = tostring(getstring(1, args) or "")
+				if word:gsub("%s", "") ~= "" and menuModules.objectEsp then menuModules.objectEsp.addWord(word) end
+				setSwitch("Object ESP", true)
+			end)
+			describe("unobjectesp", "Turns Object ESP off")
+			addcmd("unobjectesp", {}, function() setSwitch("Object ESP", false) end)
 		end
 		-- Kept separate so a problem here can't stop the rest of the menu loading.
 		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
