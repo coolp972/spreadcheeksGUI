@@ -14813,6 +14813,12 @@ if rayfieldLoaded and Rayfield then
 			-- outline, and "Centre" or "Mouse".
 			crosshair = false, crosshairStyle = "Cross", crosshairColor = "Theme", crosshairSize = 12, crosshairThickness = 2,
 			crosshairGap = 4, crosshairOutline = true, crosshairPlace = "Centre",
+			-- Silent Aim: the chance each shot goes to your target (percent), which of the game's ways of
+			-- aiming it takes over (the mouse's Hit and Target, raycasts, the older FindPartOnRay casts,
+			-- and the camera's rays through the cursor), whether only while you hold a tool, and the
+			-- mark on whoever it's on.
+			silentAimChance = 100, silentAimMouse = true, silentAimRaycast = true, silentAimOldRays = true, silentAimCameraRays = false,
+			silentAimToolOnly = false, silentAimMark = true,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14839,6 +14845,7 @@ if rayfieldLoaded and Rayfield then
 			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 }, autoGoBackWait = { 0, 5 },
 			jetpackPower = { 20, 100 }, jetpackFuel = { 1, 10 }, partsMax = { 50, 300 }, partsPower = { 100, 200 },
 			aimWarningRange = { 50, 1000 }, hitRange = { 25, 500 }, crosshairSize = { 4, 40 }, crosshairThickness = { 1, 5 }, crosshairGap = { 0, 16 },
+			silentAimChance = { 5, 100 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15698,8 +15705,9 @@ if rayfieldLoaded and Rayfield then
 		addRememberedToggle(combatTab, "Object ESP", "objectEsp", "objectEsp", "Highlights things on the map by name, like crates or chests, through walls. Right-click to choose what and how", "box", "scan-eye")
 		-- Aimbot sits right under ESP. Rayfield lists rows in the order they're made, so its switch
 		-- is made here; the aim key box, its settings and the aiming itself come from buildAimbot
-		-- further down, once everything they use exists.
-		local aimbotState = { enabled = false, held = false, target = nil }
+		-- further down, once everything they use exists. silent is Silent Aim's: whether it's on, and
+		-- who it's on.
+		local aimbotState = { enabled = false, held = false, target = nil, silent = { on = false, target = nil } }
 		local function aimbotKeyText()
 			local name = featureSettings.aimbotKey
 			return name == "RightClick" and "RMB" or name == "LeftClick" and "LMB" or name
@@ -15729,9 +15737,15 @@ if rayfieldLoaded and Rayfield then
 			-- Lets go of the mouse if it was holding it down for you.
 			if not enabled and triggerBotState.stop then triggerBotState.stop() end
 		end, "mouse-pointer-click", "target")
+		-- Silent Aim sends your shots at whoever the aimbot would pick, without your aim moving.
+		-- Built further down (menuModules.silentAim).
+		addQuickToggle(combatTab, "Silent Aim", "Your shots hit whoever's nearest your cursor inside the aimbot's circle, while your aim stays put. Right-click for settings", function(enabled)
+			if not menuModules.silentAim then return false end
+			return menuModules.silentAim.setEnabled(enabled)
+		end, "locate-fixed", "crosshair")
 		-- Target HUD: who you're aiming at, on screen. Built further down (menuModules.targetHud);
 		-- this remembers on or off.
-		addQuickToggle(combatTab, "Target HUD", "Who the aimbot or trigger bot is on: health, distance and what they hold. Drag it to move it", function(enabled)
+		addQuickToggle(combatTab, "Target HUD", "Who the aimbot, silent aim or trigger bot is on: health, distance and what they hold. Drag it to move it", function(enabled)
 			if featureSettings.targetHud ~= enabled then
 				featureSettings.targetHud = enabled
 				saveFeatureSettings()
@@ -24794,23 +24808,41 @@ if rayfieldLoaded and Rayfield then
 				end
 				return chosen.parts[randomGenerator:NextInteger(1, #chosen.parts)]
 			end
-			-- The part to aim at on the locked target while Random target is on, or the fallback.
-			local function randomPartFor(target, fallback)
+			-- The part to aim at on the locked target while Random target is on, or the fallback. pick
+			-- keeps the part chosen and when to choose again (Silent Aim keeps its own).
+			local function randomPartFor(target, fallback, pick)
+				pick = pick or randomPick
 				local character = target.Character
 				if not character then return fallback end
 				local now = os.clock()
-				local part = randomPick.part
-				if randomPick.target ~= target or now >= randomPick.nextPickAt or not part or not part:IsDescendantOf(character) then
+				local part = pick.part
+				if pick.target ~= target or now >= pick.nextPickAt or not part or not part:IsDescendantOf(character) then
 					part = pickRandomPart(character, featureSettings.aimbotWallCheck)
-					randomPick.target = target
-					randomPick.nextPickAt = now + randomGenerator:NextNumber(0.6, 1.6)
+					pick.target = target
+					pick.nextPickAt = now + randomGenerator:NextNumber(0.6, 1.6)
 				elseif featureSettings.aimbotWallCheck and not canSee(part, character) then
 					-- The part went behind cover, so swap to one still in view.
 					part = pickRandomPart(character, true)
 				end
-				randomPick.part = part
+				pick.part = part
 				return part or fallback
 			end
+			-- Where to aim at a part. With aim prediction on, that's where it'll be after the lead time
+			-- (plus your ping, if chosen) at the speed it's going, for shots that take time to arrive.
+			local function leadPoint(part)
+				local point = part.Position
+				if featureSettings.aimbotPredict then
+					local lead = featureSettings.aimbotPredictTime
+					if featureSettings.aimbotPredictPing then
+						local pingOk, ping = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
+						if pingOk and type(ping) == "number" then lead += math.clamp(ping, 0, 0.5) end
+					end
+					point += part.AssemblyLinearVelocity * lead
+				end
+				return point
+			end
+			-- Silent Aim (built further down) finds its target the same way, by the same settings.
+			state.pick = { targetPart = targetPart, canAimAt = canAimAt, findTarget = findTarget, randomPartFor = randomPartFor, leadPoint = leadPoint }
 
 			local moveMouse = type(mousemoverel) == "function" and mousemoverel or nil
 			-- Mouse moves are whole pixels, so the part of a move that's left over is carried into the
@@ -24869,7 +24901,8 @@ if rayfieldLoaded and Rayfield then
 				local camera = workspace.CurrentCamera
 				local cursor = UserInputService:GetMouseLocation()
 				local radius = featureSettings.aimbotFov
-				fovCircle.Visible = state.enabled and featureSettings.aimbotShowFov
+				-- Silent Aim picks from inside the circle too, so it shows while either is on.
+				fovCircle.Visible = (state.enabled or state.silent.on) and featureSettings.aimbotShowFov
 				if fovCircle.Visible then
 					fovCircle.Position = UDim2.fromOffset(cursor.X, cursor.Y)
 					fovCircle.Size = UDim2.fromOffset(radius * 2, radius * 2)
@@ -24879,7 +24912,8 @@ if rayfieldLoaded and Rayfield then
 					state.target = nil
 					randomPick.target = nil
 					mouseRemainder = Vector2.zero
-					showLocked(false)
+					-- Still solid while Silent Aim has someone.
+					showLocked(state.silent.target ~= nil)
 					return
 				end
 				-- Stay on the same player while the key is held, for as long as they can be aimed at.
@@ -24893,24 +24927,14 @@ if rayfieldLoaded and Rayfield then
 					part = target and targetPart(target)
 				end
 				state.target = part and target or nil
-				showLocked(part ~= nil)
+				showLocked(part ~= nil or state.silent.target ~= nil)
 				if not part then return end
 
 				local aimAt = part
 				if featureSettings.aimbotRandomPart then
 					aimAt = randomPartFor(target, part)
 				end
-				-- Aim prediction: where they'll be after the lead time (plus your ping, if chosen) at the
-				-- speed they're going, for shots that take time to arrive.
-				local aimPoint = aimAt.Position
-				if featureSettings.aimbotPredict then
-					local lead = featureSettings.aimbotPredictTime
-					if featureSettings.aimbotPredictPing then
-						local pingOk, ping = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
-						if pingOk and type(ping) == "number" then lead += math.clamp(ping, 0, 0.5) end
-					end
-					aimPoint += aimAt.AssemblyLinearVelocity * lead
-				end
+				local aimPoint = leadPoint(aimAt)
 
 				-- Smoothness 1 snaps straight on; higher values close the gap more slowly. Scaled by
 				-- frame time so it feels the same at any frame rate.
@@ -30446,10 +30470,13 @@ if rayfieldLoaded and Rayfield then
 			local enabled, shownTarget, lastUpdate, connection = false, nil, 0, nil
 			-- Streamer Mode going on or off draws the name again.
 			table.insert(menuModules.nameListeners, function() shownTarget = nil end)
-			-- Who to show: the aimbot's lock first, then whoever the trigger bot is on.
+			-- Who to show: the aimbot's lock first, then Silent Aim's target, then whoever the trigger
+			-- bot is on.
 			local function currentTarget()
 				local locked = aimbotState.target
 				if locked and locked.Parent then return locked, "LOCKED" end
+				local silentTarget = aimbotState.silent.target
+				if silentTarget and silentTarget.Parent then return silentTarget, "SILENT AIM" end
 				local sighted = triggerBotState.enabled and triggerBotState.target
 				if sighted and sighted.Parent then return sighted, "IN SIGHT" end
 				return nil, nil
@@ -30461,7 +30488,13 @@ if rayfieldLoaded and Rayfield then
 					shownTarget = nil
 					avatar.Image = ""
 					nameLabel.Text = "No target"
-					userLabel.Text = aimbotState.enabled and ("Hold " .. aimbotKeyText() .. " to lock on") or "Turn on the aimbot or trigger bot"
+					if aimbotState.enabled then
+						userLabel.Text = "Hold " .. aimbotKeyText() .. " to lock on"
+					elseif aimbotState.silent.on then
+						userLabel.Text = "Nobody in the circle"
+					else
+						userLabel.Text = "Turn on the aimbot or trigger bot"
+					end
 					healthFill.Size = UDim2.fromScale(0, 1)
 					detailLabel.Text = ""
 					status.Text = ""
@@ -30621,8 +30654,15 @@ if rayfieldLoaded and Rayfield then
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
 			-- (2026.10.28.4 added Quick Search, since taken out again, so it has no notes.)
-			local menuVersion = "2026.10.28.5"
+			local menuVersion = "2026.10.28.6"
 			local releaseNotes = {
+				{
+					title = "Silent Aim", date = "28 October 2026",
+					notes = {
+						{ "Silent Aim", "Combat tab. Your shots hit whoever's nearest your cursor inside the aimbot's circle, while your aim stays where it is. Right-click it for the hit chance and how it works." },
+						{ "Target HUD", "Shows who Silent Aim is on, too." },
+					},
+				},
 				{
 					title = "Combat Tools and Fake Leave", date = "28 October 2026",
 					notes = {
@@ -37128,6 +37168,484 @@ if rayfieldLoaded and Rayfield then
 			card.refresh()
 		end)
 
+		------------------------------------------------------------------------------------------
+		-- Silent Aim (28 October 2026): while it's on, the game's shots go to whoever's nearest your cursor
+		-- inside the aimbot's circle, while your view and cursor stay where they are. Who it picks comes
+		-- from the aimbot (aimbotState.pick): its circle, part, aim prediction, and team, wall and friend
+		-- checks. It works by changing the answers to the game's own questions about where you're aiming:
+		-- the mouse's Hit and Target, raycasts that start near you and head roughly where you're aiming (so
+		-- the game's camera and ground checks are left alone), and, if chosen, the camera's rays through
+		-- the cursor. The menu's own questions are never changed. It needs an executor that can hook
+		-- metamethods; the hooks go in the first time it's switched on, are tested straight away, and stay
+		-- in for the rest of the game, doing nothing while it's off. Its settings card shows what the game
+		-- has asked and what was sent at the target, to see why it isn't working in a game.
+		safeBuild("Silent Aim", function()
+			local localPlayer = Players.LocalPlayer
+			local silent = aimbotState.silent
+			-- What the hooks read. It's kept in the shared environment, so running the script again uses the
+			-- hooks already in rather than adding more. on: switched on. active: on, with a target, and this
+			-- frame's roll of the hit chance came up. busy: Silent Aim's own work is running, so the calls
+			-- are its own. counts: what the game has asked since it was switched on, what was sent at the
+			-- target, and why the rest weren't.
+			local shared = sharedEnv.SpreadCheeksSilentAim or {}
+			sharedEnv.SpreadCheeksSilentAim = shared
+			if shared.loop then pcall(function() shared.loop:Disconnect() end) end
+			shared.loop = nil
+			shared.on = false
+			shared.active = false
+			shared.busy = false
+			shared.testing = nil
+			local function newCounts()
+				return { raycast = 0, oldRays = 0, cameraRays = 0, mouse = 0, sent = 0, mouseSent = 0, far = 0, away = 0, short = 0 }
+			end
+			shared.counts = newCounts()
+			shared.mouse = localPlayer:GetMouse()
+
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previous = playerGui:FindFirstChild("SpreadCheeksSilentAim")
+			if previous then previous:Destroy() end
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksSilentAim"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 998
+			gui.Parent = playerGui
+			-- The mark: a small ring on whoever it's on.
+			local mark = Instance.new("Frame")
+			mark.AnchorPoint = Vector2.new(0.5, 0.5)
+			mark.Size = UDim2.fromOffset(14, 14)
+			mark.BackgroundTransparency = 1
+			mark.Visible = false
+			mark.Parent = gui
+			local markCorner = Instance.new("UICorner")
+			markCorner.CornerRadius = UDim.new(1, 0)
+			markCorner.Parent = mark
+			local markStroke = Instance.new("UIStroke")
+			markStroke.Thickness = 2
+			bindAuxiliaryUiColor(markStroke, "Color", "AccentText")
+			markStroke.Parent = mark
+
+			-- The game's calls it looks at, by method, and the switch each comes under. And the mouse's
+			-- properties it answers, with what it answers them from.
+			local watched = {
+				Raycast = "raycast", Spherecast = "raycast", Blockcast = "raycast",
+				FindPartOnRay = "oldRays", findPartOnRay = "oldRays", FindPartOnRayWithIgnoreList = "oldRays", FindPartOnRayWithWhitelist = "oldRays",
+				ScreenPointToRay = "cameraRays", ViewportPointToRay = "cameraRays",
+			}
+			local mouseKeys = { Hit = "hit", hit = "hit", Target = "part", target = "part", UnitRay = "unitRay" }
+
+			-- Where a ray the game is about to cast should go instead: at the target, if it starts near you
+			-- (your camera or your character) and heads within about 50 degrees of where you're aiming. nil
+			-- leaves it alone. Nothing in the hooks calls a method with a colon, which would change the method
+			-- the game's call goes on to.
+			local function redirect(origin, direction)
+				if typeof(origin) ~= "Vector3" or typeof(direction) ~= "Vector3" then return nil end
+				local counts = shared.counts
+				local length = direction.Magnitude
+				if length < 4 then
+					counts.short += 1
+					return nil
+				end
+				local root = shared.root
+				if (origin - shared.from).Magnitude > 30 and (not root or (origin - root).Magnitude > 30) then
+					counts.far += 1
+					return nil
+				end
+				local look = shared.look
+				if (direction.X * look.X + direction.Y * look.Y + direction.Z * look.Z) / length < 0.64 then
+					counts.away += 1
+					return nil
+				end
+				local toTarget = shared.point - origin
+				local distance = toTarget.Magnitude
+				if distance < 0.01 then return nil end
+				counts.sent += 1
+				-- At least as long as it was, and long enough to reach them.
+				return toTarget.Unit * math.max(length, distance + 5)
+			end
+
+			-- Puts the hooks in, once a game, and checks they really run. Returns whether any work. They go on
+			-- a new folder rather than game, which some executors hand scripts a stand-in for; every instance
+			-- shares one metatable, so that hooks them all.
+			local function installHooks()
+				if shared.hookState == "working" or shared.hookState == "partial" then return true end
+				if shared.hookState == "fake" or shared.hookState == "failed" then return false end
+				if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
+					shared.hookState = "missing"
+					return false
+				end
+				-- newcclosure hides the hooks from the game. Infinite Yield puts in a stand-in when the executor
+				-- has none, which runs the function instead of wrapping it, so only a real one is used.
+				local wrap = function(callback) return callback end
+				if type(newcclosure) == "function" then
+					local wrapOk, wrapped = pcall(newcclosure, function() return true end)
+					if wrapOk and type(wrapped) == "function" then wrap = newcclosure end
+				end
+				local isCaller = type(checkcaller) == "function" and checkcaller or function() return false end
+				-- Whether the executor can tell its own calls from the game's (the menu's calls outside
+				-- Silent Aim's own work can't be told apart otherwise).
+				shared.checkcallerWorks = isCaller() == true
+				local probe = Instance.new("Folder")
+				local meta = nil
+				if type(getrawmetatable) == "function" then pcall(function() meta = getrawmetatable(probe) end) end
+
+				local namecallOk, namecallProblem = pcall(function()
+					local original = meta and rawget(meta, "__namecall")
+					local oldNamecall
+					oldNamecall = hookmetamethod(probe, "__namecall", wrap(function(self, ...)
+						local method = getnamecallmethod()
+						if shared.testing == "namecall" then shared.tested = true end
+						if not shared.on or shared.busy or isCaller() then return oldNamecall(self, ...) end
+						local kind = watched[method]
+						if kind then
+							local counts = shared.counts
+							counts[kind] += 1
+							if shared.active and shared[kind] then
+								if kind == "raycast" then
+									-- Raycast(origin, direction, params); Spherecast(position, radius, direction,
+									-- params); Blockcast(cframe, size, direction, params).
+									local args = table.pack(...)
+									local slot = method == "Raycast" and 2 or 3
+									local origin = args[1]
+									if typeof(origin) == "CFrame" then origin = origin.Position end
+									local aimed = redirect(origin, args[slot])
+									if aimed then
+										args[slot] = aimed
+										return oldNamecall(self, table.unpack(args, 1, args.n))
+									end
+								elseif kind == "oldRays" then
+									local ray = ...
+									if typeof(ray) == "Ray" then
+										local aimed = redirect(ray.Origin, ray.Direction)
+										if aimed then
+											local args = table.pack(...)
+											args[1] = Ray.new(ray.Origin, aimed)
+											return oldNamecall(self, table.unpack(args, 1, args.n))
+										end
+									end
+								else
+									-- Camera rays, only through the cursor (or very near it), which is how games turn
+									-- a click into a shot. ScreenPointToRay counts from under Roblox's top bar.
+									local x, y = ...
+									if type(x) == "number" and type(y) == "number" then
+										if method == "ScreenPointToRay" then y += shared.insetY end
+										local cursor = shared.cursor
+										local dx, dy = x - cursor.X, y - cursor.Y
+										if dx * dx + dy * dy <= 3600 then
+											local ray = oldNamecall(self, ...)
+											if typeof(ray) == "Ray" then
+												local toTarget = shared.point - ray.Origin
+												if toTarget.Magnitude > 0.01 then
+													counts.sent += 1
+													return Ray.new(ray.Origin, toTarget.Unit)
+												end
+											end
+											return ray
+										end
+										counts.away += 1
+									end
+								end
+							end
+						end
+						return oldNamecall(self, ...)
+					end)) or original
+				end)
+				local namecallWorks = false
+				if namecallOk then
+					-- A call on the folder has to go through the hook.
+					shared.tested = false
+					shared.testing = "namecall"
+					pcall(function() probe:GetChildren() end)
+					shared.testing = nil
+					namecallWorks = shared.tested
+				end
+
+				local indexOk, indexProblem = pcall(function()
+					local original = meta and rawget(meta, "__index")
+					local oldIndex
+					-- The mouse the game asks about: the one from GetMouse, or any other with the mouse's class.
+					local function isMouse(object)
+						if rawequal(object, shared.mouse) then return true end
+						local class = oldIndex(object, "ClassName")
+						return class == "PlayerMouse" or class == "Mouse"
+					end
+					oldIndex = hookmetamethod(probe, "__index", wrap(function(self, key)
+						if shared.testing == "index" then shared.tested = true end
+						local which = shared.on and mouseKeys[key]
+						if which and not shared.busy and not isCaller() and isMouse(self) then
+							local counts = shared.counts
+							counts.mouse += 1
+							if shared.active and shared.mouseHit then
+								counts.mouseSent += 1
+								return shared[which]
+							end
+						end
+						return oldIndex(self, key)
+					end)) or original
+				end)
+				local indexWorks = false
+				if indexOk then
+					-- So does reading one of its properties.
+					shared.tested = false
+					shared.testing = "index"
+					pcall(function()
+						local _ = probe.Name
+					end)
+					shared.testing = nil
+					indexWorks = shared.tested
+				end
+				probe:Destroy()
+
+				shared.raycastHooks, shared.mouseHooks = namecallWorks, indexWorks
+				if not namecallOk or not indexOk then
+					shared.hookProblem = tostring(not namecallOk and namecallProblem or indexProblem)
+				end
+				if namecallWorks and indexWorks then
+					shared.hookState = "working"
+				elseif namecallWorks or indexWorks then
+					shared.hookState = "partial"
+				elseif namecallOk or indexOk then
+					shared.hookState = "fake"
+				else
+					shared.hookState = "failed"
+				end
+				return namecallWorks or indexWorks
+			end
+
+			-- Each frame: who it's on, and everything the hooks need, worked out once so they do as little
+			-- as possible.
+			local randomPick = { target = nil, part = nil, nextPickAt = 0 }
+			local rng = Random.new()
+			local function clear()
+				shared.active = false
+				silent.target = nil
+				mark.Visible = false
+			end
+			local function holdingTool()
+				local character = localPlayer.Character
+				return character ~= nil and character:FindFirstChildOfClass("Tool") ~= nil
+			end
+			local function step()
+				local pick = aimbotState.pick
+				local camera = workspace.CurrentCamera
+				if not pick or not camera or (featureSettings.silentAimToolOnly and not holdingTool()) then return clear() end
+				local cursor = UserInputService:GetMouseLocation()
+				-- Whoever the aimbot is locked on, or else whoever's nearest the cursor inside the circle.
+				local target, part = aimbotState.target, nil
+				if target and target.Parent then
+					part = pick.targetPart(target)
+					if part and not pick.canAimAt(part, target.Character) then part = nil end
+				end
+				if not part then
+					target = pick.findTarget(cursor)
+					part = target and pick.targetPart(target)
+				end
+				if not part then return clear() end
+				local aimAt = featureSettings.aimbotRandomPart and pick.randomPartFor(target, part, randomPick) or part
+				local point = pick.leadPoint(aimAt)
+				local from = camera.CFrame.Position
+				local toward = (point - from).Unit
+				local root = localPlayer.Character and getRoot(localPlayer.Character)
+				silent.target = target
+				shared.point, shared.part, shared.from, shared.cursor = point, aimAt, from, cursor
+				shared.root = root and root.Position or nil
+				shared.look = camera:ViewportPointToRay(cursor.X, cursor.Y).Direction
+				shared.insetY = GuiService:GetGuiInset().Y
+				shared.hit = CFrame.lookAt(point, point + toward)
+				shared.unitRay = Ray.new(from, toward)
+				shared.mouseHit = featureSettings.silentAimMouse
+				shared.raycast = featureSettings.silentAimRaycast
+				shared.oldRays = featureSettings.silentAimOldRays
+				shared.cameraRays = featureSettings.silentAimCameraRays
+				-- The hit chance is rolled once a frame, so everything one shot asks gets the same answer.
+				shared.active = featureSettings.silentAimChance >= 100 or rng:NextNumber() * 100 < featureSettings.silentAimChance
+				local screen, onScreen = camera:WorldToViewportPoint(point)
+				mark.Visible = featureSettings.silentAimMark and onScreen
+				if mark.Visible then mark.Position = UDim2.fromOffset(screen.X, screen.Y) end
+			end
+
+			local function executorName()
+				local name = nil
+				pcall(function()
+					if type(identifyexecutor) == "function" then name = identifyexecutor() end
+				end)
+				return (type(name) == "string" and name ~= "") and name or "your executor"
+			end
+			local function capitalised(text)
+				return text:sub(1, 1):upper() .. text:sub(2)
+			end
+			-- What's going on, for its settings card and the silentaimstatus command.
+			local function statusText()
+				local executor = executorName()
+				local state = shared.hookState
+				local lines = {}
+				if state == nil then
+					return "Switch it on, then shoot at someone, and this shows what the game does."
+				elseif state == "missing" then
+					table.insert(lines, capitalised(executor) .. " doesn't have hookmetamethod, which Silent Aim needs, so it can't work there.")
+				elseif state == "fake" then
+					table.insert(lines, capitalised(executor) .. " has hookmetamethod, but it doesn't actually hook anything, so Silent Aim can't work there.")
+				elseif state == "failed" then
+					table.insert(lines, capitalised(executor) .. " wouldn't let Silent Aim hook the game: " .. tostring(shared.hookProblem))
+				elseif state == "partial" then
+					table.insert(lines, "Only some hooks work in " .. executor .. ": raycasts " .. (shared.raycastHooks and "yes" or "no")
+						.. ", mouse " .. (shared.mouseHooks and "yes" or "no") .. ".")
+				else
+					table.insert(lines, "Hooks working in " .. executor .. ".")
+				end
+				if state == "working" and not shared.checkcallerWorks then
+					table.insert(lines, "It can't tell the menu's own calls from the game's, so the numbers include some of the menu's.")
+				end
+				if not silent.on then
+					if state == "working" or state == "partial" then table.insert(lines, "Switched off.") end
+					return table.concat(lines, "\n")
+				end
+				local target = silent.target
+				if target then
+					table.insert(lines, "Aiming at " .. menuModules.nameOf(target) .. ".")
+				else
+					local others, bodies = 0, 0
+					for _, player in ipairs(Players:GetPlayers()) do
+						if player ~= localPlayer then
+							others += 1
+							local character = player.Character
+							if character and character:FindFirstChildOfClass("Humanoid") then bodies += 1 end
+						end
+					end
+					table.insert(lines, "Nobody in the circle right now (" .. bodies .. " of the " .. others
+						.. " others here have a normal body it can aim at). If someone's in it, try Wall check off.")
+				end
+				local counts = shared.counts
+				table.insert(lines, string.format("Since you switched it on, the game asked for %d raycasts, %d old raycasts, %d camera rays and %d mouse hits.",
+					counts.raycast, counts.oldRays, counts.cameraRays, counts.mouse))
+				table.insert(lines, string.format("Sent at your target: %d rays and %d mouse hits. Left alone: %d too far from you, %d pointing away, %d too short.",
+					counts.sent, counts.mouseSent, counts.far, counts.away, counts.short))
+				return table.concat(lines, "\n")
+			end
+
+			local entry = quickToggleByName["Silent Aim"]
+			local function stop()
+				if shared.loop then
+					shared.loop:Disconnect()
+					shared.loop = nil
+				end
+				shared.on = false
+				silent.on = false
+				clear()
+			end
+			-- Why it won't switch on, after the executor's name.
+			local cantReasons = {
+				missing = " doesn't have hookmetamethod, which Silent Aim needs. The Aimbot's Free aim works instead",
+				fake = "'s hookmetamethod doesn't actually hook anything, so Silent Aim can't work. The Aimbot's Free aim works instead",
+				failed = " wouldn't let Silent Aim hook the game. The Aimbot's Free aim works instead",
+			}
+			local function setEnabled(on)
+				stop()
+				if not on then return end
+				if not aimbotState.pick then
+					notify("Silent Aim", "It goes by the Aimbot's settings, and the Aimbot didn't load", 4)
+					return false
+				end
+				local hooked = false
+				local installOk, problem = pcall(function() hooked = installHooks() end)
+				if not installOk then
+					shared.hookState, shared.hookProblem = "failed", tostring(problem)
+				end
+				if not hooked then
+					notify("Silent Aim", capitalised(executorName()) .. (cantReasons[shared.hookState] or cantReasons.failed), 6)
+					return false
+				end
+				shared.counts = newCounts()
+				shared.on = true
+				silent.on = true
+				shared.loop = RunService.RenderStepped:Connect(function()
+					shared.busy = true
+					local stepOk, stepProblem = pcall(step)
+					shared.busy = false
+					if not stepOk then
+						stop()
+						warn("[SpreadCheeksGUI] Silent Aim stopped: " .. tostring(stepProblem))
+						if entry then task.defer(setQuickToggle, entry, false) end
+					end
+				end)
+				notify("Silent Aim", "Your shots go to whoever's nearest your cursor inside the circle", 3)
+			end
+			menuModules.silentAim = { setEnabled = setEnabled, status = statusText }
+
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			local function setting(text, key)
+				return {
+					text = text,
+					get = function() return featureSettings[key] == true end,
+					set = function(on)
+						featureSettings[key] = on
+						saveFeatureSettings()
+					end,
+				}
+			end
+			-- Who it goes for: the Aimbot's settings, here too so they're to hand.
+			card.addSectionLabel("TARGET", "target", "crosshair")
+			card.addChoice({ "Head", "Torso", "Random" }, function()
+				return featureSettings.aimbotRandomPart and "Random" or featureSettings.aimbotPart
+			end, function(option)
+				if option == "Random" then
+					featureSettings.aimbotRandomPart = true
+				else
+					featureSettings.aimbotPart = option
+					featureSettings.aimbotRandomPart = false
+				end
+				saveFeatureSettings()
+			end)
+			card.addSwitchGrid({ setting("Team check", "aimbotTeamCheck"), setting("Wall check", "aimbotWallCheck"), setting("Friend check", "aimbotFriendCheck") })
+			card.addSectionLabel("FOV", "circle-dashed", "circle")
+			card.addSlider({
+				text = "Circle size",
+				icon = { "circle-dashed", "circle" },
+				min = 20, max = 600, step = 10,
+				get = function() return featureSettings.aimbotFov end,
+				set = function(value) featureSettings.aimbotFov = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " px" end,
+			})
+			card.addSwitchGrid({ setting("Show FOV circle", "aimbotShowFov"), setting("Mark who it's on", "silentAimMark") })
+			card.addHint("The target, checks and circle are the Aimbot's too, so changing them here changes them there. Aim prediction is in the Aimbot's settings.")
+
+			card.addSectionLabel("HIT CHANCE", "percent", "target")
+			card.addSlider({
+				text = "Hit chance",
+				icon = { "percent", "dices" },
+				min = 5, max = 100, step = 5,
+				get = function() return featureSettings.silentAimChance end,
+				set = function(value) featureSettings.silentAimChance = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. "%" end,
+			})
+			card.addHint("Below 100%, some shots go where you're really aiming, so it looks less perfect.")
+
+			card.addSectionLabel("WHAT IT TAKES OVER", "mouse-pointer-2", "mouse-pointer")
+			card.addSwitchGrid({
+				setting("Mouse hit", "silentAimMouse"),
+				setting("Raycasts", "silentAimRaycast"),
+				setting("Old raycasts", "silentAimOldRays"),
+				setting("Camera rays", "silentAimCameraRays"),
+			})
+			card.addHint("Games aim their shots in different ways, and these are the ones it can take over. If your shots still go where you aim, switch on Camera rays. If something else in the game acts oddly while it's on, switch off what that game doesn't need.")
+			card.addSwitchGrid({ setting("Only with a tool out", "silentAimToolOnly") }, 1)
+			card.addHint("Leaves everything alone unless you're holding a tool, for games where you click on things. Games with their own guns that aren't tools need this off.")
+
+			-- What's happening, kept up to date twice a second while the card is open.
+			card.addSectionLabel("WHAT'S HAPPENING", "activity", "info")
+			card.addHint(statusText)
+			card.refresh()
+			task.spawn(function()
+				while gui.Parent do
+					task.wait(0.5)
+					if card.expanded then pcall(card.refresh) end
+				end
+			end)
+		end)
+
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
 		-- on now that what they switch has been built.
 		safeBuild("Switches that were on", function()
@@ -37634,6 +38152,25 @@ if rayfieldLoaded and Rayfield then
 				featureSettings.triggerDelay = math.clamp(math.floor(delayMs / 10 + 0.5) * 10, 0, 500)
 				saveFeatureSettings()
 				notify("Trigger Bot", "Reaction time " .. featureSettings.triggerDelay .. " ms", 2)
+			end)
+
+			-- Silent aim.
+			addSwitchCommands("Silent Aim", { { "silentaim" }, { "unsilentaim" }, "togglesilentaim" },
+				"Turns on silent aim: your shots go to whoever's nearest your cursor inside the aimbot's circle", "Turns silent aim off", "silent aim")
+			describe("silentaimchance / hitchance [5-100]", "How often silent aim sends a shot to your target, in percent (100 to start with)")
+			addcmd("silentaimchance", { "hitchance" }, function(args)
+				local chance = tonumber(args[1])
+				if not chance then return notify("Silent Aim", "Give a percent, like silentaimchance 80") end
+				featureSettings.silentAimChance = math.clamp(math.floor(chance / 5 + 0.5) * 5, 5, 100)
+				saveFeatureSettings()
+				notify("Silent Aim", "Hit chance " .. featureSettings.silentAimChance .. "%", 2)
+			end)
+			describe("silentaimstatus", "Shows whether silent aim can hook the game, who it's on, and what the game has asked (also printed in the F9 console)")
+			addcmd("silentaimstatus", {}, function()
+				if not menuModules.silentAim then return notify("Silent Aim", "Silent Aim didn't load") end
+				local text = menuModules.silentAim.status()
+				print("[SpreadCheeksGUI] Silent Aim status:\n" .. text)
+				notify("Silent Aim", text, 12)
 			end)
 
 			-- Cheater detector.
