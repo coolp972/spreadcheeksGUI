@@ -14788,6 +14788,18 @@ if rayfieldLoaded and Rayfield then
 			-- Panic: whether it hides the menu, puts your speed and camera back to normal, and leaves the
 			-- game, and whether it's been given its End key yet (so a key taken off it stays off).
 			panicHide = true, panicReset = true, panicLeave = false, panicKeySet = false,
+			-- Auto Go Back: on or off, and how long it waits after you respawn (seconds).
+			autoGoBack = false, autoGoBackWait = 1,
+			-- The Custom theme's accent and background (hex codes), and the Custom Theme window's position.
+			customAccent = "897AEF", customBackground = "0E1016", themeMakerX = -1, themeMakerY = -1,
+			-- Session Stats: shown, its position, and the all-time totals (time in seconds, distance in
+			-- studs, jumps, deaths and the top speed in studs a second).
+			sessionStats = false, sessionStatsX = -1, sessionStatsY = -1, sessionTotals = {},
+			-- The Jetpack: how fast it lifts you (studs a second), how long a full tank lasts (seconds),
+			-- and whether it never runs out.
+			jetpackPower = 40, jetpackFuel = 4, jetpackInfinite = false,
+			-- The Friends Online window's position.
+			friendsX = -1, friendsY = -1,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14811,7 +14823,8 @@ if rayfieldLoaded and Rayfield then
 			partFloatHeight = { 5, 40 }, partFloatRange = { 30, 400 }, partFountainPower = { 20, 120 }, partFountainCount = { 5, 60 },
 			partBlenderSpeed = { 5, 50 }, partBlenderRange = { 30, 400 }, partShowRange = { 50, 500 },
 			trollScaredDistance = { 6, 40 }, trollLeapHeight = { 1, 8 }, trollLeapPause = { 0.2, 3 }, trollPuppyDistance = { 2.5, 10 },
-			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 },
+			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 }, autoGoBackWait = { 0, 5 },
+			jetpackPower = { 20, 100 }, jetpackFuel = { 1, 10 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -14930,6 +14943,36 @@ if rayfieldLoaded and Rayfield then
 				text = Color3.fromRGB(40, 20, 30), subText = Color3.fromRGB(120, 88, 104), muted = Color3.fromRGB(172, 140, 156),
 			},
 		}
+		-- Custom: a theme of your own, from the accent and background picked in Custom Theme (Interface
+		-- tab). The rest of its colours are worked out from those two the way the themes above go
+		-- together, light text on a dark background and dark on a light one. Its refresh works them
+		-- out again after the two change.
+		do
+			local custom = { name = "Custom" }
+			-- A colour from a hex code like "897AEF", or fallback when it isn't one.
+			local function fromHex(hex, fallback)
+				local digits = tostring(hex or ""):gsub("#", "")
+				if not digits:match("^%x%x%x%x%x%x$") then return fallback end
+				return Color3.fromRGB(tonumber(digits:sub(1, 2), 16), tonumber(digits:sub(3, 4), 16), tonumber(digits:sub(5, 6), 16))
+			end
+			function custom.refresh()
+				local accent = fromHex(featureSettings.customAccent, Color3.fromRGB(137, 122, 239))
+				local background = fromHex(featureSettings.customBackground, Color3.fromRGB(14, 16, 22))
+				local white, black = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
+				local light = 0.2126 * background.R + 0.7152 * background.G + 0.0722 * background.B > 0.5
+				custom.light = light or nil
+				custom.window = background
+				custom.element = light and background:Lerp(white, 0.7) or background:Lerp(white, 0.05)
+				custom.stroke = light and background:Lerp(black, 0.1) or background:Lerp(white, 0.15)
+				custom.accent = accent
+				custom.accentText = light and accent:Lerp(black, 0.25) or accent:Lerp(white, 0.35)
+				custom.text = light and Color3.fromRGB(22, 24, 30) or Color3.fromRGB(240, 242, 246)
+				custom.subText = custom.text:Lerp(background, 0.4)
+				custom.muted = custom.text:Lerp(background, 0.58)
+			end
+			custom.refresh()
+			table.insert(themePalettes, custom)
+		end
 		local function paletteNamed(name)
 			for _, palette in ipairs(themePalettes) do
 				if palette.name == name then return palette end
@@ -15581,6 +15624,11 @@ if rayfieldLoaded and Rayfield then
 			if enabled then markOff("Fly") end
 			execCmd(enabled and "vfly" or "unvfly", Players.LocalPlayer, true)
 		end, "car")
+		-- The Jetpack, built further down (menuModules.jetpack).
+		addQuickToggle(mobilityTab, "Jetpack", "Hold Space to blast upwards, with fuel that refills when you land. Right-click for the power and fuel", function(enabled)
+			if not menuModules.jetpack then return false end
+			return menuModules.jetpack.setEnabled(enabled)
+		end, "rocket", "flame")
 		withIcon(mobilityTab, "CreateSection", { name = "Getting around" }, "footprints")
 		addCommandToggle(mobilityTab, "Noclip", "noclip", "clip", nil, "ghost")
 		addCommandToggle(mobilityTab, "Infinite Jump", "infjump", "uninfjump", nil, "chevrons-up")
@@ -15602,6 +15650,8 @@ if rayfieldLoaded and Rayfield then
 				callback = goBack,
 			}, "undo-2", "history"))
 		end
+		-- Auto Go Back, built further down (menuModules.autoGoBack).
+		addRememberedToggle(mobilityTab, "Auto Go Back", "autoGoBack", "autoGoBack", "After you die, takes you back to where you died once you respawn. Right-click for the wait", "skull", "undo-2")
 		withIcon(mobilityTab, "CreateSection", { name = "Movement Recorder" }, "circle-dot", "video")
 		addQuickToggle(mobilityTab, "Record Movement", "Records where you walk and jump. Switch it off to stop", function(enabled)
 			if not menuModules.recorder then return false end
@@ -15950,9 +16000,10 @@ if rayfieldLoaded and Rayfield then
 				-- character themselves every frame and steering switches change how you walk, so each
 				-- takeover clashes with every other switch here; two pairs of steering switches clash as well.
 				-- Turning one on turns off the ones it clashes with.
-				-- Play Recording (Mobility) moves you too, so it's one of the takeovers.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo", "Scaredy Cat", "Leapfrog", "Puppy" }
-				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk", "Stare" }
+				-- Play Recording (Mobility) moves you too, so it's one of the takeovers, and the Jetpack
+				-- (Mobility too) steers you up, so it's a steering switch.
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo", "Scaredy Cat", "Leapfrog", "Puppy", "Cartwheel Walk" }
+				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk", "Stare", "Penguin Waddle", "Jetpack" }
 				local clashes = {}
 				local function clash(first, second)
 					clashes[first] = clashes[first] or {}
@@ -15974,6 +16025,14 @@ if rayfieldLoaded and Rayfield then
 				clash("Stare", "Moonwalk")
 				clash("Stare", "Crab Walk")
 				clash("Stare", "Zoomies")
+				-- Penguin Waddle tips your whole body each frame, as these turn or hold it.
+				for _, name in ipairs({ "Moonwalk", "Crab Walk", "Ice Skates", "Wall Walk" }) do
+					clash("Penguin Waddle", name)
+				end
+				-- Boo! (a one-off) holds you in front of your target for a moment, so the takeovers stop for it.
+				for _, name in ipairs(takeoverSwitches) do
+					clash("Boo!", name)
+				end
 				-- Fake Lag's stutter unanchors you, which would let a statue wander off.
 				clash("Fake Lag", "Statue")
 				-- Both of these switch Roblox's Animate script off and on as they go.
@@ -17413,7 +17472,7 @@ if rayfieldLoaded and Rayfield then
 				end, "waves")
 				table.insert(respawnHandlers, function() switchOff("Swim in Air") end)
 
-				-- The takeovers (Handstand, Crawl, Superman, Helicopter and Bow Down) hold your character
+				-- The takeovers (Handstand, Crawl, Superman, Helicopter, Bow Down and Cartwheel Walk) hold your character
 				-- themselves: PlatformStand stops the humanoid fighting them, Animate is held so your limbs
 				-- keep still (a mode can loop an animation of its own), and every frame the mode's step says
 				-- where your root goes. takeoverState.yaw is the way you face, for standing back up after.
@@ -17809,6 +17868,74 @@ if rayfieldLoaded and Rayfield then
 				end
 				addQuickToggle(trollTabs.tricks, "Roomba", "Slide about the floor by yourself like a robot vacuum, bouncing off walls. Right-click for the speed", setRoomba, "disc", "circle-dot")
 
+				-- Two more silly walks, made here (after the takeovers they use) so they come at the end of
+				-- Silly walks in Walks & Moves.
+				-- Penguin Waddle: you rock from side to side as you walk, leaning forwards a touch, like a
+				-- penguin. Only while you're walking on the ground; standing still, you stand up straight.
+				do
+					local waddle = { loop = nil, phase = 0 }
+					addQuickToggle(trollTabs.walks, "Penguin Waddle", "Rock from side to side as you walk, like a penguin", function(enabled)
+						if waddle.loop then
+							waddle.loop:Disconnect()
+							waddle.loop = nil
+						end
+						if not enabled then return end
+						claimMovement("Penguin Waddle")
+						waddle.phase = 0
+						waddle.loop = RunService.Heartbeat:Connect(function(deltaTime)
+							local _, humanoid, root = myCharacter()
+							if not humanoid or humanoid.Sit or humanoid.PlatformStand or humanoid.FloorMaterial == Enum.Material.Air then return end
+							local look = flat(root.CFrame.LookVector)
+							if flat(humanoid.MoveDirection).Magnitude < 0.1 or look.Magnitude < 0.1 then
+								waddle.phase = 0
+								return
+							end
+							-- Two and a half waddles a second, tipping 14 degrees each way.
+							waddle.phase = (waddle.phase + deltaTime * math.pi * 5) % (math.pi * 2)
+							root.CFrame = CFrame.lookAt(root.Position, root.Position + look) * CFrame.Angles(-math.rad(5), 0, math.sin(waddle.phase) * math.rad(14))
+							root.AssemblyAngularVelocity = Vector3.zero
+						end)
+					end, "bird", "footprints")
+				end
+
+				-- Cartwheel Walk: you cartwheel along instead of walking, side-on to the way you're going and
+				-- turning over towards it, a full turn every five studs. When you stop, you finish the turn
+				-- you're in and stand up. It holds your character itself, like the takeovers.
+				do
+					local cartwheelMode = { position = nil, turned = 0, forward = Vector3.new(1, 0, 0), standing = 3 }
+					function cartwheelMode.start(humanoid, root)
+						cartwheelMode.position = root.Position
+						cartwheelMode.turned = 0
+						-- Until you move, the way you'd go is to your right.
+						local look = flat(root.CFrame.LookVector)
+						cartwheelMode.forward = look.Magnitude > 0.1 and Vector3.new(-look.Z, 0, look.X).Unit or Vector3.new(1, 0, 0)
+						cartwheelMode.standing = isR15(humanoid) and (humanoid.HipHeight + root.Size.Y / 2) or 3
+					end
+					function cartwheelMode.step(deltaTime, humanoid, root)
+						local move = flat(humanoid.MoveDirection)
+						local full = math.pi * 2
+						if move.Magnitude > 0.05 then
+							local step = move * humanoid.WalkSpeed * 0.9 * deltaTime
+							cartwheelMode.position += step
+							cartwheelMode.forward = move.Unit
+							cartwheelMode.turned = (cartwheelMode.turned + step.Magnitude / 5 * full) % full
+						elseif cartwheelMode.turned > 0 then
+							-- Finishing the turn, back onto your feet.
+							cartwheelMode.turned += math.min(full - cartwheelMode.turned, full * deltaTime / 0.6)
+							if cartwheelMode.turned >= full - 0.001 then cartwheelMode.turned = 0 end
+						end
+						local ground = groundBelow(cartwheelMode.position, { humanoid.Parent })
+						local position = cartwheelMode.position
+						cartwheelMode.position = Vector3.new(position.X, ground and ground + cartwheelMode.standing or position.Y, position.Z)
+						-- Side-on, with the way you're going on your right, tipping over towards it.
+						local forward = cartwheelMode.forward
+						local facing = Vector3.new(forward.Z, 0, -forward.X)
+						takeoverState.yaw = yawOf(facing)
+						return CFrame.lookAt(cartwheelMode.position, cartwheelMode.position + facing) * CFrame.Angles(0, 0, -cartwheelMode.turned)
+					end
+					addQuickToggle(trollTabs.walks, "Cartwheel Walk", "Cartwheel along instead of walking, sideways the way you go", takeoverSwitch("Cartwheel Walk", cartwheelMode), "rotate-3d", "refresh-ccw")
+				end
+
 				-- Moves: one-off tricks. They're kept in trolling.moves for the Favourites bar too, along
 				-- with Stop Animations from further up.
 				withIcon(trollTabs.walks, "CreateSection", { name = "Moves" }, "zap", "sparkles")
@@ -18064,12 +18191,13 @@ if rayfieldLoaded and Rayfield then
 				-- you steer along it, and pull yourself over the top. Climb up into a ceiling and you hang
 				-- under it upside down and crawl along it until it ends or you jump. Letting go of the keys
 				-- on a wall lets go of it, and jumping kicks you off. It's your own character, so everyone
-				-- sees you climb.
+				-- sees you climb. On a wall, as under a ceiling, you go limp (PlatformStand): standing, the
+				-- humanoid holds itself at its height over the floor, which would pull you straight back down.
 				do
 					local wallParams = RaycastParams.new()
 					wallParams.FilterType = Enum.RaycastFilterType.Exclude
 					local climbIds = { r15 = 507765644, r6 = 180436334 }
-					local wall = { track = nil, ceiling = false, ledgeUntil = 0, spaceDown = true, yaw = 0 }
+					local wall = { track = nil, ceiling = false, climbing = false, ledgeUntil = 0, spaceDown = true, yaw = 0 }
 					local function stopClimbAnimation()
 						if wall.track then
 							wall.track:Stop(0.2)
@@ -18090,6 +18218,12 @@ if rayfieldLoaded and Rayfield then
 						root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, wall.yaw, 0)
 						humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
 					end
+					local function leaveWall(humanoid)
+						if not wall.climbing then return end
+						wall.climbing = false
+						humanoid.PlatformStand = false
+						humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+					end
 					-- The ceiling just over you (a surface facing down), or nil.
 					local function ceilingAbove(root)
 						local hit = workspace:Raycast(root.Position, Vector3.new(0, 4.5, 0), wallParams)
@@ -18099,7 +18233,7 @@ if rayfieldLoaded and Rayfield then
 						local character, humanoid, root = myCharacter()
 						if not humanoid then
 							stopClimbAnimation()
-							wall.ceiling = false
+							wall.ceiling, wall.climbing = false, false
 							return
 						end
 						wallParams.FilterDescendantsInstances = { character }
@@ -18109,7 +18243,10 @@ if rayfieldLoaded and Rayfield then
 						local spaceDown = UserInputService:IsKeyDown(Enum.KeyCode.Space) and not UserInputService:GetFocusedTextBox()
 						local jumped = spaceDown and not wall.spaceDown
 						wall.spaceDown = spaceDown
-						if humanoid.Sit then return stopClimbAnimation() end
+						if humanoid.Sit then
+							leaveWall(humanoid)
+							return stopClimbAnimation()
+						end
 						-- Under a ceiling: crawling along it upside down, feet to the ceiling.
 						if wall.ceiling then
 							local above = ceilingAbove(root)
@@ -18127,17 +18264,20 @@ if rayfieldLoaded and Rayfield then
 							climbAnimation(humanoid, move.Magnitude > 0.1 and 1 or 0)
 							return
 						end
-						if humanoid.PlatformStand then return stopClimbAnimation() end
+						-- Something else has you limp (Ragdoll, say): that's left alone.
+						if humanoid.PlatformStand and not wall.climbing then return stopClimbAnimation() end
 						-- A wall the way you're walking, that you're pushing into.
 						local hit = move.Magnitude > 0.1 and workspace:Raycast(root.Position, move.Unit * 2.4, wallParams)
 						local into = hit and math.abs(hit.Normal.Y) < 0.4 and -flat(hit.Normal)
 						if into and into.Magnitude > 0.1 then into = into.Unit else into = nil end
 						local push = into and move:Dot(into) or 0
 						if not into or push < 0.3 or os.clock() < wall.ledgeUntil then
+							leaveWall(humanoid)
 							return stopClimbAnimation()
 						end
-						-- Climbed up into a ceiling: hang under it.
+						-- Climbed up into a ceiling: hang under it (still limp, so the ceiling takes over).
 						if ceilingAbove(root) then
+							wall.climbing = false
 							wall.ceiling = true
 							wall.yaw = yawOf(into)
 							return
@@ -18146,6 +18286,7 @@ if rayfieldLoaded and Rayfield then
 						if not workspace:Raycast(root.Position + Vector3.new(0, 2.5, 0), into * 3, wallParams) then
 							wall.ledgeUntil = os.clock() + 0.35
 							stopClimbAnimation()
+							leaveWall(humanoid)
 							root.AssemblyLinearVelocity = into * 14 + Vector3.new(0, speed + 14, 0)
 							return
 						end
@@ -18153,20 +18294,28 @@ if rayfieldLoaded and Rayfield then
 							-- Kick off the wall, backwards.
 							wall.ledgeUntil = os.clock() + 0.4
 							stopClimbAnimation()
+							leaveWall(humanoid)
 							root.AssemblyLinearVelocity = -into * 30 + Vector3.new(0, 40, 0)
 							return
 						end
 						-- Climbing: up as you push into it, sideways as you steer along it, held against it.
+						-- Gravity's pull for this frame is added back, so you climb at the full speed.
+						wall.climbing = true
+						humanoid.PlatformStand = true
 						local along = move - into * move:Dot(into)
-						root.AssemblyLinearVelocity = Vector3.new(0, push * speed, 0) + along * speed * 0.7 + into * 4
+						root.AssemblyLinearVelocity = Vector3.new(0, push * speed + workspace.Gravity * frame, 0) + along * speed * 0.7 + into * 4
+						root.AssemblyAngularVelocity = Vector3.zero
 						root.CFrame = CFrame.lookAt(root.Position, root.Position + into)
 						climbAnimation(humanoid, math.max(push, 0.4))
 					end
 					addQuickToggle(trollTabs.walks, "Wall Walk", "Walk into a wall to climb straight up it like Spider-Man, and crawl along ceilings upside down. Jump to let go", function(enabled)
 						stopClimbAnimation()
 						local _, humanoid, root = myCharacter()
-						if humanoid then leaveCeiling(humanoid, root) end
-						wall.ceiling = false
+						if humanoid then
+							leaveCeiling(humanoid, root)
+							leaveWall(humanoid)
+						end
+						wall.ceiling, wall.climbing = false, false
 						if not enabled then return afterControls("SpreadCheeksWallWalk", nil) end
 						claimMovement("Wall Walk")
 						-- A key already held when it's switched on doesn't count as a jump.
@@ -18792,6 +18941,69 @@ if rayfieldLoaded and Rayfield then
 					nextStop()
 				end
 				addQuickToggle(trollTabs.players, "Server Tour", "Glide over to everyone in the server, one at a time, and wave at each of them", setServerTour, "map", "plane")
+
+				-- Boo!: you pop up right in front of your target, face to face and roaring (on R15), for a
+				-- moment, then vanish back to where you were. A one-off with a key box, like the moves. You
+				-- pass through everything while you're there, so you never bump them, and anything else
+				-- holding your character (Orbit, Handstand and so on) stops for it.
+				do
+					local boo = { running = false }
+					function trolling.boo(player)
+						if boo.running or flipping then return end
+						local target = player or targetFor("Boo!")
+						if not target then return end
+						local character, humanoid, root = myCharacter()
+						if not humanoid then return notify("Boo!", "Your character isn't ready yet.") end
+						local theirRoot = target.Character and getRoot(target.Character)
+						if not theirRoot then return notify("Boo!", menuModules.nameOf(target) .. " has no character right now.") end
+						claimMovement("Boo!")
+						boo.running = true
+						task.spawn(function()
+							local home = root.CFrame
+							local collisions = {}
+							for _, part in ipairs(character:GetDescendants()) do
+								if part:IsA("BasePart") then collisions[part] = part.CanCollide end
+							end
+							-- The humanoid keeps turning collisions back on, so they're switched off every frame.
+							local noclip = RunService.Stepped:Connect(function()
+								for part in pairs(collisions) do
+									if part.Parent then part.CanCollide = false end
+								end
+							end)
+							local emote = emoteByName["Shrek Roar"]
+							local id = emote and (isR15(humanoid) and emote.r15 or emote.r6)
+							local track = id and playOnMe("rbxassetid://" .. tostring(id)) or nil
+							if track then track.Looped = false end
+							local started = os.clock()
+							while os.clock() - started < 1.5 and root.Parent and theirRoot.Parent do
+								-- Right in front of their face, whichever way they turn.
+								local look = flat(theirRoot.CFrame.LookVector)
+								look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+								local spot = theirRoot.Position + look * 2.6
+								root.CFrame = CFrame.lookAt(spot, Vector3.new(theirRoot.Position.X, spot.Y, theirRoot.Position.Z))
+								root.AssemblyLinearVelocity = Vector3.zero
+								RunService.Heartbeat:Wait()
+							end
+							if track then pcall(function() track:Stop(0.2) end) end
+							noclip:Disconnect()
+							for part, canCollide in pairs(collisions) do
+								if part.Parent then part.CanCollide = canCollide end
+							end
+							-- And gone, back where you were.
+							if root.Parent then
+								root.CFrame = home
+								root.AssemblyLinearVelocity = Vector3.zero
+							end
+							boo.running = false
+						end)
+					end
+					local function booTarget() trolling.boo() end
+					addQuickAction("Boo!", booTarget, withIcon(trollTabs.players, "CreateButton", {
+						name = "Boo!",
+						description = "Pop up right in front of your target for a second, roaring, then vanish back to where you were",
+						callback = booTarget,
+					}, "ghost", "zap"))
+				end
 
 				-- Walking after someone, for Weeping Angel and Bodyguard: round walls and up stairs by
 				-- Roblox's pathfinding (jumping where the path needs it), straight there while a path is
@@ -21698,6 +21910,8 @@ if rayfieldLoaded and Rayfield then
 			end
 			if menuModules.logs then menuModules.logs.setShown(enabled) end
 		end, "scroll-text", "message-square")
+		-- Session Stats, built further down (menuModules.sessionStats).
+		addRememberedToggle(interfaceTab, "Session Stats", "sessionStats", "sessionStats", "How long you've played, how far you've gone, your jumps, deaths and more, this session and all time. Drag it to move it", "bar-chart-3", "activity")
 		-- The Favourites bar, built further down too (menuModules.favouritesBar).
 		addQuickToggle(interfaceTab, "Favourites Bar", "Your starred switches on screen. Hover over a switch and click its star; right-click here for moves", function(enabled)
 			if featureSettings.favouritesBar ~= enabled then
@@ -23187,6 +23401,14 @@ if rayfieldLoaded and Rayfield then
 				if menuModules.whatsNew then menuModules.whatsNew.open() end
 			end,
 		}, "gift", "sparkles")
+		-- Custom Theme's window, built further down (menuModules.themeMaker).
+		withIcon(interfaceTab, "CreateButton", {
+			name = "Custom Theme",
+			description = "Pick your own colours for the menu, an accent and a background",
+			callback = function()
+				if menuModules.themeMaker then menuModules.themeMaker.open() end
+			end,
+		}, "palette", "paintbrush")
 		local logoBounceGui, logoBounceConnection
 		local logoBounceToggle
 		local function stopLogoBounce()
@@ -25991,6 +26213,15 @@ if rayfieldLoaded and Rayfield then
 			description = "Move loose, unanchored parts to the selected player's character",
 			callback = function() runForSelectedPlayer("tpunanchored") end,
 		}, "magnet")
+		-- Friends Online, built further down (menuModules.friendsOnline).
+		withIcon(playerTab, "CreateSection", { name = "Friends" }, "users-round")
+		withIcon(playerTab, "CreateButton", {
+			name = "Friends Online",
+			description = "See which of your friends are online and what they're playing, and join them",
+			callback = function()
+				if menuModules.friendsOnline then menuModules.friendsOnline.open() end
+			end,
+		}, "users-round", "user-plus")
 
 		window:CreateSection({ name = "TOOLS" })
 		local runTab = withIcon(window, "CreateTab", { name = "Command Bar" }, "square-terminal", "terminal-square")
@@ -27785,6 +28016,8 @@ if rayfieldLoaded and Rayfield then
 				timeOfDay = true, fpsBoost = true, muteMusic = true, muteOthers = true, streamerMode = true, healthWarnings = true,
 				objectEsp = true, trollPanel = true, trollPanelX = true, trollPanelY = true, ctrlClickSelect = true,
 				aimTrainerX = true, aimTrainerY = true, aimTrainerBests = true, weather = true, graphicsPresets = true, panicKeySet = true,
+				autoGoBack = true, themeMakerX = true, themeMakerY = true, sessionStats = true, sessionStatsX = true, sessionStatsY = true,
+				sessionTotals = true, friendsX = true, friendsY = true,
 			}
 			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
 			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
@@ -27861,7 +28094,9 @@ if rayfieldLoaded and Rayfield then
 					QEfly = featureSettings.flyUpDownKeys
 					saveFeatureSettings()
 					local palette = paletteNamed(featureSettings.theme)
-					if palette and palette ~= currentPalette then
+					-- The config may have brought the Custom theme's colours, so they're worked out again.
+					if palette and palette.refresh then palette.refresh() end
+					if palette and (palette ~= currentPalette or palette.refresh) then
 						applyTheme(palette)
 						pcall(function() themeDropdown:Set(palette.name, true) end)
 					end
@@ -30253,8 +30488,26 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			local menuVersion = "2026.10.28.1"
+			local menuVersion = "2026.10.28.3"
 			local releaseNotes = {
+				{
+					title = "Jetpacks and Friends", date = "28 October 2026",
+					notes = {
+						{ "Jetpack", "Mobility tab. Hold Space to blast upwards, with fuel that refills when you land." },
+						{ "Friends Online", "Players tab. See which of your friends are online and what they're playing, and join them." },
+					},
+				},
+				{
+					title = "Waddles, Cartwheels and Colours", date = "28 October 2026",
+					notes = {
+						{ "Penguin Waddle", "Walks & Moves. Rock from side to side as you walk, like a penguin." },
+						{ "Cartwheel Walk", "Walks & Moves. Cartwheel along instead of walking." },
+						{ "Boo!", "Player Pranks and the Troll Panel. Pop up right in front of your target for a second, roaring, then vanish back to where you were." },
+						{ "Auto Go Back", "Mobility tab. After you die, you're taken back to where you died once you respawn." },
+						{ "Custom Theme", "Interface tab. Pick your own accent and background colours for the menu." },
+						{ "Session Stats", "Interface tab. Time played, distance, jumps, deaths, top speed and players seen, this session and all time." },
+					},
+				},
 				{
 					title = "Pranks, Practice and Panic", date = "28 October 2026",
 					notes = {
@@ -33830,7 +34083,11 @@ if rayfieldLoaded and Rayfield then
 			for _, name in ipairs(prankNames) do
 				if quickToggleByName[name] then prankSwitch(prankCells, name) end
 			end
-			local stopCells = grid(pranks, 1)
+			-- Boo! is a one-off on them, next to the button that stops the rest.
+			local stopCells = grid(pranks, 2)
+			button(stopCells, "Boo!", function(player)
+				if trolling.boo then trolling.boo(player) end
+			end)
 			button(stopCells, "Stop all pranks", function()
 				for _, name in ipairs(prankNames) do
 					local entry = quickToggleByName[name]
@@ -33975,7 +34232,7 @@ if rayfieldLoaded and Rayfield then
 			local bodyCells = grid(moves, 3)
 			for _, name in ipairs({
 				"Emote", "Fake Dead", "Ragdoll", "Fake Lag", "Vibrate", "Spin", "Statue", "Handstand", "Crawl", "Helicopter",
-				"Superman", "Marble Ball", "Roomba", "Moonwalk", "Zoomies", "Bunny Hop", "Wall Walk",
+				"Superman", "Marble Ball", "Roomba", "Moonwalk", "Zoomies", "Bunny Hop", "Wall Walk", "Penguin Waddle", "Cartwheel Walk",
 			}) do
 				if quickToggleByName[name] then selfSwitch(bodyCells, name) end
 			end
@@ -34922,6 +35179,7 @@ if rayfieldLoaded and Rayfield then
 				"Join Alerts", "Mention Alerts", "Performance Stats", "Radar", "Logs", "Favourites Bar", "Health & Ping Warnings",
 				"Streamer Mode", "Clean Screen", "Ctrl+Click Select", "Troll Panel", "Spectate Bar", "Zoom Key", "Time of Day",
 				"FPS Boost", "Mute Game Music", "Mute Player Sounds", "First Person", "Weather", "Graphics Presets", "Emote Wheel",
+				"Session Stats",
 			}) do
 				leaveAlone[name] = true
 			end
@@ -35109,6 +35367,1007 @@ if rayfieldLoaded and Rayfield then
 			card.addHint("Every switch that changes you, the world or your screen goes off, and the aimbot. Your safety switches, alerts, Streamer Mode and the menu's windows stay as they are. Switch Panic off (its key again) to put it all back.")
 			card.addHint("Hide the menu hides it, its windows and Infinite Yield's bar. Back to normal puts your speed, jump, gravity and camera back, and stops spectating, flying and emotes. Leave the game leaves straight after, so nothing is put back.")
 			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Waddles, Cartwheels and Colours (28 October 2026). Each part is built on its own; their
+		-- switches and buttons are made with the others further up.
+
+		------------------------------------------------------------------------------------------
+		-- Auto Go Back: once you respawn after dying, you're taken back to where you died (flown there
+		-- with Safe Teleport on), after the wait in its settings card. Not when you died over the void,
+		-- where there's no floor to stand on, and not twice running to the same spot, so somewhere that
+		-- kills you can't keep you dying.
+		safeBuild("Auto Go Back", function()
+			local localPlayer = Players.LocalPlayer
+			-- diedAt: where you died, waiting for the respawn. lastSpot and lastTime: where it last took
+			-- you back to, and when.
+			local state = { on = false, diedAt = nil, serial = 0, lastSpot = nil, lastTime = 0 }
+			local floorParams = RaycastParams.new()
+			floorParams.FilterType = Enum.RaycastFilterType.Exclude
+			local function watch(character)
+				local humanoid = character:WaitForChild("Humanoid", 10)
+				if not humanoid then return end
+				humanoid.Died:Connect(function()
+					local root = getRoot(character)
+					state.diedAt = root and root.Position or nil
+				end)
+			end
+			local function comeBack(character, spot)
+				state.serial += 1
+				local serial = state.serial
+				local root = character:WaitForChild("HumanoidRootPart", 10)
+				if not root then return end
+				task.wait(featureSettings.autoGoBackWait)
+				if state.serial ~= serial or not state.on or localPlayer.Character ~= character or not root.Parent then return end
+				-- The floor under where you died, to stand on.
+				floorParams.FilterDescendantsInstances = { character }
+				local floor = workspace:Raycast(spot + Vector3.new(0, 4, 0), Vector3.new(0, -200, 0), floorParams)
+				if not floor then return notify("Auto Go Back", "You died over the void, so you're staying where you respawned.", 3) end
+				-- Died again right where it last took you: staying put, so it can't keep killing you.
+				if state.lastSpot and (state.lastSpot - floor.Position).Magnitude < 10 and os.clock() - state.lastTime < 30 then
+					state.lastSpot = nil
+					return notify("Auto Go Back", "You died there again, so you're staying where you respawned this time.", 4)
+				end
+				state.lastSpot, state.lastTime = floor.Position, os.clock()
+				if menuModules.teleportTo then
+					menuModules.teleportTo(CFrame.new(floor.Position + Vector3.new(0, 3.5, 0)) * root.CFrame.Rotation, true)
+					notify("Auto Go Back", "Back where you died", 2)
+				end
+			end
+			if localPlayer.Character then task.spawn(watch, localPlayer.Character) end
+			localPlayer.CharacterAdded:Connect(function(character)
+				task.spawn(watch, character)
+				local spot = state.diedAt
+				state.diedAt = nil
+				if state.on and spot then task.spawn(comeBack, character, spot) end
+			end)
+			menuModules.autoGoBack = {
+				setEnabled = function(on) state.on = on end,
+			}
+
+			local entry = quickToggleByName["Auto Go Back"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("WAIT", "timer")
+			card.addSlider({
+				text = "Wait after respawning",
+				icon = { "timer", "clock" },
+				min = 0, max = 5, step = 0.5,
+				get = function() return featureSettings.autoGoBackWait end,
+				set = function(value) featureSettings.autoGoBackWait = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return string.format("%.1f s", value) end,
+			})
+			card.addHint("With Safe Teleport on, it flies you there. It won't take you back over the void, or to the same spot twice running, so somewhere that kills you can't keep you dying.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Custom Theme: a window to pick the Custom theme's two colours, an accent and a background, from
+		-- swatches or as hex codes. Picking one switches the menu to the Custom theme and shows it at once;
+		-- the rest of its colours are worked out from those two (see "Custom:" with the other themes).
+		-- Random picks a pair for you, and Reset goes back to SpreadCheeks' own.
+		safeBuild("Custom Theme", function()
+			local custom = paletteNamed("Custom")
+			if not custom then return end
+			local makerWindow = menuModules.makeWindow({
+				name = "SpreadCheeksThemeMaker", title = "Custom Theme", icons = { "palette", "paintbrush" },
+				width = 330, height = 380, xKey = "themeMakerX", yKey = "themeMakerY",
+				defaultPosition = function(screen, size) return screen.X - size.X - 24, (screen.Y - size.Y) / 2 end,
+			})
+			local accents = {
+				"897AEF", "6366F1", "3B82F6", "0EA5E9", "06B6D4", "14B8A6", "22C55E", "84CC16",
+				"EAB308", "F59E0B", "F97316", "EF4444", "F43F5E", "EC4899", "D946EF", "A855F7",
+			}
+			-- Eight dark backgrounds, then four light ones, which make it a light theme.
+			local backgrounds = {
+				"0E1016", "101012", "0B1220", "0F172A", "111827", "1A1025", "10180F", "1C1410",
+				"F3F3F6", "F0F5F9", "FBF2F6", "FFFFFF",
+			}
+			-- A hex code in capitals without its #, from "#ff4d6d", "FF4D6D" or "f4d"; nil if it isn't one.
+			local function cleanHex(text)
+				local digits = tostring(text or ""):gsub("[#%s]", ""):upper()
+				if digits:match("^%x%x%x%x%x%x$") then return digits end
+				if digits:match("^%x%x%x$") then return (digits:gsub("(%x)", "%1%1")) end
+				return nil
+			end
+			local refreshers = {}
+			local function refreshAll()
+				for _, refresh in ipairs(refreshers) do refresh() end
+			end
+			-- The menu in the Custom theme, with the colours as they are now.
+			local function use()
+				custom.refresh()
+				saveFeatureSettings()
+				applyTheme(custom)
+				pcall(function() themeDropdown:Set("Custom", true) end)
+				refreshAll()
+			end
+
+			local list = Instance.new("Frame")
+			list.Size = UDim2.fromScale(1, 1)
+			list.BackgroundTransparency = 1
+			list.Parent = makerWindow.body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 6)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 12)
+			listPadding.PaddingRight = UDim.new(0, 12)
+			listPadding.PaddingTop = UDim.new(0, 4)
+			listPadding.Parent = list
+			local order = 0
+			local function nextOrder()
+				order += 1
+				return order
+			end
+			local function heading(text)
+				local label = Instance.new("TextLabel")
+				label.LayoutOrder = nextOrder()
+				label.Size = UDim2.new(1, 0, 0, 14)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.GothamBold
+				label.Text = text
+				label.TextSize = 10
+				label.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(label, "TextColor3", "Muted")
+				label.Parent = list
+			end
+			-- A grid of colours for featureSettings[key]; the one in use has a ring round it.
+			local function swatches(colors, columns, key)
+				local grid = Instance.new("Frame")
+				grid.LayoutOrder = nextOrder()
+				grid.Size = UDim2.fromScale(1, 0)
+				grid.AutomaticSize = Enum.AutomaticSize.Y
+				grid.BackgroundTransparency = 1
+				grid.Parent = list
+				local gridLayout = Instance.new("UIGridLayout")
+				gridLayout.CellSize = UDim2.new(1 / columns, -6 * (columns - 1) / columns, 0, 26)
+				gridLayout.CellPadding = UDim2.fromOffset(6, 6)
+				gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				gridLayout.Parent = grid
+				local rings = {}
+				for index, hex in ipairs(colors) do
+					local swatch = Instance.new("TextButton")
+					swatch.LayoutOrder = index
+					swatch.AutoButtonColor = false
+					swatch.BorderSizePixel = 0
+					swatch.Text = ""
+					swatch.BackgroundColor3 = Color3.fromHex(hex)
+					swatch.Parent = grid
+					local corner = Instance.new("UICorner")
+					corner.CornerRadius = UDim.new(0, 7)
+					corner.Parent = swatch
+					local ring = Instance.new("UIStroke")
+					ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+					ring.Thickness = 2
+					ring.Parent = swatch
+					rings[hex] = ring
+					swatch.Activated:Connect(function()
+						featureSettings[key] = hex
+						use()
+					end)
+				end
+				table.insert(refreshers, function()
+					local current = cleanHex(featureSettings[key])
+					for hex, ring in pairs(rings) do
+						ring.Enabled = hex == current
+						ring.Color = auxiliaryUiTheme.Text
+					end
+				end)
+			end
+			-- The colour in use and its hex code, which can be typed over.
+			local function hexBox(key)
+				local row = Instance.new("Frame")
+				row.LayoutOrder = nextOrder()
+				row.Size = UDim2.new(1, 0, 0, 28)
+				row.BackgroundTransparency = 1
+				row.Parent = list
+				local preview = Instance.new("Frame")
+				preview.Size = UDim2.fromOffset(28, 28)
+				preview.BorderSizePixel = 0
+				preview.Parent = row
+				local previewCorner = Instance.new("UICorner")
+				previewCorner.CornerRadius = UDim.new(0, 7)
+				previewCorner.Parent = preview
+				local previewStroke = Instance.new("UIStroke")
+				previewStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				bindAuxiliaryUiColor(previewStroke, "Color", "Stroke")
+				previewStroke.Parent = preview
+				local box = Instance.new("TextBox")
+				box.Position = UDim2.fromOffset(36, 0)
+				box.Size = UDim2.new(1, -36, 1, 0)
+				box.BorderSizePixel = 0
+				box.ClearTextOnFocus = false
+				box.Font = Enum.Font.GothamMedium
+				box.PlaceholderText = "Hex code, like #FF4D6D"
+				box.TextSize = 13
+				box.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(box, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(box, "TextColor3", "Text")
+				bindAuxiliaryUiColor(box, "PlaceholderColor3", "Muted")
+				box.Parent = row
+				local boxCorner = Instance.new("UICorner")
+				boxCorner.CornerRadius = UDim.new(0, 7)
+				boxCorner.Parent = box
+				local boxPadding = Instance.new("UIPadding")
+				boxPadding.PaddingLeft = UDim.new(0, 8)
+				boxPadding.Parent = box
+				box.FocusLost:Connect(function()
+					local hex = cleanHex(box.Text)
+					if hex then
+						featureSettings[key] = hex
+						use()
+					else
+						refreshAll()
+					end
+				end)
+				table.insert(refreshers, function()
+					local hex = cleanHex(featureSettings[key]) or "000000"
+					if not box:IsFocused() then box.Text = "#" .. hex end
+					preview.BackgroundColor3 = Color3.fromHex(hex)
+				end)
+			end
+			local function pairButton(texts, runs)
+				local row = Instance.new("Frame")
+				row.LayoutOrder = nextOrder()
+				row.Size = UDim2.new(1, 0, 0, 28)
+				row.BackgroundTransparency = 1
+				row.Parent = list
+				local rowLayout = Instance.new("UIListLayout")
+				rowLayout.FillDirection = Enum.FillDirection.Horizontal
+				rowLayout.Padding = UDim.new(0, 6)
+				rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				rowLayout.Parent = row
+				for index, text in ipairs(texts) do
+					local button = Instance.new("TextButton")
+					button.LayoutOrder = index
+					button.Size = UDim2.new(1 / #texts, -6 * (#texts - 1) / #texts, 1, 0)
+					button.AutoButtonColor = false
+					button.BorderSizePixel = 0
+					button.Font = Enum.Font.GothamMedium
+					button.Text = text
+					button.TextSize = 12
+					bindAuxiliaryUiColor(button, "BackgroundColor3", "Inset")
+					bindAuxiliaryUiColor(button, "TextColor3", "Text")
+					button.Parent = row
+					local corner = Instance.new("UICorner")
+					corner.CornerRadius = UDim.new(0, 8)
+					corner.Parent = button
+					button.Activated:Connect(runs[index])
+				end
+			end
+
+			heading("ACCENT")
+			swatches(accents, 8, "customAccent")
+			hexBox("customAccent")
+			heading("BACKGROUND")
+			swatches(backgrounds, 6, "customBackground")
+			hexBox("customBackground")
+			pairButton({ "Random", "Reset" }, {
+				function()
+					-- A bright accent, on a dark background three times in four and a light one otherwise.
+					local accent = Color3.fromHSV(math.random(), 0.55 + math.random() * 0.3, 0.85 + math.random() * 0.15)
+					local background = math.random() < 0.25
+						and Color3.fromHSV(math.random(), 0.03 + math.random() * 0.05, 0.95 + math.random() * 0.04)
+						or Color3.fromHSV(math.random(), 0.25 + math.random() * 0.3, 0.06 + math.random() * 0.06)
+					featureSettings.customAccent = accent:ToHex():upper()
+					featureSettings.customBackground = background:ToHex():upper()
+					use()
+				end,
+				function()
+					featureSettings.customAccent, featureSettings.customBackground = "897AEF", "0E1016"
+					use()
+				end,
+			})
+			local hint = Instance.new("TextLabel")
+			hint.LayoutOrder = nextOrder()
+			hint.Size = UDim2.fromScale(1, 0)
+			hint.AutomaticSize = Enum.AutomaticSize.Y
+			hint.BackgroundTransparency = 1
+			hint.Font = Enum.Font.Gotham
+			hint.Text = "Picking a colour switches the menu to the Custom theme. A light background makes it a light theme. The Theme list in the menu's settings switches back any time."
+			hint.TextSize = 11
+			hint.TextWrapped = true
+			hint.TextXAlignment = Enum.TextXAlignment.Left
+			bindAuxiliaryUiColor(hint, "TextColor3", "SubText")
+			hint.Parent = list
+
+			-- Done, in the header, closes it.
+			local done = Instance.new("TextButton")
+			done.AutomaticSize = Enum.AutomaticSize.X
+			done.Size = UDim2.fromOffset(0, 22)
+			done.AutoButtonColor = false
+			done.BorderSizePixel = 0
+			done.Font = Enum.Font.GothamBold
+			done.Text = "Done"
+			done.TextSize = 11
+			done.ZIndex = 3
+			bindAuxiliaryUiColor(done, "BackgroundColor3", "Accent")
+			bindAuxiliaryUiColor(done, "TextColor3", "OnAccent")
+			local doneCorner = Instance.new("UICorner")
+			doneCorner.CornerRadius = UDim.new(0, 7)
+			doneCorner.Parent = done
+			local donePadding = Instance.new("UIPadding")
+			donePadding.PaddingLeft = UDim.new(0, 10)
+			donePadding.PaddingRight = UDim.new(0, 10)
+			donePadding.Parent = done
+			done.Parent = makerWindow.headerRight
+			done.Activated:Connect(function() makerWindow.setShown(false) end)
+
+			table.insert(auxiliaryUiThemeListeners, function() pcall(refreshAll) end)
+			refreshAll()
+			menuModules.themeMaker = {
+				open = function()
+					refreshAll()
+					makerWindow.setShown(true)
+				end,
+				-- For the themecolours command: the accent, and the background if given. False if either
+				-- isn't a hex code.
+				setColours = function(accentText, backgroundText)
+					local accent = cleanHex(accentText)
+					local background = backgroundText ~= nil and cleanHex(backgroundText) or nil
+					if not accent or (backgroundText ~= nil and not background) then return false end
+					featureSettings.customAccent = accent
+					if background then featureSettings.customBackground = background end
+					use()
+					return true
+				end,
+			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Session Stats: how long you've played, how far you've gone, your jumps, deaths and top speed,
+		-- and how many other players you've seen, for this session and all time (all but the players).
+		-- It counts whether or not its window is shown, and the all-time totals are saved every 20
+		-- seconds. A teleport (50 studs in a tenth of a second) doesn't count as distance.
+		safeBuild("Session Stats", function()
+			local localPlayer = Players.LocalPlayer
+			local started = os.clock()
+			local session = { distance = 0, jumps = 0, deaths = 0, topSpeed = 0, seen = {}, seenCount = 0 }
+			-- The all-time totals from before this session.
+			local before = {}
+			local saved = type(featureSettings.sessionTotals) == "table" and featureSettings.sessionTotals or {}
+			for _, key in ipairs({ "time", "distance", "jumps", "deaths", "topSpeed" }) do
+				before[key] = tonumber(saved[key]) or 0
+			end
+			local function allTime()
+				return {
+					time = before.time + (os.clock() - started),
+					distance = before.distance + session.distance,
+					jumps = before.jumps + session.jumps,
+					deaths = before.deaths + session.deaths,
+					topSpeed = math.max(before.topSpeed, session.topSpeed),
+				}
+			end
+			local function saveTotals()
+				local totals = allTime()
+				totals.time = math.floor(totals.time)
+				totals.distance = math.floor(totals.distance)
+				totals.topSpeed = math.floor(totals.topSpeed * 10) / 10
+				featureSettings.sessionTotals = totals
+				saveFeatureSettings()
+			end
+
+			-- Distance and top speed, ten times a second, and the totals saved every 20 seconds.
+			local last = { root = nil, position = nil }
+			task.spawn(function()
+				local sinceSave = 0
+				while true do
+					local waited = task.wait(0.1)
+					local character = localPlayer.Character
+					local root = character and getRoot(character)
+					if root then
+						local position = root.Position
+						if root == last.root and last.position then
+							local moved = position - last.position
+							if moved.Magnitude < 50 then
+								session.distance += moved.Magnitude
+								local speed = Vector3.new(moved.X, 0, moved.Z).Magnitude / math.max(waited, 0.05)
+								if speed > session.topSpeed then session.topSpeed = speed end
+							end
+						end
+						last.root, last.position = root, position
+					end
+					sinceSave += waited
+					if sinceSave >= 20 then
+						sinceSave = 0
+						pcall(saveTotals)
+					end
+				end
+			end)
+			-- Jumps and deaths, on each character.
+			local function watch(character)
+				local humanoid = character:WaitForChild("Humanoid", 10)
+				if not humanoid then return end
+				humanoid.StateChanged:Connect(function(_, state)
+					if state == Enum.HumanoidStateType.Jumping then session.jumps += 1 end
+				end)
+				humanoid.Died:Connect(function() session.deaths += 1 end)
+			end
+			if localPlayer.Character then task.spawn(watch, localPlayer.Character) end
+			localPlayer.CharacterAdded:Connect(watch)
+			-- Everyone else who's been in the server with you, counted once each.
+			local function see(player)
+				if player ~= localPlayer and not session.seen[player.UserId] then
+					session.seen[player.UserId] = true
+					session.seenCount += 1
+				end
+			end
+			for _, player in ipairs(Players:GetPlayers()) do see(player) end
+			Players.PlayerAdded:Connect(see)
+
+			local function duration(seconds)
+				seconds = math.floor(seconds)
+				local hours, minutes = math.floor(seconds / 3600), math.floor(seconds % 3600 / 60)
+				if hours > 0 then return string.format("%dh %02dm", hours, minutes) end
+				return string.format("%dm %02ds", minutes, seconds % 60)
+			end
+			-- 1,234, then 12.3k and 1.23M for big numbers.
+			local function number(value)
+				value = math.floor(value + 0.5)
+				if value >= 1000000 then return string.format("%.2fM", value / 1000000) end
+				if value >= 10000 then return string.format("%.1fk", value / 1000) end
+				local text = tostring(value):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+				return (text:gsub("^,", ""))
+			end
+			local rows = {
+				{ name = "Time played", icons = { "timer", "clock" },
+					now = function() return duration(os.clock() - started) end, ever = function(all) return duration(all.time) end },
+				{ name = "Distance (studs)", icons = { "footprints" },
+					now = function() return number(session.distance) end, ever = function(all) return number(all.distance) end },
+				{ name = "Jumps", icons = { "chevrons-up" },
+					now = function() return number(session.jumps) end, ever = function(all) return number(all.jumps) end },
+				{ name = "Deaths", icons = { "skull" },
+					now = function() return number(session.deaths) end, ever = function(all) return number(all.deaths) end },
+				{ name = "Top speed (studs/s)", icons = { "gauge" },
+					now = function() return number(session.topSpeed) end, ever = function(all) return number(all.topSpeed) end },
+				{ name = "Players seen", icons = { "users-round" },
+					now = function() return number(session.seenCount) end, ever = function() return "–" end },
+			}
+
+			local statsWindow = menuModules.makeWindow({
+				name = "SpreadCheeksSessionStats", title = "Session Stats", icons = { "bar-chart-3", "activity" },
+				width = 310, height = 262, xKey = "sessionStatsX", yKey = "sessionStatsY",
+				defaultPosition = function(screen, size) return 24, (screen.Y - size.Y) / 2 end,
+			})
+			local function text(parent, value, x, width, font, role, alignment)
+				local label = Instance.new("TextLabel")
+				label.Position = UDim2.new(x, 0, 0, 0)
+				label.Size = UDim2.new(width, 0, 1, 0)
+				label.BackgroundTransparency = 1
+				label.Font = font
+				label.Text = value
+				label.TextSize = font == Enum.Font.GothamBold and 10 or 12
+				label.TextXAlignment = alignment
+				label.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(label, "TextColor3", role)
+				label.Parent = parent
+				return label
+			end
+			local holder = Instance.new("Frame")
+			holder.Position = UDim2.fromOffset(12, 0)
+			holder.Size = UDim2.new(1, -24, 1, -6)
+			holder.BackgroundTransparency = 1
+			holder.Parent = statsWindow.body
+			local holderLayout = Instance.new("UIListLayout")
+			holderLayout.Padding = UDim.new(0, 2)
+			holderLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			holderLayout.Parent = holder
+			local captions = Instance.new("Frame")
+			captions.LayoutOrder = 0
+			captions.Size = UDim2.new(1, 0, 0, 18)
+			captions.BackgroundTransparency = 1
+			captions.Parent = holder
+			text(captions, "THIS SESSION", 0.48, 0.26, Enum.Font.GothamBold, "Muted", Enum.TextXAlignment.Right)
+			text(captions, "ALL TIME", 0.74, 0.26, Enum.Font.GothamBold, "Muted", Enum.TextXAlignment.Right)
+			for index, row in ipairs(rows) do
+				local line = Instance.new("Frame")
+				line.LayoutOrder = index
+				line.Size = UDim2.new(1, 0, 0, 30)
+				line.BorderSizePixel = 0
+				bindAuxiliaryUiColor(line, "BackgroundColor3", "Inset")
+				line.BackgroundTransparency = index % 2 == 1 and 0 or 1
+				line.Parent = holder
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 7)
+				corner.Parent = line
+				local icon = Instance.new("ImageLabel")
+				icon.AnchorPoint = Vector2.new(0, 0.5)
+				icon.Position = UDim2.new(0, 8, 0.5, 0)
+				icon.Size = UDim2.fromOffset(14, 14)
+				icon.BackgroundTransparency = 1
+				local image = menuIcons.get(table.unpack(row.icons))
+				if image then menuIcons.apply(icon, image) end
+				icon.Visible = image ~= nil
+				bindAuxiliaryUiColor(icon, "ImageColor3", "AccentText")
+				icon.Parent = line
+				local name = text(line, row.name, 0, 0.5, Enum.Font.Gotham, "SubText", Enum.TextXAlignment.Left)
+				name.Position = UDim2.fromOffset(28, 0)
+				name.Size = UDim2.new(0.5, -28, 1, 0)
+				row.nowLabel = text(line, "", 0.48, 0.26, Enum.Font.GothamMedium, "Text", Enum.TextXAlignment.Right)
+				row.everLabel = text(line, "", 0.74, 0.24, Enum.Font.GothamMedium, "Text", Enum.TextXAlignment.Right)
+			end
+			local function refresh()
+				local all = allTime()
+				for _, row in ipairs(rows) do
+					row.nowLabel.Text = row.now()
+					row.everLabel.Text = row.ever(all)
+				end
+			end
+			statsWindow.onShown = refresh
+			task.spawn(function()
+				while true do
+					task.wait(0.5)
+					if statsWindow.isShown() then pcall(refresh) end
+				end
+			end)
+
+			local function resetTotals()
+				for key in pairs(before) do before[key] = 0 end
+				pcall(saveTotals)
+				pcall(refresh)
+				notify("Session Stats", "All-time totals start again from this session", 2.5)
+			end
+			-- Reset, in the header: a second click within three seconds starts the all-time totals again.
+			local reset = Instance.new("TextButton")
+			reset.AutomaticSize = Enum.AutomaticSize.X
+			reset.Size = UDim2.fromOffset(0, 22)
+			reset.AutoButtonColor = false
+			reset.BorderSizePixel = 0
+			reset.Font = Enum.Font.GothamBold
+			reset.Text = "Reset"
+			reset.TextSize = 11
+			reset.ZIndex = 3
+			bindAuxiliaryUiColor(reset, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(reset, "TextColor3", "SubText")
+			local resetCorner = Instance.new("UICorner")
+			resetCorner.CornerRadius = UDim.new(0, 7)
+			resetCorner.Parent = reset
+			local resetPadding = Instance.new("UIPadding")
+			resetPadding.PaddingLeft = UDim.new(0, 10)
+			resetPadding.PaddingRight = UDim.new(0, 10)
+			resetPadding.Parent = reset
+			reset.Parent = statsWindow.headerRight
+			local resetState = { armedAt = 0 }
+			reset.Activated:Connect(function()
+				if os.clock() - resetState.armedAt < 3 then
+					resetState.armedAt = 0
+					reset.Text = "Reset"
+					return resetTotals()
+				end
+				resetState.armedAt = os.clock()
+				reset.Text = "Sure?"
+				task.delay(3, function()
+					if os.clock() - resetState.armedAt >= 3 then reset.Text = "Reset" end
+				end)
+			end)
+
+			menuModules.sessionStats = {
+				setEnabled = function(on)
+					if on then pcall(refresh) end
+					statsWindow.setShown(on)
+				end,
+				resetTotals = resetTotals,
+			}
+		end)
+
+		------------------------------------------------------------------------------------------
+		------------------------------------------------------------------------------------------
+		-- Jetpacks and Friends (28 October 2026). Each part is built on its own; their switches and
+		-- buttons are made with the others further up.
+
+		------------------------------------------------------------------------------------------
+		-- Jetpack: while it's on, holding jump (Space, or the jump button) blasts you upwards, steering
+		-- as normal, until the fuel runs out; it fills back up while you're on the ground. How fast it
+		-- lifts you, how long a tank lasts and whether it never runs out are in its settings card. The
+		-- fuel gauge sits at the bottom of your screen, and flames come out of your back (only you see
+		-- those: things a script adds to your character stay on your screen). It waits while Infinite
+		-- Yield's fly is on.
+		safeBuild("Jetpack", function()
+			local localPlayer = Players.LocalPlayer
+			local jet = { on = false, fuel = 1, thrusting = false, flames = {}, character = nil }
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previous = playerGui:FindFirstChild("SpreadCheeksJetpack")
+			if previous then previous:Destroy() end
+			-- The fuel gauge, just above the middle of the bottom of the screen.
+			local gauge = Instance.new("ScreenGui")
+			gauge.Name = "SpreadCheeksJetpack"
+			gauge.ResetOnSpawn = false
+			gauge.IgnoreGuiInset = true
+			gauge.DisplayOrder = 998
+			gauge.Enabled = false
+			gauge.Parent = playerGui
+			local track = Instance.new("Frame")
+			track.AnchorPoint = Vector2.new(0.5, 1)
+			track.Position = UDim2.new(0.5, 0, 1, -96)
+			track.Size = UDim2.fromOffset(180, 8)
+			track.BorderSizePixel = 0
+			bindAuxiliaryUiColor(track, "BackgroundColor3", "Inset")
+			track.Parent = gauge
+			local trackCorner = Instance.new("UICorner")
+			trackCorner.CornerRadius = UDim.new(1, 0)
+			trackCorner.Parent = track
+			local trackStroke = Instance.new("UIStroke")
+			trackStroke.Transparency = 0.3
+			bindAuxiliaryUiColor(trackStroke, "Color", "Stroke")
+			trackStroke.Parent = track
+			local fill = Instance.new("Frame")
+			fill.Size = UDim2.fromScale(1, 1)
+			fill.BorderSizePixel = 0
+			fill.Parent = track
+			local fillCorner = Instance.new("UICorner")
+			fillCorner.CornerRadius = UDim.new(1, 0)
+			fillCorner.Parent = fill
+			local caption = Instance.new("TextLabel")
+			caption.AnchorPoint = Vector2.new(0.5, 1)
+			caption.Position = UDim2.new(0.5, 0, 0, -3)
+			caption.Size = UDim2.fromOffset(180, 12)
+			caption.BackgroundTransparency = 1
+			caption.Font = Enum.Font.GothamBold
+			caption.Text = "JETPACK"
+			caption.TextSize = 10
+			bindAuxiliaryUiColor(caption, "TextColor3", "SubText")
+			caption.Parent = track
+
+			-- Two flames on your back, made on each character the first time they're needed.
+			local function makeFlames(character)
+				for _, attachment in ipairs(jet.flames) do attachment:Destroy() end
+				table.clear(jet.flames)
+				jet.character = character
+				local torso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+				if not torso then return end
+				for _, side in ipairs({ -0.45, 0.45 }) do
+					local attachment = Instance.new("Attachment")
+					attachment.Name = "SpreadCheeksJetFlame"
+					attachment.Position = Vector3.new(side, -0.6, 0.55)
+					local emitter = Instance.new("ParticleEmitter")
+					emitter.Name = "SpreadCheeksJetFlame"
+					emitter.Texture = "rbxasset://textures/particles/fire_main.dds"
+					emitter.EmissionDirection = Enum.NormalId.Bottom
+					emitter.Speed = NumberRange.new(12, 16)
+					emitter.Lifetime = NumberRange.new(0.25, 0.35)
+					emitter.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.7), NumberSequenceKeypoint.new(1, 0) })
+					emitter.Color = ColorSequence.new(Color3.fromRGB(255, 200, 80), Color3.fromRGB(255, 70, 20))
+					emitter.LightEmission = 1
+					emitter.Rate = 80
+					emitter.SpreadAngle = Vector2.new(8, 8)
+					emitter.Enabled = false
+					emitter.Parent = attachment
+					attachment.Parent = torso
+					table.insert(jet.flames, attachment)
+				end
+			end
+			local function setFlames(on)
+				for _, attachment in ipairs(jet.flames) do
+					local emitter = attachment.Parent and attachment:FindFirstChildOfClass("ParticleEmitter")
+					if emitter then emitter.Enabled = on end
+				end
+			end
+			-- Every frame, straight after Roblox's controls have read your keys, so humanoid.Jump is
+			-- whether you're holding jump right now (keys, pad or touch).
+			local function step(deltaTime)
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				local root = character and getRoot(character)
+				if not humanoid or not root or humanoid.Health <= 0 then return end
+				local tank, infinite = featureSettings.jetpackFuel, featureSettings.jetpackInfinite
+				local thrusting = humanoid.Jump and not FLYING and not humanoid.Sit and not humanoid.PlatformStand
+					and (infinite or jet.fuel > 0)
+				if thrusting then
+					local velocity = root.AssemblyLinearVelocity
+					local climb = featureSettings.jetpackPower
+					-- Against gravity and then some, up to the climb speed (anything faster is left alone).
+					if velocity.Y < climb then
+						root.AssemblyLinearVelocity = Vector3.new(velocity.X, math.min(velocity.Y + (workspace.Gravity + climb * 2) * deltaTime, climb), velocity.Z)
+					end
+					if not infinite then jet.fuel = math.max(0, jet.fuel - deltaTime / tank) end
+				elseif humanoid.FloorMaterial ~= Enum.Material.Air then
+					-- Filling back up on the ground, a little faster than it burns.
+					jet.fuel = math.min(1, jet.fuel + deltaTime / (tank * 0.6))
+				end
+				if thrusting ~= jet.thrusting then
+					jet.thrusting = thrusting
+					if thrusting and (jet.character ~= character or not jet.flames[1] or not jet.flames[1].Parent) then makeFlames(character) end
+					setFlames(thrusting)
+				end
+				local level = infinite and 1 or jet.fuel
+				fill.Size = UDim2.fromScale(level, 1)
+				fill.BackgroundColor3 = level < 0.25 and Color3.fromRGB(239, 68, 68) or auxiliaryUiTheme.Accent
+			end
+			local function setEnabled(on)
+				jet.on = on
+				pcall(function() RunService:UnbindFromRenderStep("SpreadCheeksJetpack") end)
+				jet.thrusting = false
+				setFlames(false)
+				gauge.Enabled = on
+				if not on then return end
+				if menuModules.claimMovement then menuModules.claimMovement("Jetpack") end
+				-- Infinite Yield's fly would fight it, so that goes off.
+				local fly = quickToggleByName["Fly"]
+				if fly and fly.state then setQuickToggle(fly, false) end
+				RunService:BindToRenderStep("SpreadCheeksJetpack", Enum.RenderPriority.Input.Value + 1, step)
+			end
+			menuModules.jetpack = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Jetpack"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("THRUST", "rocket", "flame")
+			card.addSlider({
+				text = "Power",
+				icon = { "rocket", "chevrons-up" },
+				min = 20, max = 100, step = 5,
+				get = function() return featureSettings.jetpackPower end,
+				set = function(value) featureSettings.jetpackPower = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs/s" end,
+			})
+			card.addSectionLabel("FUEL", "fuel", "gauge")
+			card.addSlider({
+				text = "A full tank lasts",
+				icon = { "fuel", "timer" },
+				min = 1, max = 10, step = 0.5,
+				get = function() return featureSettings.jetpackFuel end,
+				set = function(value) featureSettings.jetpackFuel = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return string.format("%.1f s", value) end,
+			})
+			card.addSwitchGrid({
+				{
+					text = "Never runs out",
+					get = function() return featureSettings.jetpackInfinite == true end,
+					set = function(on)
+						featureSettings.jetpackInfinite = on
+						saveFeatureSettings()
+					end,
+				},
+			}, 1)
+			card.addHint("Hold jump to fly up and steer as you normally would. It fills back up while you're on the ground. Some games hurt you for long falls, so No Fall Damage helps.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Friends Online: a window listing your friends who are online now, playing first, with what
+		-- they're playing and a Join button when Roblox says which server they're in (their privacy
+		-- settings decide that). Here means they're in this server with you. It refreshes every 30
+		-- seconds while it's open, and with Refresh. Streamer Mode hides their names and pictures. Roblox
+		-- only tells games about friends playing something else if they let everyone see they're online,
+		-- so a note under the count says why someone may be missing.
+		safeBuild("Friends Online", function()
+			local localPlayer = Players.LocalPlayer
+			local friendsWindow = menuModules.makeWindow({
+				name = "SpreadCheeksFriends", title = "Friends Online", icons = { "users-round", "user-plus" },
+				width = 330, height = 400, xKey = "friendsX", yKey = "friendsY",
+				defaultPosition = function(screen, size) return (screen.X - size.X) / 2, (screen.Y - size.Y) / 2 end,
+			})
+			local state = { loading = false, lastLoad = 0 }
+			-- Game names by place ID, once looked up.
+			local placeNames = {}
+			-- What Roblox says each friend is doing, by its LocationType.
+			local doing = {
+				[0] = "On the Roblox website", [1] = "In a game", [2] = "On the Roblox website", [3] = "In Roblox Studio",
+				[4] = "In a game", [5] = "In a game", [6] = "In Roblox Studio",
+			}
+
+			local status = Instance.new("TextLabel")
+			status.Position = UDim2.fromOffset(14, 2)
+			status.Size = UDim2.new(1, -28, 0, 18)
+			status.BackgroundTransparency = 1
+			status.Font = Enum.Font.Gotham
+			status.TextSize = 12
+			status.TextXAlignment = Enum.TextXAlignment.Left
+			status.TextTruncate = Enum.TextTruncate.AtEnd
+			bindAuxiliaryUiColor(status, "TextColor3", "SubText")
+			status.Parent = friendsWindow.body
+			local note = Instance.new("TextLabel")
+			note.Position = UDim2.fromOffset(14, 21)
+			note.Size = UDim2.new(1, -28, 0, 40)
+			note.BackgroundTransparency = 1
+			note.Font = Enum.Font.Gotham
+			note.Text = "Friends playing a different game only show here if they let everyone see when they're online. Roblox hides the rest until they're in this game."
+			note.TextSize = 11
+			note.TextWrapped = true
+			note.TextXAlignment = Enum.TextXAlignment.Left
+			note.TextYAlignment = Enum.TextYAlignment.Top
+			bindAuxiliaryUiColor(note, "TextColor3", "Muted")
+			note.Parent = friendsWindow.body
+			local list = Instance.new("ScrollingFrame")
+			list.Position = UDim2.fromOffset(6, 64)
+			list.Size = UDim2.new(1, -12, 1, -70)
+			list.BackgroundTransparency = 1
+			list.BorderSizePixel = 0
+			list.ScrollBarThickness = 3
+			list.ScrollingDirection = Enum.ScrollingDirection.Y
+			list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			list.CanvasSize = UDim2.new()
+			bindAuxiliaryUiColor(list, "ScrollBarImageColor3", "Muted")
+			list.Parent = friendsWindow.body
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Padding = UDim.new(0, 6)
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Parent = list
+			local listPadding = Instance.new("UIPadding")
+			listPadding.PaddingLeft = UDim.new(0, 8)
+			listPadding.PaddingRight = UDim.new(0, 10)
+			listPadding.PaddingBottom = UDim.new(0, 8)
+			listPadding.Parent = list
+
+			local function headerButton(text, order, role, textRole)
+				local button = Instance.new("TextButton")
+				button.LayoutOrder = order
+				button.AutomaticSize = Enum.AutomaticSize.X
+				button.Size = UDim2.fromOffset(0, 22)
+				button.AutoButtonColor = false
+				button.BorderSizePixel = 0
+				button.Font = Enum.Font.GothamBold
+				button.Text = text
+				button.TextSize = 11
+				button.ZIndex = 3
+				bindAuxiliaryUiColor(button, "BackgroundColor3", role)
+				bindAuxiliaryUiColor(button, "TextColor3", textRole)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 7)
+				corner.Parent = button
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 10)
+				padding.PaddingRight = UDim.new(0, 10)
+				padding.Parent = button
+				button.Parent = friendsWindow.headerRight
+				return button
+			end
+			local refreshButton = headerButton("Refresh", 1, "Inset", "SubText")
+			local doneButton = headerButton("Done", 2, "Accent", "OnAccent")
+
+			local function join(friend, name)
+				local joined, problem = pcall(function()
+					TeleportService:TeleportToPlaceInstance(friend.PlaceId, friend.GameId, localPlayer)
+				end)
+				if joined then
+					notify("Friends Online", "Joining " .. name .. "...", 3)
+				else
+					notify("Friends Online", "Couldn't join " .. name .. ": " .. tostring(problem), 4)
+				end
+			end
+			local function row(friend, index, hidden)
+				local name = hidden and ("Friend " .. index) or tostring(friend.DisplayName or friend.UserName or "Friend")
+				local card = Instance.new("Frame")
+				card.LayoutOrder = index
+				card.Size = UDim2.new(1, 0, 0, 52)
+				card.BorderSizePixel = 0
+				card.BackgroundColor3 = auxiliaryUiTheme.Card
+				card.Parent = list
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 10)
+				corner.Parent = card
+				local avatar = Instance.new("ImageLabel")
+				avatar.Position = UDim2.fromOffset(8, 6)
+				avatar.Size = UDim2.fromOffset(40, 40)
+				avatar.BorderSizePixel = 0
+				avatar.BackgroundColor3 = auxiliaryUiTheme.Inset
+				avatar.Image = hidden and "" or ("rbxthumb://type=AvatarHeadShot&id=" .. tostring(friend.VisitorId) .. "&w=150&h=150")
+				avatar.Parent = card
+				local avatarCorner = Instance.new("UICorner")
+				avatarCorner.CornerRadius = UDim.new(1, 0)
+				avatarCorner.Parent = avatar
+				local nameLabel = Instance.new("TextLabel")
+				nameLabel.Position = UDim2.fromOffset(56, 8)
+				nameLabel.Size = UDim2.new(1, -124, 0, 18)
+				nameLabel.BackgroundTransparency = 1
+				nameLabel.Font = Enum.Font.GothamBold
+				nameLabel.Text = name .. ((hidden or not friend.UserName) and "" or ("  @" .. friend.UserName))
+				nameLabel.TextSize = 13
+				nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+				nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+				nameLabel.TextColor3 = auxiliaryUiTheme.Text
+				nameLabel.Parent = card
+				local doingLabel = Instance.new("TextLabel")
+				doingLabel.Position = UDim2.fromOffset(56, 27)
+				doingLabel.Size = UDim2.new(1, -124, 0, 16)
+				doingLabel.BackgroundTransparency = 1
+				doingLabel.Font = Enum.Font.Gotham
+				doingLabel.Text = doing[friend.LocationType] or "Online"
+				doingLabel.TextSize = 11
+				doingLabel.TextXAlignment = Enum.TextXAlignment.Left
+				doingLabel.TextTruncate = Enum.TextTruncate.AtEnd
+				doingLabel.TextColor3 = auxiliaryUiTheme.SubText
+				doingLabel.Parent = card
+				-- The game's name, looked up once per game.
+				local placeId = tonumber(friend.PlaceId)
+				if placeId and placeId > 0 then
+					local function showPlace(placeName)
+						if doingLabel.Parent then doingLabel.Text = "Playing " .. placeName end
+					end
+					if placeNames[placeId] then
+						showPlace(placeNames[placeId])
+					else
+						task.spawn(function()
+							local found, info = pcall(function() return MarketplaceService:GetProductInfo(placeId) end)
+							placeNames[placeId] = found and type(info) == "table" and tostring(info.Name or "a game") or "a game"
+							showPlace(placeNames[placeId])
+						end)
+					end
+				end
+				-- Join when Roblox says which server they're in; Here when it's this one.
+				local jobId = type(friend.GameId) == "string" and friend.GameId ~= "" and friend.GameId or nil
+				if placeId and placeId > 0 and jobId then
+					local here = jobId == game.JobId
+					local button = Instance.new("TextButton")
+					button.AnchorPoint = Vector2.new(1, 0.5)
+					button.Position = UDim2.new(1, -10, 0.5, 0)
+					button.Size = UDim2.fromOffset(56, 26)
+					button.AutoButtonColor = false
+					button.BorderSizePixel = 0
+					button.Font = Enum.Font.GothamBold
+					button.Text = here and "Here" or "Join"
+					button.TextSize = 12
+					button.BackgroundColor3 = here and auxiliaryUiTheme.Inset or auxiliaryUiTheme.Accent
+					button.TextColor3 = here and auxiliaryUiTheme.SubText or auxiliaryUiTheme.OnAccent
+					button.Parent = card
+					local buttonCorner = Instance.new("UICorner")
+					buttonCorner.CornerRadius = UDim.new(0, 8)
+					buttonCorner.Parent = button
+					if not here then
+						button.Activated:Connect(function() join(friend, name) end)
+					end
+				end
+			end
+			-- In a game you can join first, then other games, then everyone else; by name within those.
+			local function rank(friend)
+				if tonumber(friend.PlaceId) and type(friend.GameId) == "string" and friend.GameId ~= "" then return 0 end
+				local location = friend.LocationType
+				if location == 1 or location == 4 or location == 5 then return 1 end
+				return 2
+			end
+			local function render(friends)
+				for _, child in ipairs(list:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+				table.sort(friends, function(left, right)
+					local leftRank, rightRank = rank(left), rank(right)
+					if leftRank ~= rightRank then return leftRank < rightRank end
+					return tostring(left.DisplayName or ""):lower() < tostring(right.DisplayName or ""):lower()
+				end)
+				local hidden = featureSettings.streamerMode == true
+				for index, friend in ipairs(friends) do
+					row(friend, index, hidden)
+				end
+				local count = #friends
+				status.Text = count == 0 and "No friends to show right now."
+					or (count .. (count == 1 and " friend" or " friends") .. " online")
+			end
+			local function load()
+				if state.loading then return end
+				state.loading = true
+				status.Text = "Loading your friends..."
+				task.spawn(function()
+					local found, friends = pcall(function() return localPlayer:GetFriendsOnline(200) end)
+					state.loading = false
+					state.lastLoad = os.clock()
+					if not found or type(friends) ~= "table" then
+						status.Text = "Couldn't get your friends right now. Try Refresh in a moment."
+						return
+					end
+					render(friends)
+				end)
+			end
+			refreshButton.Activated:Connect(load)
+			doneButton.Activated:Connect(function() friendsWindow.setShown(false) end)
+			-- Every 30 seconds while it's open.
+			task.spawn(function()
+				while true do
+					task.wait(5)
+					if friendsWindow.isShown() and os.clock() - state.lastLoad > 30 then load() end
+				end
+			end)
+			menuModules.friendsOnline = {
+				open = function()
+					friendsWindow.setShown(true)
+					load()
+				end,
+			}
 		end)
 
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
@@ -36111,6 +37370,14 @@ if rayfieldLoaded and Rayfield then
 				if chooseTarget(args, speaker, "Puppy") then setSwitch("Puppy", true) end
 			end)
 			addcmd("unpuppy", {}, function() setSwitch("Puppy", false) end)
+			describe("boo [player]", "Pop up right in front of a player for a second, roaring, then vanish back to where you were (your Player Pranks target if you leave the name out)")
+			addcmd("boo", {}, function(args, speaker)
+				if chooseTarget(args, speaker, "Boo!") and trolling.boo then trolling.boo() end
+			end)
+			addSwitchCommands("Penguin Waddle", { { "penguinwaddle", "waddle" }, { "unpenguinwaddle", "unwaddle" }, "togglewaddle" },
+				"Rock from side to side as you walk, like a penguin", "Back to walking normally")
+			addSwitchCommands("Cartwheel Walk", { { "cartwheelwalk" }, { "uncartwheelwalk" }, "togglecartwheelwalk" },
+				"Cartwheel along instead of walking", "Back on your feet, walking normally")
 			describe("parttornado / tpparts [player]", "Pull every loose part you can over to a player and swirl it round them (your Player Pranks target if you leave the name out)")
 			describe("unparttornado / untpparts", "Drops the parts where they are")
 			addcmd("parttornado", { "tpparts" }, function(args, speaker)
@@ -36401,6 +37668,35 @@ if rayfieldLoaded and Rayfield then
 			addcmd("panic", {}, function() setSwitch("Panic", true) end)
 			describe("unpanic", "Puts back everything Panic switched off")
 			addcmd("unpanic", {}, function() setSwitch("Panic", false) end)
+
+			-- Waddles, Cartwheels and Colours.
+			addSwitchCommands("Auto Go Back", { { "autogoback" }, { "unautogoback" }, "toggleautogoback" },
+				"After you die, takes you back to where you died once you respawn", "Stays where you respawn")
+			addSwitchCommands("Session Stats", { { "sessionstats" }, { "unsessionstats" }, "togglesessionstats" },
+				"Shows your session stats: time played, distance, jumps, deaths and more", "Hides your session stats")
+			describe("resetstats", "Starts Session Stats' all-time totals again from this session")
+			addcmd("resetstats", {}, function()
+				if menuModules.sessionStats then menuModules.sessionStats.resetTotals() end
+			end)
+			describe("customtheme", "Opens Custom Theme, to pick your own colours for the menu")
+			addcmd("customtheme", {}, function()
+				if menuModules.themeMaker then menuModules.themeMaker.open() end
+			end)
+			describe("themecolours / themecolors [accent] [background]", "Sets the Custom theme's colours as hex codes and switches to it, like themecolours ff4d6d 101012")
+			addcmd("themecolours", { "themecolors" }, function(args)
+				if not menuModules.themeMaker then return end
+				if not menuModules.themeMaker.setColours(args[1], args[2]) then
+					notify("Custom Theme", "Give one or two hex codes, the accent then the background, like themecolours ff4d6d 101012")
+				end
+			end)
+
+			-- Jetpacks and Friends.
+			addSwitchCommands("Jetpack", { { "jetpack" }, { "unjetpack" }, "togglejetpack" },
+				"Puts the Jetpack on: hold Space to blast upwards", "Takes the Jetpack off")
+			describe("friendsonline / friendslist", "Shows which of your friends are online and what they're playing, to join them")
+			addcmd("friendsonline", { "friendslist" }, function()
+				if menuModules.friendsOnline then menuModules.friendsOnline.open() end
+			end)
 		end
 		-- Kept separate so a problem here can't stop the rest of the menu loading.
 		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
