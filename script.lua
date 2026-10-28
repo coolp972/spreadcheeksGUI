@@ -14803,6 +14803,16 @@ if rayfieldLoaded and Rayfield then
 			jetpackPower = 40, jetpackFuel = 4, jetpackInfinite = false,
 			-- The Friends Online window's position.
 			friendsX = -1, friendsY = -1,
+			-- Aim Warning: on or off, how straight at you counts ("Strict", "Normal" or "Loose"), how
+			-- far (studs), the ping, and whether teammates are left out.
+			aimWarning = false, aimWarningAngle = "Normal", aimWarningRange = 300, aimWarningSound = true, aimWarningTeam = true,
+			-- Hit Markers: on or off, the numbers, the sound, whether only damage after your own attacks
+			-- counts, and how near (studs).
+			hitMarkers = false, hitNumbers = true, hitSound = true, hitOnlyYours = true, hitRange = 300,
+			-- Custom Crosshair: on or off, its style, colour, size, thickness and gap (pixels), the
+			-- outline, and "Centre" or "Mouse".
+			crosshair = false, crosshairStyle = "Cross", crosshairColor = "Theme", crosshairSize = 12, crosshairThickness = 2,
+			crosshairGap = 4, crosshairOutline = true, crosshairPlace = "Centre",
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14828,6 +14838,7 @@ if rayfieldLoaded and Rayfield then
 			trollScaredDistance = { 6, 40 }, trollLeapHeight = { 1, 8 }, trollLeapPause = { 0.2, 3 }, trollPuppyDistance = { 2.5, 10 },
 			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 }, autoGoBackWait = { 0, 5 },
 			jetpackPower = { 20, 100 }, jetpackFuel = { 1, 10 }, partsMax = { 50, 300 }, partsPower = { 100, 200 },
+			aimWarningRange = { 50, 1000 }, hitRange = { 25, 500 }, crosshairSize = { 4, 40 }, crosshairThickness = { 1, 5 }, crosshairGap = { 0, 16 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15733,6 +15744,11 @@ if rayfieldLoaded and Rayfield then
 			if not menuModules.hitboxExpander then return false end
 			return menuModules.hitboxExpander.setEnabled(enabled)
 		end, "expand", "box")
+		-- Aim Warning, Hit Markers and Custom Crosshair, built further down (menuModules.aimWarning,
+		-- .hitMarkers and .crosshair) and remembered between sessions.
+		addRememberedToggle(combatTab, "Aim Warning", "aimWarning", "aimWarning", "A red arrow on your screen pointing at anyone looking straight at you. Right-click for how straight and how far", "siren", "eye")
+		addRememberedToggle(combatTab, "Hit Markers", "hitMarkers", "hitMarkers", "Damage numbers pop off players you hit, with an X on your crosshair and a hit sound. Only you see them. Right-click for settings", "crosshair", "hash")
+		addRememberedToggle(combatTab, "Custom Crosshair", "crosshair", "crosshair", "A crosshair of your own in the middle of the screen. Right-click for its style, colour and size", "plus", "crosshair")
 		withIcon(combatTab, "CreateSection", { name = "Fling" }, "tornado")
 		addCommandToggle(combatTab, "Fling", "fling", "unfling", nil, "tornado")
 		-- Walk Fling and No Fall Damage both rewrite the character's velocity every frame and
@@ -16008,7 +16024,7 @@ if rayfieldLoaded and Rayfield then
 				-- Turning one on turns off the ones it clashes with.
 				-- Play Recording (Mobility) moves you too, so it's one of the takeovers, and the Jetpack
 				-- (Mobility too) steers you up, so it's a steering switch.
-				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo", "Scaredy Cat", "Leapfrog", "Puppy", "Cartwheel Walk" }
+				local takeoverSwitches = { "Fake Dead", "Statue", "Swim in Air", "Handstand", "Crawl", "Superman", "Helicopter", "Marble Ball", "Headsit", "Orbit", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Roomba", "Play Recording", "Ragdoll", "Echo", "Scaredy Cat", "Leapfrog", "Puppy", "Cartwheel Walk", "Fake Leave" }
 				local steeringSwitches = { "Moonwalk", "Crab Walk", "Drunk Walk", "Zoomies", "Ice Skates", "Bunny Hop", "Bouncy Ball", "Parkour Mode", "Grapple Hook", "Wall Walk", "Stare", "Penguin Waddle", "Jetpack" }
 				local clashes = {}
 				local function clash(first, second)
@@ -17469,6 +17485,64 @@ if rayfieldLoaded and Rayfield then
 						vibrateState.offset = offset
 					end)
 				end, "vibrate", "activity")
+
+				-- Fake Leave: you freeze mid-step as if your game's frozen or your internet's gone, and a couple
+				-- of seconds later you vanish, as if you've left. You're tucked away under the map, held still,
+				-- and your camera stays where it was as a free camera (Infinite Yield's Freecam), so you can
+				-- watch what everyone does. Switching it off puts you back on the exact spot, moving again.
+				do
+					local leave = { serial = 0, root = nil, home = nil, freecam = false }
+					local function setFakeLeave(enabled)
+						leave.serial += 1
+						local serial = leave.serial
+						-- Back: on the spot you left from, moving again, with your own camera.
+						local root = leave.root
+						leave.root = nil
+						if root then
+							if root.Parent and leave.home then
+								root.CFrame = leave.home
+								root.AssemblyLinearVelocity = Vector3.zero
+							end
+							pcall(function() root.Anchored = false end)
+						end
+						if leave.freecam then
+							leave.freecam = false
+							execCmd("unfreecam", localPlayer, true)
+						end
+						if trolling.statue and not (quickToggleByName["Statue"] and quickToggleByName["Statue"].state) then
+							trolling.statue = false
+							updateSpeedLoop()
+						end
+						leave.home = nil
+						if not enabled then return end
+						local _, _, myRoot = myCharacter()
+						if not myRoot then
+							notify("Fake Leave", "Your character isn't ready yet.")
+							return false
+						end
+						claimMovement("Fake Leave")
+						-- Frozen, like a lag-out: rooted to the spot and stopped mid-pose.
+						leave.root, leave.home = myRoot, myRoot.CFrame
+						myRoot.AssemblyLinearVelocity = Vector3.zero
+						myRoot.Anchored = true
+						trolling.statue = true
+						updateSpeedLoop()
+						task.delay(2.5, function()
+							if leave.serial ~= serial or not myRoot.Parent then return end
+							-- Gone: the camera stays as a free camera, and you go under the map (never so
+							-- far down that the void, or Anti-Void, takes you).
+							if not fcRunning then
+								leave.freecam = true
+								execCmd("freecam", localPlayer, true)
+							end
+							local home = leave.home.Position
+							myRoot.CFrame = CFrame.new(home.X, math.max(home.Y - 300, workspace.FallenPartsDestroyHeight + 60), home.Z)
+							notify("Fake Leave", "You've \"left\". Look round with the free camera, and switch Fake Leave off to come back.", 4)
+						end)
+					end
+					addQuickToggle(trollTabs.tricks, "Fake Leave", "Freeze like you've lagged out, then vanish as if you left, and watch from where you were. Switch it off to come back", setFakeLeave, "log-out", "wifi-off")
+					table.insert(respawnHandlers, function() switchOff("Fake Leave") end)
+				end
 
 				withIcon(trollTabs.tricks, "CreateSection", { name = "Ways to get around" }, "plane", "rocket")
 				-- Infinite Yield's swim, which turns gravity off and keeps you swimming. It ends when you die.
@@ -21137,7 +21211,7 @@ if rayfieldLoaded and Rayfield then
 
 				-- Loading a config doesn't play dead, freeze you or go after a player who may not be in the
 				-- server.
-				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Scaredy Cat", "Leapfrog", "Puppy" }) do
+				for _, name in ipairs({ "Fake Dead", "Statue", "Headsit", "Orbit", "Copycat", "Bow Down", "Glide To", "Server Tour", "Weeping Angel", "Bodyguard", "Nothing Personal", "Hype Man", "Scaredy Cat", "Leapfrog", "Puppy", "Fake Leave" }) do
 					if quickToggleByName[name] then quickToggleByName[name].noConfig = true end
 				end
 
@@ -28075,7 +28149,7 @@ if rayfieldLoaded and Rayfield then
 				objectEsp = true, trollPanel = true, trollPanelX = true, trollPanelY = true, ctrlClickSelect = true,
 				aimTrainerX = true, aimTrainerY = true, aimTrainerBests = true, weather = true, graphicsPresets = true, panicKeySet = true,
 				autoGoBack = true, themeMakerX = true, themeMakerY = true, sessionStats = true, sessionStatsX = true, sessionStatsY = true,
-				sessionTotals = true, friendsX = true, friendsY = true,
+				sessionTotals = true, friendsX = true, friendsY = true, aimWarning = true, hitMarkers = true, crosshair = true,
 			}
 			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
 			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
@@ -30546,10 +30620,19 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			-- 2026.10.28.4 added Quick Search, since taken out again. The number stays, so What's New
-			-- doesn't open again by itself for anyone who's already run it.
-			local menuVersion = "2026.10.28.4"
+			-- (2026.10.28.4 added Quick Search, since taken out again, so it has no notes.)
+			local menuVersion = "2026.10.28.5"
 			local releaseNotes = {
+				{
+					title = "Combat Tools and Fake Leave", date = "28 October 2026",
+					notes = {
+						{ "Aim Warning", "Combat tab. A red arrow on your screen pointing at anyone looking straight at you, with a ping." },
+						{ "Hit Markers", "Combat tab. Damage numbers pop off players you hit, with an X on your crosshair and a hit sound." },
+						{ "Custom Crosshair", "Combat tab. A dot, cross or circle in any of seven colours, as big and thick as you like." },
+						{ "Fake Leave", "Body Tricks. Freeze like you've lagged out, then vanish as if you left, and watch everyone from where you were." },
+						{ "Stronger parts", "Parts tab. Most Parts (up to 300) and Part Speed, and Part Tornado now spins up to 30." },
+					},
+				},
 				{
 					title = "Jetpacks and Friends", date = "28 October 2026",
 					notes = {
@@ -35250,7 +35333,7 @@ if rayfieldLoaded and Rayfield then
 				"Join Alerts", "Mention Alerts", "Performance Stats", "Radar", "Logs", "Favourites Bar", "Health & Ping Warnings",
 				"Streamer Mode", "Clean Screen", "Ctrl+Click Select", "Troll Panel", "Spectate Bar", "Zoom Key", "Time of Day",
 				"FPS Boost", "Mute Game Music", "Mute Player Sounds", "First Person", "Weather", "Graphics Presets", "Emote Wheel",
-				"Session Stats",
+				"Session Stats", "Aim Warning",
 			}) do
 				leaveAlone[name] = true
 			end
@@ -36516,6 +36599,535 @@ if rayfieldLoaded and Rayfield then
 			follow("togglexray", function() mark("X-ray", not xrayEnabled) end)
 		end)
 
+		------------------------------------------------------------------------------------------
+		------------------------------------------------------------------------------------------
+		-- Aim Warning, Hit Markers and Custom Crosshair (28 October 2026), for the Combat tab. Each part is
+		-- built on its own; their switches are made with the others further up.
+
+		------------------------------------------------------------------------------------------
+		-- Aim Warning: a red arrow round the middle of your screen, pointing at anyone who's been looking
+		-- straight at you for a moment, with their name, and a ping as it appears. "Looking at you" goes by
+		-- which way their character faces (as Weeping Angel does), within the angle and range in its
+		-- settings card, with nothing solid in between; teammates can be left out.
+		safeBuild("Aim Warning", function()
+			local localPlayer = Players.LocalPlayer
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previous = playerGui:FindFirstChild("SpreadCheeksAimWarning")
+			if previous then previous:Destroy() end
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksAimWarning"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 996
+			gui.Enabled = false
+			gui.Parent = playerGui
+			-- How far off looking straight at you still counts (degrees), by the card's choice.
+			local angles = { Strict = 5, Normal = 9, Loose = 16 }
+			local red = Color3.fromRGB(239, 68, 68)
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			-- arrows: each watcher's arrow. since: when each started looking. pinged: their last ping.
+			local state = { loop = nil, arrows = {}, since = {}, pinged = {} }
+			local function arrowFor(player)
+				local arrow = state.arrows[player]
+				if arrow then return arrow end
+				local holder = Instance.new("Frame")
+				holder.AnchorPoint = Vector2.new(0.5, 0.5)
+				holder.Size = UDim2.fromOffset(30, 30)
+				holder.BackgroundTransparency = 1
+				holder.Visible = false
+				holder.Parent = gui
+				local icon = Instance.new("ImageLabel")
+				icon.Size = UDim2.fromScale(1, 1)
+				icon.BackgroundTransparency = 1
+				icon.ImageColor3 = red
+				local image = menuIcons.get("navigation-2", "arrow-big-up")
+				if image then menuIcons.apply(icon, image) end
+				icon.Parent = holder
+				local label = Instance.new("TextLabel")
+				label.AnchorPoint = Vector2.new(0.5, 0)
+				label.Position = UDim2.new(0.5, 0, 1, 2)
+				label.Size = UDim2.fromOffset(140, 14)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.GothamBold
+				label.TextSize = 11
+				label.TextColor3 = Color3.new(1, 1, 1)
+				label.TextStrokeTransparency = 0.4
+				label.Parent = holder
+				arrow = { holder = holder, icon = icon, label = label }
+				state.arrows[player] = arrow
+				return arrow
+			end
+			local function hideAll()
+				for _, arrow in pairs(state.arrows) do arrow.holder.Visible = false end
+				table.clear(state.since)
+			end
+			Players.PlayerRemoving:Connect(function(player)
+				local arrow = state.arrows[player]
+				if arrow then arrow.holder:Destroy() end
+				state.arrows[player], state.since[player], state.pinged[player] = nil, nil, nil
+			end)
+			local function ping()
+				local sound = Instance.new("Sound")
+				sound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+				sound.PlaybackSpeed = 0.8
+				sound.Volume = 0.5
+				sound.Parent = SoundService
+				sound:Play()
+				task.delay(3, function() sound:Destroy() end)
+			end
+			local function step()
+				local camera = workspace.CurrentCamera
+				local character = localPlayer.Character
+				local myHead = character and (character:FindFirstChild("Head") or getRoot(character))
+				if not camera or not myHead then return hideAll() end
+				local limit = math.cos(math.rad(angles[featureSettings.aimWarningAngle] or 9))
+				local now = os.clock()
+				local viewport = camera.ViewportSize
+				for _, player in ipairs(Players:GetPlayers()) do
+					if player ~= localPlayer then
+						local theirCharacter = player.Character
+						local theirHead = theirCharacter and theirCharacter:FindFirstChild("Head")
+						local looking = false
+						local teammate = featureSettings.aimWarningTeam and player.Team ~= nil and player.Team == localPlayer.Team
+						if theirHead and theirHead:IsA("BasePart") and not teammate then
+							local toMe = myHead.Position - theirHead.Position
+							local distance = toMe.Magnitude
+							-- Which way they face, level, against which way you are from them, level.
+							local facing = Vector3.new(theirHead.CFrame.LookVector.X, 0, theirHead.CFrame.LookVector.Z)
+							local across = Vector3.new(toMe.X, 0, toMe.Z)
+							if distance > 3 and distance <= featureSettings.aimWarningRange and facing.Magnitude > 0.1 and across.Magnitude > 0.1
+								and facing.Unit:Dot(across.Unit) >= limit then
+								params.FilterDescendantsInstances = { character, theirCharacter }
+								local hit = workspace:Raycast(theirHead.Position, toMe, params)
+								looking = hit == nil or hit.Instance.Transparency >= 0.8
+							end
+						end
+						-- A moment of looking first, so people just turning past you don't set it off.
+						if looking then
+							state.since[player] = state.since[player] or now
+						else
+							state.since[player] = nil
+						end
+						local warned = state.since[player] ~= nil and now - state.since[player] >= 0.35
+						local arrow = (warned or state.arrows[player]) and arrowFor(player)
+						if arrow then
+							if warned and not arrow.holder.Visible and featureSettings.aimWarningSound
+								and now - (state.pinged[player] or 0) > 3 then
+								state.pinged[player] = now
+								ping()
+							end
+							arrow.holder.Visible = warned
+							if warned then
+								-- Round the middle of the screen, pointing the way they are from your camera.
+								local relative = camera.CFrame:VectorToObjectSpace(theirHead.Position - camera.CFrame.Position)
+								local turn = math.atan2(relative.X, -relative.Z)
+								arrow.holder.Position = UDim2.fromOffset(viewport.X / 2 + math.sin(turn) * 110, viewport.Y / 2 - math.cos(turn) * 110)
+								arrow.icon.Rotation = math.deg(turn)
+								arrow.icon.ImageTransparency = 0.15 + 0.25 * (0.5 + 0.5 * math.sin(now * 8))
+								arrow.label.Text = menuModules.nameOf(player)
+							end
+						end
+					end
+				end
+			end
+			local function setEnabled(on)
+				if state.loop then
+					state.loop:Disconnect()
+					state.loop = nil
+				end
+				hideAll()
+				gui.Enabled = on
+				if on then state.loop = RunService.RenderStepped:Connect(step) end
+			end
+			menuModules.aimWarning = { setEnabled = setEnabled }
+
+			local entry = quickToggleByName["Aim Warning"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("HOW STRAIGHT AT YOU", "crosshair", "target")
+			card.addChoice({ "Strict", "Normal", "Loose" }, function() return featureSettings.aimWarningAngle end, function(choice)
+				featureSettings.aimWarningAngle = choice
+				saveFeatureSettings()
+			end)
+			card.addSectionLabel("RANGE", "ruler")
+			card.addSlider({
+				text = "Up to",
+				icon = { "ruler", "scan-eye" },
+				min = 50, max = 1000, step = 25,
+				get = function() return featureSettings.aimWarningRange end,
+				set = function(value) featureSettings.aimWarningRange = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs" end,
+			})
+			card.addSwitchGrid({
+				{
+					text = "Ping sound",
+					get = function() return featureSettings.aimWarningSound == true end,
+					set = function(on)
+						featureSettings.aimWarningSound = on
+						saveFeatureSettings()
+					end,
+				},
+				{
+					text = "Leave out teammates",
+					get = function() return featureSettings.aimWarningTeam == true end,
+					set = function(on)
+						featureSettings.aimWarningTeam = on
+						saveFeatureSettings()
+					end,
+				},
+			})
+			card.addHint("It goes by which way their character faces, so it's surest with players in first person or shift lock, as in most shooters. Walls block it.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Hit Markers: when a player near you loses health, the damage pops off them as a number (KO for
+		-- the last of it), an X flashes on your crosshair and a tick plays. Only you see and hear it. With
+		-- "Only after you attack" (on to start with), it only counts within a moment of you clicking or
+		-- using a tool, which is near enough to "you hit them".
+		safeBuild("Hit Markers", function()
+			local localPlayer = Players.LocalPlayer
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previous = playerGui:FindFirstChild("SpreadCheeksHitMarkers")
+			if previous then previous:Destroy() end
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksHitMarkers"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 997
+			gui.Enabled = false
+			gui.Parent = playerGui
+			local state = { on = false, lastAttack = 0, flashSerial = 0 }
+			-- The X: four short strokes round the middle of the screen (or the pointer, with Custom Crosshair
+			-- following the mouse).
+			local cross = Instance.new("Frame")
+			cross.AnchorPoint = Vector2.new(0.5, 0.5)
+			cross.Position = UDim2.fromScale(0.5, 0.5)
+			cross.Size = UDim2.fromOffset(0, 0)
+			cross.BackgroundTransparency = 1
+			cross.Visible = false
+			cross.Parent = gui
+			local strokes = {}
+			for _, corner in ipairs({ { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }) do
+				local stroke = Instance.new("Frame")
+				stroke.AnchorPoint = Vector2.new(0.5, 0.5)
+				stroke.Position = UDim2.fromOffset(corner[1] * 9, corner[2] * 9)
+				stroke.Size = UDim2.fromOffset(9, 2)
+				stroke.Rotation = corner[1] * corner[2] * 45
+				stroke.BorderSizePixel = 0
+				stroke.Parent = cross
+				table.insert(strokes, stroke)
+			end
+			local function flash(killed)
+				state.flashSerial += 1
+				local serial = state.flashSerial
+				if featureSettings.crosshairPlace == "Mouse" then
+					local mouse = UserInputService:GetMouseLocation()
+					cross.Position = UDim2.fromOffset(mouse.X, mouse.Y)
+				else
+					cross.Position = UDim2.fromScale(0.5, 0.5)
+				end
+				for _, stroke in ipairs(strokes) do
+					stroke.BackgroundColor3 = killed and Color3.fromRGB(239, 68, 68) or Color3.new(1, 1, 1)
+				end
+				cross.Visible = true
+				task.delay(killed and 0.4 or 0.2, function()
+					if state.flashSerial == serial then cross.Visible = false end
+				end)
+			end
+			local function tick(killed)
+				local sound = Instance.new("Sound")
+				sound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+				sound.PlaybackSpeed = killed and 1.3 or 2.4
+				sound.Volume = 0.45
+				sound.Parent = SoundService
+				sound:Play()
+				task.delay(2, function() sound:Destroy() end)
+			end
+			-- The damage, floating up off their head and fading.
+			local function popNumber(head, lost, killed)
+				local board = Instance.new("BillboardGui")
+				board.Name = "SpreadCheeksHitNumber"
+				board.Adornee = head
+				board.AlwaysOnTop = true
+				board.Size = UDim2.fromOffset(90, 28)
+				board.StudsOffset = Vector3.new((math.random() - 0.5) * 2, 2.5, 0)
+				-- Straight in PlayerGui: a billboard inside a ScreenGui isn't drawn.
+				board.Parent = playerGui
+				local label = Instance.new("TextLabel")
+				label.Size = UDim2.fromScale(1, 1)
+				label.BackgroundTransparency = 1
+				label.Font = Enum.Font.GothamBold
+				label.TextSize = killed and 22 or 18
+				label.Text = killed and "KO" or tostring(math.floor(lost + 0.5))
+				label.TextColor3 = killed and Color3.fromRGB(239, 68, 68) or Color3.fromRGB(255, 214, 64)
+				label.TextStrokeTransparency = 0.3
+				label.Parent = board
+				local float = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+				TweenService:Create(board, float, { StudsOffset = board.StudsOffset + Vector3.new(0, 2, 0) }):Play()
+				TweenService:Create(label, float, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+				task.delay(0.85, function() board:Destroy() end)
+			end
+			-- Your attacks: clicks and taps that aren't on this menu, and tools being used.
+			UserInputService.InputBegan:Connect(function(input)
+				local kind = input.UserInputType
+				if (kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch or input.KeyCode == Enum.KeyCode.ButtonR2)
+					and not pointerOverMenu() then
+					state.lastAttack = os.clock()
+				end
+			end)
+			local function hookTools(character)
+				character.ChildAdded:Connect(function(child)
+					if child:IsA("Tool") then
+						child.Activated:Connect(function() state.lastAttack = os.clock() end)
+					end
+				end)
+			end
+			if localPlayer.Character then hookTools(localPlayer.Character) end
+			localPlayer.CharacterAdded:Connect(hookTools)
+			-- Everyone else's health, on each of their characters.
+			local function watch(player)
+				if player == localPlayer then return end
+				local function hook(character)
+					local humanoid = character:WaitForChild("Humanoid", 10)
+					if not humanoid then return end
+					local last = humanoid.Health
+					humanoid.HealthChanged:Connect(function(health)
+						local lost = last - health
+						last = health
+						if not state.on or lost < 0.5 then return end
+						if featureSettings.hitOnlyYours and os.clock() - state.lastAttack > 1.5 then return end
+						local myRoot = localPlayer.Character and getRoot(localPlayer.Character)
+						local theirRoot = getRoot(character)
+						if not myRoot or not theirRoot or (theirRoot.Position - myRoot.Position).Magnitude > featureSettings.hitRange then return end
+						local killed = health <= 0
+						local head = character:FindFirstChild("Head") or theirRoot
+						if featureSettings.hitNumbers then popNumber(head, lost, killed) end
+						flash(killed)
+						if featureSettings.hitSound then tick(killed) end
+					end)
+				end
+				if player.Character then task.spawn(hook, player.Character) end
+				player.CharacterAdded:Connect(hook)
+			end
+			for _, player in ipairs(Players:GetPlayers()) do watch(player) end
+			Players.PlayerAdded:Connect(watch)
+			menuModules.hitMarkers = {
+				setEnabled = function(on)
+					state.on = on
+					gui.Enabled = on
+				end,
+			}
+
+			local entry = quickToggleByName["Hit Markers"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			card.addSectionLabel("SHOW", "crosshair", "hash")
+			card.addSwitchGrid({
+				{
+					text = "Damage numbers",
+					get = function() return featureSettings.hitNumbers == true end,
+					set = function(on)
+						featureSettings.hitNumbers = on
+						saveFeatureSettings()
+					end,
+				},
+				{
+					text = "Hit sound",
+					get = function() return featureSettings.hitSound == true end,
+					set = function(on)
+						featureSettings.hitSound = on
+						saveFeatureSettings()
+					end,
+				},
+				{
+					text = "Only after you attack",
+					get = function() return featureSettings.hitOnlyYours == true end,
+					set = function(on)
+						featureSettings.hitOnlyYours = on
+						saveFeatureSettings()
+					end,
+				},
+			})
+			card.addSectionLabel("RANGE", "ruler")
+			card.addSlider({
+				text = "Players within",
+				icon = { "ruler", "users-round" },
+				min = 25, max = 500, step = 25,
+				get = function() return featureSettings.hitRange end,
+				set = function(value) featureSettings.hitRange = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " studs" end,
+			})
+			card.addHint("Roblox doesn't say who did the damage, so Only after you attack counts damage within a moment of you clicking or using a tool. Off, it shows everyone's damage nearby.")
+			card.refresh()
+		end)
+
+		------------------------------------------------------------------------------------------
+		-- Custom Crosshair: a crosshair of your own in the middle of the screen (or on your pointer): a dot,
+		-- a cross, a cross with a dot, or a circle, in any of a few colours, as big, thick and open as its
+		-- settings card says, with a dark outline so it shows on anything.
+		safeBuild("Custom Crosshair", function()
+			local localPlayer = Players.LocalPlayer
+			local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui")
+			local previous = playerGui:FindFirstChild("SpreadCheeksCrosshair")
+			if previous then previous:Destroy() end
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SpreadCheeksCrosshair"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 995
+			gui.Enabled = false
+			gui.Parent = playerGui
+			local holder = Instance.new("Frame")
+			holder.AnchorPoint = Vector2.new(0.5, 0.5)
+			holder.Position = UDim2.fromScale(0.5, 0.5)
+			holder.Size = UDim2.fromOffset(0, 0)
+			holder.BackgroundTransparency = 1
+			holder.Parent = gui
+			local function outlined(frame)
+				local outline = Instance.new("UIStroke")
+				outline.Color = Color3.new(0, 0, 0)
+				outline.Transparency = 0.35
+				outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				outline.Parent = frame
+				return outline
+			end
+			-- The four arms of the cross: right, left, down, up.
+			local arms = {}
+			for _, way in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+				local arm = Instance.new("Frame")
+				arm.AnchorPoint = Vector2.new(0.5, 0.5)
+				arm.BorderSizePixel = 0
+				arm.Parent = holder
+				table.insert(arms, { frame = arm, outline = outlined(arm), x = way[1], y = way[2] })
+			end
+			local dot = Instance.new("Frame")
+			dot.AnchorPoint = Vector2.new(0.5, 0.5)
+			dot.BorderSizePixel = 0
+			dot.Parent = holder
+			local dotCorner = Instance.new("UICorner")
+			dotCorner.CornerRadius = UDim.new(1, 0)
+			dotCorner.Parent = dot
+			local dotOutline = outlined(dot)
+			local ring = Instance.new("Frame")
+			ring.AnchorPoint = Vector2.new(0.5, 0.5)
+			ring.BackgroundTransparency = 1
+			ring.Parent = holder
+			local ringCorner = Instance.new("UICorner")
+			ringCorner.CornerRadius = UDim.new(1, 0)
+			ringCorner.Parent = ring
+			local ringLine = Instance.new("UIStroke")
+			ringLine.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			ringLine.Parent = ring
+			local colours = {
+				White = Color3.new(1, 1, 1), Red = Color3.fromRGB(239, 68, 68), Green = Color3.fromRGB(74, 222, 128),
+				Cyan = Color3.fromRGB(34, 211, 238), Yellow = Color3.fromRGB(250, 204, 21), Pink = Color3.fromRGB(244, 114, 182),
+			}
+			local function layout()
+				local style = featureSettings.crosshairStyle
+				local size, thick, gap = featureSettings.crosshairSize, featureSettings.crosshairThickness, featureSettings.crosshairGap
+				local colour = colours[featureSettings.crosshairColor] or auxiliaryUiTheme.Accent
+				local outline = featureSettings.crosshairOutline == true
+				local cross = style == "Cross" or style == "Cross + Dot"
+				for _, arm in ipairs(arms) do
+					arm.frame.Visible = cross
+					arm.frame.BackgroundColor3 = colour
+					arm.outline.Enabled = outline
+					if arm.x ~= 0 then
+						arm.frame.Size = UDim2.fromOffset(size, thick)
+						arm.frame.Position = UDim2.fromOffset(arm.x * (gap + size / 2), 0)
+					else
+						arm.frame.Size = UDim2.fromOffset(thick, size)
+						arm.frame.Position = UDim2.fromOffset(0, arm.y * (gap + size / 2))
+					end
+				end
+				dot.Visible = style == "Dot" or style == "Cross + Dot"
+				local dotSize = style == "Dot" and math.max(4, math.floor(size / 3)) or math.max(3, thick + 2)
+				dot.Size = UDim2.fromOffset(dotSize, dotSize)
+				dot.BackgroundColor3 = colour
+				dotOutline.Enabled = outline
+				ring.Visible = style == "Circle"
+				ring.Size = UDim2.fromOffset(size * 2, size * 2)
+				ringLine.Thickness = thick
+				ringLine.Color = colour
+			end
+			local state = { loop = nil }
+			local function setEnabled(on)
+				if state.loop then
+					state.loop:Disconnect()
+					state.loop = nil
+				end
+				gui.Enabled = on
+				if not on then return end
+				layout()
+				-- On your pointer, it follows it every frame.
+				state.loop = RunService.RenderStepped:Connect(function()
+					if featureSettings.crosshairPlace == "Mouse" then
+						local mouse = UserInputService:GetMouseLocation()
+						holder.Position = UDim2.fromOffset(mouse.X, mouse.Y)
+					else
+						holder.Position = UDim2.fromScale(0.5, 0.5)
+					end
+				end)
+			end
+			menuModules.crosshair = { setEnabled = setEnabled, refresh = function() pcall(layout) end }
+			table.insert(auxiliaryUiThemeListeners, function() pcall(layout) end)
+
+			local entry = quickToggleByName["Custom Crosshair"]
+			local card = entry and createSettingsCard(entry)
+			if not card then return end
+			local function setting(key)
+				return function(value)
+					featureSettings[key] = value
+					saveFeatureSettings()
+					pcall(layout)
+				end
+			end
+			card.addSectionLabel("STYLE", "crosshair")
+			card.addChoice({ "Dot", "Cross", "Cross + Dot", "Circle" }, function() return featureSettings.crosshairStyle end, setting("crosshairStyle"))
+			card.addSectionLabel("COLOUR", "palette")
+			card.addChoice({ "Theme", "White", "Red", "Green" }, function() return featureSettings.crosshairColor end, setting("crosshairColor"))
+			card.addChoice({ "Cyan", "Yellow", "Pink" }, function() return featureSettings.crosshairColor end, setting("crosshairColor"))
+			card.addSectionLabel("SHAPE", "ruler")
+			for _, slider in ipairs({
+				{ "Size", "crosshairSize", 4, 40, { "maximize-2" } },
+				{ "Thickness", "crosshairThickness", 1, 5, { "minus" } },
+				{ "Gap in the middle", "crosshairGap", 0, 16, { "move-horizontal" } },
+			}) do
+				local key = slider[2]
+				card.addSlider({
+					text = slider[1],
+					icon = slider[5],
+					min = slider[3], max = slider[4], step = 1,
+					get = function() return featureSettings[key] end,
+					set = function(value)
+						featureSettings[key] = value
+						pcall(layout)
+					end,
+					commit = saveFeatureSettings,
+					format = function(value) return math.floor(value + 0.5) .. " px" end,
+				})
+			end
+			card.addSwitchGrid({
+				{
+					text = "Dark outline",
+					get = function() return featureSettings.crosshairOutline == true end,
+					set = function(on)
+						featureSettings.crosshairOutline = on
+						saveFeatureSettings()
+						pcall(layout)
+					end,
+				},
+			}, 1)
+			card.addSectionLabel("WHERE", "move")
+			card.addChoice({ "Centre", "Mouse" }, function() return featureSettings.crosshairPlace end, setting("crosshairPlace"))
+			card.addHint("Centre is for first person and shift lock, where you aim with the middle of the screen. Mouse puts it on your pointer, for games you aim with the mouse.")
+			card.refresh()
+		end)
+
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
 		-- on now that what they switch has been built.
 		safeBuild("Switches that were on", function()
@@ -37524,6 +38136,8 @@ if rayfieldLoaded and Rayfield then
 				"Rock from side to side as you walk, like a penguin", "Back to walking normally")
 			addSwitchCommands("Cartwheel Walk", { { "cartwheelwalk" }, { "uncartwheelwalk" }, "togglecartwheelwalk" },
 				"Cartwheel along instead of walking", "Back on your feet, walking normally")
+			addSwitchCommands("Fake Leave", { { "fakeleave" }, { "unfakeleave" }, "togglefakeleave" },
+				"Freeze like you've lagged out, then vanish as if you left, and watch from where you were", "Come back to the spot you left from")
 			describe("parttornado / tpparts [player]", "Pull every loose part you can over to a player and swirl it round them (your Player Pranks target if you leave the name out)")
 			describe("unparttornado / untpparts", "Drops the parts where they are")
 			addcmd("parttornado", { "tpparts" }, function(args, speaker)
@@ -37851,6 +38465,14 @@ if rayfieldLoaded and Rayfield then
 			addcmd("friendsonline", { "friendslist" }, function()
 				if menuModules.friendsOnline then menuModules.friendsOnline.open() end
 			end)
+
+			-- Combat Tools (Fake Leave's commands are with the other trolling ones).
+			addSwitchCommands("Aim Warning", { { "aimwarning" }, { "unaimwarning" }, "toggleaimwarning" },
+				"Shows a red arrow pointing at anyone looking straight at you", "Stops the aim warnings")
+			addSwitchCommands("Hit Markers", { { "hitmarkers" }, { "unhitmarkers" }, "togglehitmarkers" },
+				"Shows damage numbers and an X on your crosshair when you hit someone", "Stops the hit markers")
+			addSwitchCommands("Custom Crosshair", { { "crosshair" }, { "uncrosshair" }, "togglecrosshair" },
+				"Shows a crosshair of your own in the middle of the screen", "Hides your crosshair")
 		end
 		-- Kept separate so a problem here can't stop the rest of the menu loading.
 		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
