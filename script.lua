@@ -14819,6 +14819,9 @@ if rayfieldLoaded and Rayfield then
 			-- mark on whoever it's on.
 			silentAimChance = 100, silentAimMouse = true, silentAimRaycast = true, silentAimOldRays = true, silentAimCameraRays = false,
 			silentAimToolOnly = false, silentAimMark = true,
+			-- Silent Aim's Auto shoot: on or off, "Tap" or "Hold", how long someone has to be in the circle
+			-- before the first shot (ms), and the time between taps (ms).
+			silentAimAutoShoot = false, silentAimShootMode = "Tap", silentAimShootDelay = 0, silentAimShootInterval = 150,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -14845,7 +14848,7 @@ if rayfieldLoaded and Rayfield then
 			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 }, autoGoBackWait = { 0, 5 },
 			jetpackPower = { 20, 100 }, jetpackFuel = { 1, 10 }, partsMax = { 50, 300 }, partsPower = { 100, 200 },
 			aimWarningRange = { 50, 1000 }, hitRange = { 25, 500 }, crosshairSize = { 4, 40 }, crosshairThickness = { 1, 5 }, crosshairGap = { 0, 16 },
-			silentAimChance = { 5, 100 },
+			silentAimChance = { 5, 100 }, silentAimShootDelay = { 0, 500 }, silentAimShootInterval = { 50, 1000 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -25427,6 +25430,20 @@ if rayfieldLoaded and Rayfield then
 
 			local windowFocused = true
 			local onTargetSince, lastShot = nil, 0
+			-- Whether the cursor is on one of the game's buttons, which Auto shoot mustn't click.
+			local function overGameButton(cursor)
+				local found = false
+				pcall(function()
+					local inset = GuiService:GetGuiInset()
+					for _, object in ipairs(playerGui:GetGuiObjectsAtPosition(cursor.X - inset.X, cursor.Y - inset.Y)) do
+						if object:IsA("GuiButton") and object.Visible then
+							found = true
+							break
+						end
+					end
+				end)
+				return found
+			end
 			local function step()
 				local camera = workspace.CurrentCamera
 				local cursor = UserInputService:GetMouseLocation()
@@ -25434,26 +25451,37 @@ if rayfieldLoaded and Rayfield then
 				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 				-- Never while typing, in Roblox's menu, over this menu, with Roblox in the background or
 				-- while dead; with "Only while aim key held", only while the aim key is down.
-				local active = state.enabled and camera ~= nil and windowFocused and not GuiService.MenuIsOpen
+				local canFire = camera ~= nil and windowFocused and not GuiService.MenuIsOpen
 					and not UserInputService:GetFocusedTextBox() and not pointerOverMenu()
 					and humanoid ~= nil and humanoid.Health > 0
-					and (not featureSettings.triggerWhileAiming or aimbotState.held == true)
+				local active = state.enabled and canFire and (not featureSettings.triggerWhileAiming or aimbotState.held == true)
 				local target = active and playerUnderCursor(camera, cursor) or nil
 				-- For the Target HUD.
 				state.target = target
+				-- Silent Aim's Auto shoot fires at whoever Silent Aim is on, wherever the crosshair is, by its
+				-- own firing settings, as long as the cursor isn't on one of the game's buttons.
+				local silentTarget = nil
+				if not target and canFire and featureSettings.silentAimAutoShoot and aimbotState.silent.on
+					and aimbotState.silent.target and not overGameButton(cursor) then
+					silentTarget = aimbotState.silent.target
+				end
+				local mode, reactionMs, intervalMs = featureSettings.triggerMode, featureSettings.triggerDelay, featureSettings.triggerInterval
+				if silentTarget then
+					mode, reactionMs, intervalMs = featureSettings.silentAimShootMode, featureSettings.silentAimShootDelay, featureSettings.silentAimShootInterval
+				end
 				local now = os.clock()
-				if target then
+				if target or silentTarget then
 					onTargetSince = onTargetSince or now
 				else
 					onTargetSince = nil
 				end
-				-- It fires once the crosshair has stayed on them for the reaction time.
-				local ready = onTargetSince ~= nil and (now - onTargetSince) * 1000 >= featureSettings.triggerDelay
-				if ready and featureSettings.triggerMode == "Hold" and clickMethod ~= "tool" then
+				-- It fires once they've been in its sights for the reaction time.
+				local ready = onTargetSince ~= nil and (now - onTargetSince) * 1000 >= reactionMs
+				if ready and mode == "Hold" and clickMethod ~= "tool" then
 					startHold()
 				else
 					stopHold()
-					if ready and (now - lastShot) * 1000 >= featureSettings.triggerInterval then
+					if ready and (now - lastShot) * 1000 >= intervalMs then
 						lastShot = now
 						tap()
 					end
@@ -30654,8 +30682,14 @@ if rayfieldLoaded and Rayfield then
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
 			-- (2026.10.28.4 added Quick Search, since taken out again, so it has no notes.)
-			local menuVersion = "2026.10.28.6"
+			local menuVersion = "2026.10.28.7"
 			local releaseNotes = {
+				{
+					title = "Auto Shoot", date = "28 October 2026",
+					notes = {
+						{ "Auto Shoot", "Silent Aim settings. Fires for you the moment someone's inside the circle, Tap or Hold, with its own reaction time and shot delay." },
+					},
+				},
 				{
 					title = "Silent Aim", date = "28 October 2026",
 					notes = {
@@ -37178,7 +37212,8 @@ if rayfieldLoaded and Rayfield then
 		-- the cursor. The menu's own questions are never changed. It needs an executor that can hook
 		-- metamethods; the hooks go in the first time it's switched on, are tested straight away, and stay
 		-- in for the rest of the game, doing nothing while it's off. Its settings card shows what the game
-		-- has asked and what was sent at the target, to see why it isn't working in a game.
+		-- has asked and what was sent at the target, to see why it isn't working in a game. Auto shoot, in
+		-- its settings, has the Trigger Bot's clicker fire for you while it has a target.
 		safeBuild("Silent Aim", function()
 			local localPlayer = Players.LocalPlayer
 			local silent = aimbotState.silent
@@ -37633,6 +37668,40 @@ if rayfieldLoaded and Rayfield then
 			card.addHint("Games aim their shots in different ways, and these are the ones it can take over. If your shots still go where you aim, switch on Camera rays. If something else in the game acts oddly while it's on, switch off what that game doesn't need.")
 			card.addSwitchGrid({ setting("Only with a tool out", "silentAimToolOnly") }, 1)
 			card.addHint("Leaves everything alone unless you're holding a tool, for games where you click on things. Games with their own guns that aren't tools need this off.")
+
+			-- Auto shoot: fires for you the moment someone's in the circle. The clicking is the Trigger Bot's
+			-- (built further up), which goes by these settings while it's firing at Silent Aim's target.
+			card.addSectionLabel("AUTO SHOOT", "mouse-pointer-click", "zap")
+			card.addSwitchGrid({ setting("Auto shoot", "silentAimAutoShoot") }, 1)
+			card.addChoice({ "Tap", "Hold" }, function() return featureSettings.silentAimShootMode end, function(mode)
+				featureSettings.silentAimShootMode = mode
+				saveFeatureSettings()
+			end)
+			card.addHint(function()
+				if featureSettings.silentAimShootMode == "Hold" then
+					return "Holds the mouse button down while someone's in the circle and lets go when nobody is, for automatic guns."
+				end
+				return "Clicks the moment someone's in the circle, then again every shot delay while they're in it, for guns that fire once per click."
+			end)
+			card.addSlider({
+				text = "Reaction time",
+				icon = { "timer", "clock" },
+				min = 0, max = 500, step = 10,
+				get = function() return featureSettings.silentAimShootDelay end,
+				set = function(value) featureSettings.silentAimShootDelay = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return value <= 0 and "Instant" or (math.floor(value + 0.5) .. " ms") end,
+			})
+			card.addSlider({
+				text = "Shot delay",
+				icon = { "repeat", "rotate-cw" },
+				min = 50, max = 1000, step = 10,
+				get = function() return featureSettings.silentAimShootInterval end,
+				set = function(value) featureSettings.silentAimShootInterval = value end,
+				commit = saveFeatureSettings,
+				format = function(value) return math.floor(value + 0.5) .. " ms" end,
+			})
+			card.addHint("It won't click while you're typing, in a menu, dead, or with your cursor on one of the game's buttons. In games where guns are tools, switch on Only with a tool out so it only fires while you're holding one.")
 
 			-- What's happening, kept up to date twice a second while the card is open.
 			card.addSectionLabel("WHAT'S HAPPENING", "activity", "info")
@@ -38164,6 +38233,19 @@ if rayfieldLoaded and Rayfield then
 				featureSettings.silentAimChance = math.clamp(math.floor(chance / 5 + 0.5) * 5, 5, 100)
 				saveFeatureSettings()
 				notify("Silent Aim", "Hit chance " .. featureSettings.silentAimChance .. "%", 2)
+			end)
+			describe("autoshoot [on/off]", "Whether silent aim shoots for you the moment someone's in the circle (switches it over if you leave out on or off)")
+			addcmd("autoshoot", { "silentaimautoshoot" }, function(args)
+				local choice = firstArgument(args)
+				if choice == "on" then
+					featureSettings.silentAimAutoShoot = true
+				elseif choice == "off" then
+					featureSettings.silentAimAutoShoot = false
+				else
+					featureSettings.silentAimAutoShoot = not featureSettings.silentAimAutoShoot
+				end
+				saveFeatureSettings()
+				notify("Silent Aim", featureSettings.silentAimAutoShoot and ("Auto shoot on" .. (aimbotState.silent.on and "" or ". Switch on Silent Aim too")) or "Auto shoot off", 3)
 			end)
 			describe("silentaimstatus", "Shows whether silent aim can hook the game, who it's on, and what the game has asked (also printed in the F9 console)")
 			addcmd("silentaimstatus", {}, function()
