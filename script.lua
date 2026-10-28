@@ -14770,6 +14770,9 @@ if rayfieldLoaded and Rayfield then
 			partGrabKey = "T", partPetCount = 6, partPetDistance = 5, partCarpetSpeed = 40, partStairCount = 6, partStairRise = 1,
 			partShieldShape = "Ring", partShieldRadius = 8, partShieldSpeed = 4, partFloatHeight = 15, partFloatRange = 120,
 			partFountainPower = 50, partFountainCount = 30, partBlenderSpeed = 20, partBlenderRange = 120, partShowRange = 150,
+			-- Parts power: how many parts the big tricks take (150 as they always did, up to 300), and how
+			-- fast the tricks move parts, as a percent of their usual speed.
+			partsMax = 150, partsPower = 100,
 			-- Scaredy Cat: how near your target can come (studs) before you run, and whether you follow
 			-- them from a distance. Leapfrog: how far over their head you go (studs) and the wait
 			-- between leaps (seconds). Puppy: how far from them you keep (studs), and whether you sit
@@ -14816,7 +14819,7 @@ if rayfieldLoaded and Rayfield then
 			safeTeleportSpeed = { 30, 300 }, collectRange = { 25, 1000 }, collectSpeed = { 20, 150 }, recordSpeed = { 0.5, 3 },
 			aimbotPredictTime = { 0, 0.5 }, hitboxSize = { 2, 25 }, zoomFov = { 5, 60 }, timeOfDayHour = { 0, 24 }, warnHealthAt = { 10, 60 },
 			trollLagStrength = { 1, 10 }, trollEchoDelay = { 0.5, 5 }, speedHackSpeed = { 16, 300 }, clickerCps = { 1, 30 }, objectEspRange = { 50, 3000 },
-			trollTornadoRadius = { 6, 40 }, trollTornadoSpeed = { 1, 10 }, trollTornadoHeight = { 0, 20 },
+			trollTornadoRadius = { 6, 40 }, trollTornadoSpeed = { 1, 30 }, trollTornadoHeight = { 0, 20 },
 			partHaloRadius = { 1.5, 5 }, partHaloSpeed = { 1, 10 }, partHaloHeight = { 0.5, 5 }, partArtSize = { 4, 25 }, partArtHeight = { 2, 30 },
 			partSnakeLength = { 5, 40 }, partSnakeGap = { 1.5, 6 }, partPetCount = { 1, 15 }, partPetDistance = { 3, 12 }, partCarpetSpeed = { 10, 120 },
 			partStairCount = { 3, 12 }, partStairRise = { 0.5, 2 }, partShieldRadius = { 5, 25 }, partShieldSpeed = { 1, 10 },
@@ -14824,7 +14827,7 @@ if rayfieldLoaded and Rayfield then
 			partBlenderSpeed = { 5, 50 }, partBlenderRange = { 30, 400 }, partShowRange = { 50, 500 },
 			trollScaredDistance = { 6, 40 }, trollLeapHeight = { 1, 8 }, trollLeapPause = { 0.2, 3 }, trollPuppyDistance = { 2.5, 10 },
 			aimTrainerLength = { 15, 60 }, weatherAmount = { 1, 10 }, graphicsStrength = { 10, 100 }, autoGoBackWait = { 0, 5 },
-			jetpackPower = { 20, 100 }, jetpackFuel = { 1, 10 },
+			jetpackPower = { 20, 100 }, jetpackFuel = { 1, 10 }, partsMax = { 50, 300 }, partsPower = { 100, 200 },
 		}
 		if readfile then
 			local readOk, contents = readfile(featureSettingsFile, true)
@@ -15514,6 +15517,9 @@ if rayfieldLoaded and Rayfield then
 			addQuickToggle(tab, name, description, function(enabled)
 				execCmd(enabled and enabledCommand or disabledCommand, Players.LocalPlayer, true)
 			end, ...)
+			-- Kept so the switch can follow these commands when they're run some other way (see
+			-- "Switches follow commands").
+			quickToggleByName[name].commands = { enabledCommand, disabledCommand }
 		end
 
 		-- Turns a quick toggle on or off from code, moving its switch to match.
@@ -20076,6 +20082,11 @@ if rayfieldLoaded and Rayfield then
 							end
 							return true
 						end
+						-- How many parts a big trick takes, from its usual number, scaled by Most Parts (150
+						-- is the usual).
+						local function moreParts(count)
+							return math.floor(count * featureSettings.partsMax / 150 + 0.5)
+						end
 						local function addPart(part)
 							if engine.has[part] or #engine.items >= engine.limit or not movable(part) then return end
 							engine.has[part] = true
@@ -20115,10 +20126,13 @@ if rayfieldLoaded and Rayfield then
 							return roots
 						end
 						-- velocity, unless the part is within radius of someone: then out and away from them.
-						local function keepClear(part, velocity, roots, radius)
+						-- Anyone but the player a trick is circling (at centre) gets the wider distance, wide,
+						-- as fast parts cover more ground from one frame to the next.
+						local function keepClear(part, velocity, roots, radius, wide, centre)
 							for _, position in ipairs(roots) do
 								local away = part.Position - position
-								if away.Magnitude < radius then
+								local limit = (centre and (position - centre).Magnitude < 0.5) and radius or wide
+								if away.Magnitude < limit then
 									return (away.Magnitude > 0.1 and away.Unit or Vector3.yAxis) * 30 + Vector3.new(0, 15, 0)
 								end
 							end
@@ -20130,7 +20144,8 @@ if rayfieldLoaded and Rayfield then
 						--   frame(now, deltaTime): set up each frame, returning false to skip it;
 						--   place(item, index, count, now, deltaTime, mode): where a part goes, or nil to leave
 						--     it be (item.velocity, if set, is used as it is, and item.spin spins it);
-						--   orient(item, mode): turns a part; speed: the fastest parts move (studs a second);
+						--   orient(item, mode): turns a part; speed: the fastest parts move (studs a second,
+						--     raised by Part Speed), or a function giving that outright;
 						--   clear: how far parts keep from players; found(count): how many parts it got.
 						local function startParts(mode)
 							stopParts()
@@ -20179,7 +20194,9 @@ if rayfieldLoaded and Rayfield then
 								local roots = otherRoots()
 								local clear = mode.clear or 5
 								local frame = math.max(deltaTime, 1 / 120)
-								local fastest = mode.speed or 150
+								local fastest = type(mode.speed) == "function" and mode.speed()
+									or (mode.speed or 150) * featureSettings.partsPower / 100
+								local wide = clear + math.max(0, fastest - 150) * frame * 2
 								local count = #engine.items
 								local index = 1
 								while index <= #engine.items do
@@ -20196,7 +20213,7 @@ if rayfieldLoaded and Rayfield then
 											velocity = (goal - part.Position) / frame
 											if velocity.Magnitude > fastest then velocity = velocity.Unit * fastest end
 										end
-										if velocity then velocity = keepClear(part, velocity, roots, clear) end
+										if velocity then velocity = keepClear(part, velocity, roots, clear, wide, mode.centre) end
 										pcall(function()
 											if velocity then part.AssemblyLinearVelocity = velocity end
 											part.AssemblyAngularVelocity = item.spin or Vector3.zero
@@ -20219,7 +20236,7 @@ if rayfieldLoaded and Rayfield then
 								local character = target.Character
 								local root = character and getRoot(character)
 								if not root then return false end
-								mode.root, mode.character = root, character
+								mode.root, mode.character, mode.centre = root, character, root.Position
 								if mode.tick then mode.tick(mode) end
 								return true
 							end
@@ -20328,16 +20345,54 @@ if rayfieldLoaded and Rayfield then
 							return Vector2.new(math.cos(angle) * 0.55, math.sin(angle) * 0.55 - 0.05)
 						end
 
+						-- Power, for every trick: how many parts the big ones take (Most Parts: the Tornado,
+						-- Zero Gravity and the Blender take that many, Art and the Shield fewer in step) and
+						-- how fast all of them move their parts into place (Part Speed). How many counts from
+						-- the next time a trick starts; the speed straight away.
+						withIcon(trollTabs.parts, "CreateSection", { name = "Power" }, "zap", "gauge")
+						trolling.partsMaxSlider = withIcon(trollTabs.parts, "CreateSlider", {
+							name = "Most Parts",
+							range = { 50, 300 },
+							value = featureSettings.partsMax,
+							increment = 10,
+							suffix = " parts",
+							callback = function(value)
+								if featureSettings.partsMax == value then return end
+								featureSettings.partsMax = value
+								saveFeatureSettings()
+							end,
+						}, "boxes", "layers")
+						trolling.partsSpeedSlider = withIcon(trollTabs.parts, "CreateSlider", {
+							name = "Part Speed",
+							range = { 100, 200 },
+							value = featureSettings.partsPower,
+							increment = 10,
+							suffix = "%",
+							callback = function(value)
+								if featureSettings.partsPower == value then return end
+								featureSettings.partsPower = value
+								saveFeatureSettings()
+							end,
+						}, "zap", "gauge")
+
 						withIcon(trollTabs.parts, "CreateSection", { name = "Round your target" }, "tornado", "crosshair")
 						-- Part Tornado: swirled round them in a ring, sphere, helix, spiral or wave.
 						local setTornado = partsSwitch("Part Tornado", function()
 							local target = targetFor("Part Tornado")
 							if not target then return nil end
+							-- Spins faster than 10 need faster parts to keep up, as far as 300 studs a second.
+							local function top()
+								return math.min(150 * math.max(1, featureSettings.trollTornadoSpeed / 10) * featureSettings.partsPower / 100, 300)
+							end
 							return aroundTarget("Part Tornado", target, {
-								limit = 150,
+								limit = moreParts(150),
+								speed = top,
 								place = function(item, index, count, now, deltaTime, mode)
+									-- Never faster round than the parts can go, so none fall behind and cut
+									-- across the middle; wide circles can't spin quite as fast.
+									local spin = math.min(featureSettings.trollTornadoSpeed, 1.6 * top() / (featureSettings.trollTornadoRadius + 3))
 									return swirl(item, index, count, now, deltaTime, mode.root.Position, featureSettings.trollTornadoRadius,
-										featureSettings.trollTornadoSpeed, featureSettings.trollTornadoHeight, featureSettings.trollTornadoShape)
+										spin, featureSettings.trollTornadoHeight, featureSettings.trollTornadoShape)
 								end,
 							})
 						end)
@@ -20365,7 +20420,7 @@ if rayfieldLoaded and Rayfield then
 							local target = targetFor("Part Art")
 							if not target then return nil end
 							return aroundTarget("Part Art", target, {
-								limit = 60,
+								limit = moreParts(60),
 								place = function(_, index, count, _, _, mode)
 									local root = mode.root
 									local look = flat(root.CFrame.LookVector)
@@ -20607,7 +20662,7 @@ if rayfieldLoaded and Rayfield then
 						-- Part Shield: parts swirling round you.
 						local setShield = partsSwitch("Part Shield", function()
 							return aroundYou("Part Shield", {
-								limit = 40,
+								limit = moreParts(40),
 								place = function(item, index, count, now, deltaTime, mode)
 									return swirl(item, index, count, now, deltaTime, mode.root.Position, featureSettings.partShieldRadius,
 										featureSettings.partShieldSpeed, 0, featureSettings.partShieldShape)
@@ -20620,7 +20675,7 @@ if rayfieldLoaded and Rayfield then
 						-- Zero Gravity: loose parts round you float up and drift slowly, turning over.
 						local setFloat = partsSwitch("Zero Gravity", function()
 							return aroundYou("Zero Gravity", {
-								limit = 150, speed = 8,
+								limit = moreParts(150), speed = 8,
 								range = function() return featureSettings.partFloatRange end,
 								place = function(item, _, _, now)
 									if not item.home then
@@ -20658,7 +20713,7 @@ if rayfieldLoaded and Rayfield then
 						-- Blender: loose parts round you lift a little and spin on the spot.
 						local setBlender = partsSwitch("Blender", function()
 							return aroundYou("Blender", {
-								limit = 150, speed = 30,
+								limit = moreParts(150), speed = 30,
 								range = function() return featureSettings.partBlenderRange end,
 								place = function(item)
 									if not item.home then
@@ -21334,9 +21389,10 @@ if rayfieldLoaded and Rayfield then
 							partsChoice(card, "trollTornadoShape", { "Ring", "Sphere", "Helix", "Spiral", "Wave" }, 3)
 							card.addSectionLabel("TORNADO", "gauge")
 							partsSlider(card, "Distance from them", "trollTornadoRadius", 6, 40, 1, " studs", "ruler")
-							partsSlider(card, "Spin speed", "trollTornadoSpeed", 1, 10, 0.5)
+							partsSlider(card, "Spin speed", "trollTornadoSpeed", 1, 30, 0.5)
 							partsSlider(card, "Height", "trollTornadoHeight", 0, 20, 1, " studs", "arrow-up-down")
-							card.addHint("Up to 150 parts, nearest you first. Only loose parts your game lets you move will come, so in some games nothing does.")
+							card.addHint("As many parts as Most Parts (on the Parts tab) says, nearest you first. Only loose parts your game lets you move will come, so in some games nothing does.")
+							card.addHint("Spins over 10 make the parts fly faster to keep up. Wide circles can't spin quite as fast, and fast parts keep further from anyone else.")
 							card.refresh()
 						end
 						card = cardFor("Part Halo")
@@ -21874,6 +21930,8 @@ if rayfieldLoaded and Rayfield then
 					trolling.setSpinSpeed(featureSettings.trollSpinSpeed)
 					trolling.setHeadSize(featureSettings.trollHeadSize)
 					trolling.setMarbleSize(featureSettings.trollMarbleSize)
+					pcall(function() trolling.partsMaxSlider:Set(featureSettings.partsMax, true) end)
+					pcall(function() trolling.partsSpeedSlider:Set(featureSettings.partsPower, true) end)
 					attachTrail()
 					local emote = quickToggleByName["Emote"]
 					if emote and emote.state then playChosenEmote() end
@@ -30488,7 +30546,9 @@ if rayfieldLoaded and Rayfield then
 		-- added. menuVersion changes with every update, and that update's notes go at the top of
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
-			local menuVersion = "2026.10.28.3"
+			-- 2026.10.28.4 added Quick Search, since taken out again. The number stays, so What's New
+			-- doesn't open again by itself for anyone who's already run it.
+			local menuVersion = "2026.10.28.4"
 			local releaseNotes = {
 				{
 					title = "Jetpacks and Friends", date = "28 October 2026",
@@ -34149,10 +34209,21 @@ if rayfieldLoaded and Rayfield then
 				if quickToggleByName[name] then selfSwitch(roundYou, name) end
 			end
 			settingsSection(partsTab, {
+				-- Power, for every parts trick, kept level with the sliders on the Parts tab.
+				{ name = "Power", items = {
+					sliderOf("Most parts", "partsMax", 50, 300, 10, " parts", function(value)
+						featureSettings.partsMax = value
+						if trolling.partsMaxSlider then pcall(function() trolling.partsMaxSlider:Set(value, true) end) end
+					end),
+					sliderOf("Part speed", "partsPower", 100, 200, 10, "%", function(value)
+						featureSettings.partsPower = value
+						if trolling.partsSpeedSlider then pcall(function() trolling.partsSpeedSlider:Set(value, true) end) end
+					end),
+				} },
 				{ name = "Part Tornado", items = {
 					choiceOf("Shape", "trollTornadoShape", { "Ring", "Sphere", "Helix", "Spiral", "Wave" }),
 					sliderOf("Distance from them", "trollTornadoRadius", 6, 40, 1, " studs"),
-					sliderOf("Spin speed", "trollTornadoSpeed", 1, 10, 0.5),
+					sliderOf("Spin speed", "trollTornadoSpeed", 1, 30, 0.5),
 					sliderOf("Height", "trollTornadoHeight", 0, 20, 1, " studs"),
 				} },
 				{ name = "Part Halo", items = {
@@ -36370,6 +36441,81 @@ if rayfieldLoaded and Rayfield then
 			}
 		end)
 
+		------------------------------------------------------------------------------------------
+		-- Switches follow commands: the switches that run Infinite Yield's commands (Noclip, Fly, ESP
+		-- and the rest) move to match when those commands are run some other way: the ; bar, chat, the
+		-- Command Bar tab or IY's own keybinds. Each command is wrapped so that running it first moves
+		-- its switch, without running anything twice; the keybind list and Home go by the switches, so
+		-- they follow too. Only your own commands count.
+		safeBuild("Switches follow commands", function()
+			local localPlayer = Players.LocalPlayer
+			-- A switch on or off without running what it does (the command's already doing that).
+			local function mark(name, on)
+				local entry = quickToggleByName[name]
+				if not entry or entry.state == on then return end
+				entry.state = on
+				pcall(function() entry.object:Set(on, true) end)
+			end
+			local function follow(commandName, marks)
+				local command = findCmd(commandName)
+				if type(command) ~= "table" or type(command.FUNC) ~= "function" then return end
+				local original = command.FUNC
+				command.FUNC = function(args, speaker, ...)
+					if speaker == nil or speaker == localPlayer then pcall(marks) end
+					return original(args, speaker, ...)
+				end
+			end
+			-- The menu's command switches note their on and off commands (addCommandToggle).
+			for _, entry in ipairs(quickToggles) do
+				if entry.commands then
+					local name = entry.name
+					follow(entry.commands[1], function() mark(name, true) end)
+					follow(entry.commands[2], function() mark(name, false) end)
+				end
+			end
+			-- Fly and Vehicle Fly share one flight, so starting either replaces the other and stopping
+			-- either stops both. The toggles go by whether you're flying now.
+			follow("fly", function()
+				mark("Fly", true)
+				mark("Vehicle Fly", false)
+			end)
+			follow("vfly", function()
+				mark("Vehicle Fly", true)
+				mark("Fly", false)
+			end)
+			for _, commandName in ipairs({ "unfly", "unvfly" }) do
+				follow(commandName, function()
+					mark("Fly", false)
+					mark("Vehicle Fly", false)
+				end)
+			end
+			follow("togglefly", function()
+				mark("Fly", not FLYING)
+				mark("Vehicle Fly", false)
+			end)
+			follow("togglevfly", function()
+				mark("Vehicle Fly", not FLYING)
+				mark("Fly", false)
+			end)
+			-- Walk fling stops any walk fling first (which would show it off), so it's shown on again once
+			-- it's going.
+			follow("walkfling", function()
+				mark("Walk Fling", true)
+				task.spawn(function()
+					for _ = 1, 10 do
+						task.wait(0.1)
+						if walkflinging then return mark("Walk Fling", true) end
+					end
+				end)
+			end)
+			follow("unwalkfling", function() mark("Walk Fling", false) end)
+			follow("swim", function() mark("Swim in Air", true) end)
+			follow("unswim", function() mark("Swim in Air", false) end)
+			follow("antifling", function() mark("Anti-Fling", true) end)
+			follow("unantifling", function() mark("Anti-Fling", false) end)
+			follow("togglexray", function() mark("X-ray", not xrayEnabled) end)
+		end)
+
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
 		-- on now that what they switch has been built.
 		safeBuild("Switches that were on", function()
@@ -37394,6 +37540,14 @@ if rayfieldLoaded and Rayfield then
 				featureSettings.trollTornadoShape = shape
 				saveFeatureSettings()
 				notify("Part Tornado", shape, 2)
+			end)
+			describe("tornadospeed [1-30]", "How fast Part Tornado spins (4 to start with)")
+			addcmd("tornadospeed", {}, function(args)
+				local speed = tonumber(args[1])
+				if not speed then return notify("Part Tornado", "Give a speed from 1 to 30, like tornadospeed 20") end
+				featureSettings.trollTornadoSpeed = math.clamp(math.floor(speed * 2 + 0.5) / 2, 1, 30)
+				saveFeatureSettings()
+				notify("Part Tornado", "Spin speed " .. featureSettings.trollTornadoSpeed, 2)
 			end)
 			-- The parts tricks round a player, each with an on and an off command.
 			for _, trick in ipairs({
