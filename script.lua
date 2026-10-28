@@ -14822,6 +14822,8 @@ if rayfieldLoaded and Rayfield then
 			-- Silent Aim's Auto shoot: on or off, "Tap" or "Hold", how long someone has to be in the circle
 			-- before the first shot (ms), and the time between taps (ms).
 			silentAimAutoShoot = false, silentAimShootMode = "Tap", silentAimShootDelay = 0, silentAimShootInterval = 150,
+			-- The Spotify window: shown, and its position. The Spotify login is kept in a file of its own.
+			spotify = false, spotifyX = -1, spotifyY = -1,
 		}
 		local featureLimits = {
 			flySpeed = { 0.1, 10 }, vehicleFlySpeed = { 0.1, 10 }, freecamSpeed = { 0.5, 10 },
@@ -22061,6 +22063,28 @@ if rayfieldLoaded and Rayfield then
 		end, "scroll-text", "message-square")
 		-- Session Stats, built further down (menuModules.sessionStats).
 		addRememberedToggle(interfaceTab, "Session Stats", "sessionStats", "sessionStats", "How long you've played, how far you've gone, your jumps, deaths and more, this session and all time. Drag it to move it", "bar-chart-3", "activity")
+		-- Spotify, built further down (menuModules.spotify), and buttons for its play/pause and skips
+		-- so they can go on keys.
+		addRememberedToggle(interfaceTab, "Spotify", "spotify", "spotify", "Your Spotify in a window: what's playing, with play, skip, volume and search. Needs Premium. Drag it to move it", "music", "disc-3")
+		do
+			local function spotifyDoes(action)
+				return function()
+					if menuModules.spotify then menuModules.spotify[action]() end
+				end
+			end
+			for _, button in ipairs({
+				{ "Spotify Play/Pause", "togglePlay", "Plays or pauses your Spotify", { "play", "pause" } },
+				{ "Spotify Next", "next", "Skips to the next song", { "skip-forward" } },
+				{ "Spotify Previous", "previous", "Goes back a song", { "skip-back" } },
+			}) do
+				local run = spotifyDoes(button[2])
+				addQuickAction(button[1], run, withIcon(interfaceTab, "CreateButton", {
+					name = button[1],
+					description = button[3],
+					callback = run,
+				}, table.unpack(button[4])))
+			end
+		end
 		-- The Favourites bar, built further down too (menuModules.favouritesBar).
 		addQuickToggle(interfaceTab, "Favourites Bar", "Your starred switches on screen. Hover over a switch and click its star; right-click here for moves", function(enabled)
 			if featureSettings.favouritesBar ~= enabled then
@@ -28202,6 +28226,7 @@ if rayfieldLoaded and Rayfield then
 				aimTrainerX = true, aimTrainerY = true, aimTrainerBests = true, weather = true, graphicsPresets = true, panicKeySet = true,
 				autoGoBack = true, themeMakerX = true, themeMakerY = true, sessionStats = true, sessionStatsX = true, sessionStatsY = true,
 				sessionTotals = true, friendsX = true, friendsY = true, aimWarning = true, hitMarkers = true, crosshair = true,
+				spotify = true, spotifyX = true, spotifyY = true,
 			}
 			-- gameConfigs: the config to load in each game, by game ID (the "This game" button).
 			local store = { configs = {}, autoload = "", applySwitches = true, gameConfigs = {} }
@@ -30682,8 +30707,15 @@ if rayfieldLoaded and Rayfield then
 		-- releaseNotes. The What's New button in Interface, and the whatsnew command, open it any time.
 		safeBuild("What's New", function()
 			-- (2026.10.28.4 added Quick Search, since taken out again, so it has no notes.)
-			local menuVersion = "2026.10.28.7"
+			local menuVersion = "2026.10.29.1"
 			local releaseNotes = {
+				{
+					title = "Spotify", date = "29 October 2026",
+					notes = {
+						{ "Spotify", "Interface tab. Your Spotify in a window: the song and its cover, play/pause, skip, seek, shuffle, repeat, volume, like, and search to play or queue a song. Needs Premium; the window walks you through connecting it once." },
+						{ "Spotify keys", "Interface tab. Play/Pause, Next and Previous can go on keys, and there are commands like spnext, spplay and spvolume." },
+					},
+				},
 				{
 					title = "Auto Shoot", date = "28 October 2026",
 					notes = {
@@ -35407,7 +35439,7 @@ if rayfieldLoaded and Rayfield then
 				"Join Alerts", "Mention Alerts", "Performance Stats", "Radar", "Logs", "Favourites Bar", "Health & Ping Warnings",
 				"Streamer Mode", "Clean Screen", "Ctrl+Click Select", "Troll Panel", "Spectate Bar", "Zoom Key", "Time of Day",
 				"FPS Boost", "Mute Game Music", "Mute Player Sounds", "First Person", "Weather", "Graphics Presets", "Emote Wheel",
-				"Session Stats", "Aim Warning",
+				"Session Stats", "Aim Warning", "Spotify",
 			}) do
 				leaveAlone[name] = true
 			end
@@ -37715,6 +37747,1106 @@ if rayfieldLoaded and Rayfield then
 			end)
 		end)
 
+		------------------------------------------------------------------------------------------
+		-- Spotify (28 October 2026): your own Spotify in a window, through Spotify's Web API: what's
+		-- playing with its cover, play/pause, skip, seek, shuffle, repeat, volume, like, and search to play
+		-- a song now or add it to the queue. It plays where Spotify always does (your PC or phone); nobody
+		-- in the game hears it. Spotify only allows this with Premium: an app's owner needs it (since
+		-- February 2026), and so does controlling playback. Setup is once: you make an app on Spotify's
+		-- developer dashboard, paste its Client ID here, approve a login link in your browser and paste
+		-- back the address it ends on. The login is Spotify's PKCE kind, so no secret is ever needed. What
+		-- Spotify gives back is kept in its own file (spotifyFile), apart from the settings and configs so
+		-- sharing a config never shares it, and it renews itself.
+		safeBuild("Spotify", function()
+			local spotifyFile = "SpreadCheeksGUI_Spotify.json"
+			local coverFolder = "SpreadCheeksGUI_SpotifyCovers"
+			local redirectUri = "http://127.0.0.1:8888/callback"
+			local dashboardUrl = "https://developer.spotify.com/dashboard"
+			local scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing user-library-modify"
+
+			-- saved: what's kept in spotifyFile: the app's Client ID, the login, and the secret behind a
+			-- login link that hasn't been approved yet. token: the access token in use and when it runs out.
+			-- player: what Spotify last said was playing and when, when it was last asked, and when it may
+			-- be asked again.
+			local saved = { clientId = "", refreshToken = "", verifier = "", state = "" }
+			local token = { value = nil, expiresAt = 0, refreshing = false }
+			local player = { playback = nil, fetchedAt = 0, askedAt = 0, polling = false, quietUntil = 0, connecting = false, dragging = nil }
+			if readfile then
+				local readOk, contents = readfile(spotifyFile, true)
+				if readOk and type(contents) == "string" and contents ~= "" then
+					local decodeOk, data = pcall(function() return HttpService:JSONDecode(contents) end)
+					if decodeOk and type(data) == "table" then
+						for key in pairs(saved) do
+							if type(data[key]) == "string" then saved[key] = data[key] end
+						end
+					end
+				end
+			end
+			local function save()
+				if writefile then writefile(spotifyFile, HttpService:JSONEncode(saved), true) end
+			end
+
+			-- SHA-256 and base64url, for the login: the link carries a hash of a secret kept here, and the
+			-- secret itself goes to Spotify afterwards, which proves the approval was for this window.
+			local sha256Constants = {
+				0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+				0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+				0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+				0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+				0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+				0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+				0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+				0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+			}
+			local function sha256(message)
+				local hash = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 }
+				-- A 1 bit, zeros, and the length in bits as 8 bytes, to a whole number of 64-byte blocks.
+				local length = #message
+				local lengthBytes = {}
+				for shift = 7, 0, -1 do
+					table.insert(lengthBytes, string.char(math.floor(length * 8 / 2 ^ (shift * 8)) % 256))
+				end
+				message = message .. "\128" .. string.rep("\0", (55 - length) % 64) .. table.concat(lengthBytes)
+				local words = {}
+				for blockStart = 1, #message, 64 do
+					for index = 0, 15 do
+						local byte1, byte2, byte3, byte4 = string.byte(message, blockStart + index * 4, blockStart + index * 4 + 3)
+						words[index] = ((byte1 * 256 + byte2) * 256 + byte3) * 256 + byte4
+					end
+					for index = 16, 63 do
+						local early, late = words[index - 15], words[index - 2]
+						local sigma0 = bit32.bxor(bit32.rrotate(early, 7), bit32.rrotate(early, 18), bit32.rshift(early, 3))
+						local sigma1 = bit32.bxor(bit32.rrotate(late, 17), bit32.rrotate(late, 19), bit32.rshift(late, 10))
+						words[index] = (words[index - 16] + sigma0 + words[index - 7] + sigma1) % 4294967296
+					end
+					local a, b, c, d, e, f, g, h = table.unpack(hash)
+					for index = 0, 63 do
+						local sum1 = bit32.bxor(bit32.rrotate(e, 6), bit32.rrotate(e, 11), bit32.rrotate(e, 25))
+						local choose = bit32.bxor(bit32.band(e, f), bit32.band(bit32.bnot(e), g))
+						local first = (h + sum1 + choose + sha256Constants[index + 1] + words[index]) % 4294967296
+						local sum0 = bit32.bxor(bit32.rrotate(a, 2), bit32.rrotate(a, 13), bit32.rrotate(a, 22))
+						local majority = bit32.bxor(bit32.band(a, b), bit32.band(a, c), bit32.band(b, c))
+						local second = (sum0 + majority) % 4294967296
+						h, g, f, e, d, c, b, a = g, f, e, (d + first) % 4294967296, c, b, a, (first + second) % 4294967296
+					end
+					for index, value in ipairs({ a, b, c, d, e, f, g, h }) do
+						hash[index] = (hash[index] + value) % 4294967296
+					end
+				end
+				local digest = {}
+				for _, value in ipairs(hash) do
+					table.insert(digest, string.char(math.floor(value / 16777216) % 256, math.floor(value / 65536) % 256, math.floor(value / 256) % 256, value % 256))
+				end
+				return table.concat(digest)
+			end
+			local base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+			local function base64Url(bytes)
+				local out = {}
+				for start = 1, #bytes, 3 do
+					local byte1, byte2, byte3 = string.byte(bytes, start, start + 2)
+					local group = byte1 * 65536 + (byte2 or 0) * 256 + (byte3 or 0)
+					local count = byte3 and 4 or (byte2 and 3 or 2)
+					for place = 1, count do
+						local index = math.floor(group / 2 ^ (6 * (4 - place))) % 64
+						table.insert(out, string.sub(base64Alphabet, index + 1, index + 1))
+					end
+				end
+				return table.concat(out)
+			end
+			local function challengeFor(verifier)
+				return base64Url(sha256(verifier))
+			end
+			-- Checked against the worked example in the PKCE standard (RFC 7636) before it's used.
+			local checkOk, checked = pcall(challengeFor, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+			local loginWorks = checkOk and checked == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+			local rng = Random.new()
+			local function randomText(length)
+				local characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+				local out = {}
+				for _ = 1, length do
+					local index = rng:NextInteger(1, #characters)
+					table.insert(out, string.sub(characters, index, index))
+				end
+				return table.concat(out)
+			end
+			local function urlEncode(text)
+				return (string.gsub(tostring(text), "[^%w%-%._~]", function(character)
+					return string.format("%%%02X", string.byte(character))
+				end))
+			end
+			-- 3:07 for milliseconds.
+			local function clock(milliseconds)
+				local seconds = math.max(0, math.floor((tonumber(milliseconds) or 0) / 1000))
+				return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+			end
+			local function artistsOf(item)
+				if type(item) ~= "table" then return "" end
+				if type(item.artists) == "table" then
+					local names = {}
+					for _, artist in ipairs(item.artists) do
+						if type(artist) == "table" and artist.name then table.insert(names, tostring(artist.name)) end
+					end
+					return table.concat(names, ", ")
+				end
+				-- A podcast episode has its show instead.
+				if type(item.show) == "table" and item.show.name then return tostring(item.show.name) end
+				return ""
+			end
+			-- The cover nearest 300 pixels across: sharp enough for the window and quick to download.
+			local function coverUrlOf(item)
+				if type(item) ~= "table" then return nil end
+				local images = (type(item.album) == "table" and item.album.images) or item.images
+				if type(images) ~= "table" then return nil end
+				local best, bestGap = nil, math.huge
+				for _, image in ipairs(images) do
+					local gap = math.abs((tonumber(type(image) == "table" and image.width) or 300) - 300)
+					if type(image) == "table" and type(image.url) == "string" and gap < bestGap then
+						best, bestGap = image.url, gap
+					end
+				end
+				return best
+			end
+
+			---------------------------------------------------------------------------------------
+			-- The window: the setup steps until you're connected, then the player.
+			local spotifyWindow = menuModules.makeWindow({
+				name = "SpreadCheeksSpotify", title = "Spotify", icons = { "music", "disc-3", "headphones" },
+				width = 340, height = 380, xKey = "spotifyX", yKey = "spotifyY",
+				defaultPosition = function(screen, size) return screen.X - size.X - 24, screen.Y - size.Y - 140 end,
+			})
+			local ui = {}
+			local function text(parent, content, font, textSize, role, position, size)
+				local made = Instance.new("TextLabel")
+				made.Position = position
+				made.Size = size
+				made.BackgroundTransparency = 1
+				made.Font = font
+				made.Text = content
+				made.TextSize = textSize
+				made.TextXAlignment = Enum.TextXAlignment.Left
+				made.TextTruncate = Enum.TextTruncate.AtEnd
+				bindAuxiliaryUiColor(made, "TextColor3", role)
+				made.Parent = parent
+				return made
+			end
+			-- Small print that wraps, in a list that stacks itself.
+			local function note(parent, content, role, order)
+				local made = text(parent, content, Enum.Font.Gotham, 11, role, UDim2.new(), UDim2.fromScale(1, 0))
+				made.LayoutOrder = order
+				made.AutomaticSize = Enum.AutomaticSize.Y
+				made.TextWrapped = true
+				made.TextTruncate = Enum.TextTruncate.None
+				made.TextYAlignment = Enum.TextYAlignment.Top
+				return made
+			end
+			local function pill(parent, content, role, textRole, position, size)
+				local button = Instance.new("TextButton")
+				button.Position = position
+				button.Size = size
+				button.AutoButtonColor = false
+				button.BorderSizePixel = 0
+				button.Font = Enum.Font.GothamBold
+				button.Text = content
+				button.TextSize = 12
+				bindAuxiliaryUiColor(button, "BackgroundColor3", role)
+				bindAuxiliaryUiColor(button, "TextColor3", textRole)
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 8)
+				corner.Parent = button
+				button.Parent = parent
+				return button
+			end
+			local function inputBox(parent, placeholder, position, size)
+				local box = Instance.new("TextBox")
+				box.Position = position
+				box.Size = size
+				box.BorderSizePixel = 0
+				box.ClearTextOnFocus = false
+				box.ClipsDescendants = true
+				box.Font = Enum.Font.Gotham
+				box.PlaceholderText = placeholder
+				box.Text = ""
+				box.TextSize = 12
+				box.TextXAlignment = Enum.TextXAlignment.Left
+				bindAuxiliaryUiColor(box, "BackgroundColor3", "Inset")
+				bindAuxiliaryUiColor(box, "TextColor3", "Text")
+				bindAuxiliaryUiColor(box, "PlaceholderColor3", "Muted")
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 8)
+				corner.Parent = box
+				local padding = Instance.new("UIPadding")
+				padding.PaddingLeft = UDim.new(0, 8)
+				padding.PaddingRight = UDim.new(0, 8)
+				padding.Parent = box
+				box.Parent = parent
+				return box
+			end
+			-- A round button with an icon, or a word when the icon sheet didn't load.
+			local function iconButton(parent, iconName, fallback, position, buttonSize, iconSize, role)
+				local button = Instance.new("TextButton")
+				button.AnchorPoint = Vector2.new(0.5, 0.5)
+				button.Position = position
+				button.Size = UDim2.fromOffset(buttonSize, buttonSize)
+				button.AutoButtonColor = false
+				button.BorderSizePixel = 0
+				button.Font = Enum.Font.GothamBold
+				button.Text = ""
+				button.TextSize = 10
+				bindAuxiliaryUiColor(button, "BackgroundColor3", role)
+				bindAuxiliaryUiColor(button, "TextColor3", role == "Accent" and "OnAccent" or "Text")
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(1, 0)
+				corner.Parent = button
+				local image = Instance.new("ImageLabel")
+				image.AnchorPoint = Vector2.new(0.5, 0.5)
+				image.Position = UDim2.fromScale(0.5, 0.5)
+				image.Size = UDim2.fromOffset(iconSize, iconSize)
+				image.BackgroundTransparency = 1
+				image.Parent = button
+				button.Parent = parent
+				local icon = menuIcons.get(iconName)
+				if icon then
+					menuIcons.apply(image, icon)
+				else
+					image.Visible = false
+					button.Text = fallback
+				end
+				return button, image
+			end
+			local function setIcon(button, image, iconName, fallback)
+				local icon = menuIcons.get(iconName)
+				if icon and image.Visible then
+					menuIcons.apply(image, icon)
+				elseif not image.Visible then
+					button.Text = fallback
+				end
+			end
+
+			-- Setup: the steps, stacked by a list layout so wrapped lines push the rest down.
+			ui.setup = Instance.new("Frame")
+			ui.setup.Size = UDim2.fromScale(1, 1)
+			ui.setup.BackgroundTransparency = 1
+			ui.setup.Parent = spotifyWindow.body
+			ui.setupLayout = Instance.new("UIListLayout")
+			ui.setupLayout.Padding = UDim.new(0, 6)
+			ui.setupLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			ui.setupLayout.Parent = ui.setup
+			local setupPadding = Instance.new("UIPadding")
+			setupPadding.PaddingTop = UDim.new(0, 4)
+			setupPadding.PaddingLeft = UDim.new(0, 14)
+			setupPadding.PaddingRight = UDim.new(0, 14)
+			setupPadding.Parent = ui.setup
+			local heading = text(ui.setup, "Connect your Spotify", Enum.Font.GothamBold, 13, "Text", UDim2.new(), UDim2.new(1, 0, 0, 18))
+			heading.LayoutOrder = 1
+			note(ui.setup, "Spotify only allows this with Premium: the app's owner needs it, and so do the play and skip buttons. Nobody in the game hears your music.", "Muted", 2)
+			note(ui.setup, "1. Make an app on Spotify's developer dashboard. Give it the Redirect URI " .. redirectUri .. ", tick Web API, and save.", "SubText", 3)
+			local copyRow = Instance.new("Frame")
+			copyRow.LayoutOrder = 4
+			copyRow.Size = UDim2.new(1, 0, 0, 26)
+			copyRow.BackgroundTransparency = 1
+			copyRow.Parent = ui.setup
+			ui.copyDashboard = pill(copyRow, "Copy dashboard link", "Inset", "Text", UDim2.new(), UDim2.new(0.5, -3, 1, 0))
+			ui.copyRedirect = pill(copyRow, "Copy Redirect URI", "Inset", "Text", UDim2.new(0.5, 3, 0, 0), UDim2.new(0.5, -3, 1, 0))
+			note(ui.setup, "2. Paste the app's Client ID here (it's on the app's page):", "SubText", 5)
+			ui.clientId = inputBox(ui.setup, "Client ID", UDim2.new(), UDim2.new(1, 0, 0, 28))
+			ui.clientId.LayoutOrder = 6
+			ui.clientId.Text = saved.clientId
+			note(ui.setup, "3. Copy the login link, open it in your browser and press Agree:", "SubText", 7)
+			ui.copyLogin = pill(ui.setup, "Copy login link", "Accent", "OnAccent", UDim2.new(), UDim2.new(1, 0, 0, 28))
+			ui.copyLogin.LayoutOrder = 8
+			note(ui.setup, "4. The page it ends on won't load. That's fine: copy its whole address from the address bar and paste it here.", "SubText", 9)
+			local pasteRow = Instance.new("Frame")
+			pasteRow.LayoutOrder = 10
+			pasteRow.Size = UDim2.new(1, 0, 0, 28)
+			pasteRow.BackgroundTransparency = 1
+			pasteRow.Parent = ui.setup
+			ui.code = inputBox(pasteRow, redirectUri .. "?code=...", UDim2.new(), UDim2.new(1, -88, 1, 0))
+			ui.connect = pill(pasteRow, "Connect", "Accent", "OnAccent", UDim2.new(1, -80, 0, 0), UDim2.new(0, 80, 1, 0))
+			ui.setupMessage = note(ui.setup, "", "AccentText", 11)
+
+			-- The player.
+			ui.player = Instance.new("Frame")
+			ui.player.Size = UDim2.fromScale(1, 1)
+			ui.player.BackgroundTransparency = 1
+			ui.player.Visible = false
+			ui.player.Parent = spotifyWindow.body
+			ui.cover = Instance.new("ImageLabel")
+			ui.cover.Position = UDim2.fromOffset(14, 6)
+			ui.cover.Size = UDim2.fromOffset(76, 76)
+			ui.cover.BorderSizePixel = 0
+			ui.cover.ScaleType = Enum.ScaleType.Crop
+			bindAuxiliaryUiColor(ui.cover, "BackgroundColor3", "Inset")
+			ui.cover.Parent = ui.player
+			local coverCorner = Instance.new("UICorner")
+			coverCorner.CornerRadius = UDim.new(0, 8)
+			coverCorner.Parent = ui.cover
+			-- A note on the cover while there's no picture.
+			ui.coverIcon = Instance.new("ImageLabel")
+			ui.coverIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+			ui.coverIcon.Position = UDim2.fromScale(0.5, 0.5)
+			ui.coverIcon.Size = UDim2.fromOffset(26, 26)
+			ui.coverIcon.BackgroundTransparency = 1
+			bindAuxiliaryUiColor(ui.coverIcon, "ImageColor3", "Muted")
+			local musicIcon = menuIcons.get("music", "disc-3")
+			if musicIcon then menuIcons.apply(ui.coverIcon, musicIcon) end
+			ui.coverIcon.Parent = ui.cover
+			ui.title = text(ui.player, "Nothing playing", Enum.Font.GothamBold, 14, "Text", UDim2.fromOffset(100, 8), UDim2.new(1, -144, 0, 18))
+			ui.artist = text(ui.player, "", Enum.Font.Gotham, 12, "SubText", UDim2.fromOffset(100, 28), UDim2.new(1, -114, 0, 16))
+			ui.detail = text(ui.player, "", Enum.Font.Gotham, 11, "Muted", UDim2.fromOffset(100, 46), UDim2.new(1, -114, 0, 14))
+			ui.like, ui.likeImage = iconButton(ui.player, "heart", "Like", UDim2.new(1, -27, 0, 17), 26, 14, "Inset")
+			-- How far through: the times either side of a bar, with a taller strip over it to click or drag.
+			ui.elapsed = text(ui.player, "0:00", Enum.Font.GothamMedium, 10, "Muted", UDim2.fromOffset(14, 90), UDim2.fromOffset(38, 14))
+			ui.elapsed.TextXAlignment = Enum.TextXAlignment.Right
+			ui.total = text(ui.player, "0:00", Enum.Font.GothamMedium, 10, "Muted", UDim2.new(1, -52, 0, 90), UDim2.fromOffset(38, 14))
+			local function bar(position, size)
+				local back = Instance.new("Frame")
+				back.Position = position
+				back.Size = size
+				back.BorderSizePixel = 0
+				bindAuxiliaryUiColor(back, "BackgroundColor3", "Inset")
+				back.Parent = ui.player
+				local backCorner = Instance.new("UICorner")
+				backCorner.CornerRadius = UDim.new(1, 0)
+				backCorner.Parent = back
+				local fill = Instance.new("Frame")
+				fill.Size = UDim2.fromScale(0, 1)
+				fill.BorderSizePixel = 0
+				bindAuxiliaryUiColor(fill, "BackgroundColor3", "AccentText")
+				fill.Parent = back
+				local fillCorner = Instance.new("UICorner")
+				fillCorner.CornerRadius = UDim.new(1, 0)
+				fillCorner.Parent = fill
+				local area = Instance.new("TextButton")
+				area.Position = position - UDim2.fromOffset(0, 8)
+				area.Size = size + UDim2.fromOffset(0, 16)
+				area.BackgroundTransparency = 1
+				area.Text = ""
+				area.Parent = ui.player
+				return back, fill, area
+			end
+			ui.progress, ui.progressFill, ui.seekArea = bar(UDim2.fromOffset(58, 95), UDim2.new(1, -116, 0, 4))
+			local controlsY = 128
+			ui.shuffle, ui.shuffleImage = iconButton(ui.player, "shuffle", "Mix", UDim2.new(0.5, -92, 0, controlsY), 30, 15, "Inset")
+			ui.previous, ui.previousImage = iconButton(ui.player, "skip-back", "Back", UDim2.new(0.5, -46, 0, controlsY), 32, 16, "Inset")
+			ui.play, ui.playImage = iconButton(ui.player, "play", "Play", UDim2.new(0.5, 0, 0, controlsY), 40, 18, "Accent")
+			ui.next, ui.nextImage = iconButton(ui.player, "skip-forward", "Next", UDim2.new(0.5, 46, 0, controlsY), 32, 16, "Inset")
+			ui.repeatButton, ui.repeatImage = iconButton(ui.player, "repeat", "Loop", UDim2.new(0.5, 92, 0, controlsY), 30, 15, "Inset")
+			ui.volumeIcon = Instance.new("ImageLabel")
+			ui.volumeIcon.Position = UDim2.fromOffset(14, 155)
+			ui.volumeIcon.Size = UDim2.fromOffset(14, 14)
+			ui.volumeIcon.BackgroundTransparency = 1
+			bindAuxiliaryUiColor(ui.volumeIcon, "ImageColor3", "Muted")
+			local volumeImage = menuIcons.get("volume-2", "volume-1", "volume")
+			if volumeImage then menuIcons.apply(ui.volumeIcon, volumeImage) end
+			ui.volumeIcon.Parent = ui.player
+			ui.volume, ui.volumeFill, ui.volumeArea = bar(UDim2.fromOffset(36, 160), UDim2.new(1, -90, 0, 4))
+			ui.volumeLabel = text(ui.player, "", Enum.Font.GothamMedium, 10, "Muted", UDim2.new(1, -46, 0, 155), UDim2.fromOffset(32, 14))
+			ui.volumeLabel.TextXAlignment = Enum.TextXAlignment.Right
+			ui.message = text(ui.player, "", Enum.Font.Gotham, 11, "AccentText", UDim2.fromOffset(14, 175), UDim2.new(1, -28, 0, 14))
+			ui.search = inputBox(ui.player, "Search for a song, then press Enter", UDim2.fromOffset(14, 194), UDim2.new(1, -28, 0, 28))
+			ui.results = Instance.new("Frame")
+			ui.results.Position = UDim2.fromOffset(14, 228)
+			ui.results.Size = UDim2.new(1, -28, 0, 0)
+			ui.results.AutomaticSize = Enum.AutomaticSize.Y
+			ui.results.BackgroundTransparency = 1
+			ui.results.Parent = ui.player
+			ui.resultsLayout = Instance.new("UIListLayout")
+			ui.resultsLayout.Padding = UDim.new(0, 4)
+			ui.resultsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			ui.resultsLayout.Parent = ui.results
+
+			-- Log out, in the header: a second click within three seconds does it.
+			ui.logOut = Instance.new("TextButton")
+			ui.logOut.AutomaticSize = Enum.AutomaticSize.X
+			ui.logOut.Size = UDim2.fromOffset(0, 22)
+			ui.logOut.AutoButtonColor = false
+			ui.logOut.BorderSizePixel = 0
+			ui.logOut.Font = Enum.Font.GothamBold
+			ui.logOut.Text = "Log out"
+			ui.logOut.TextSize = 11
+			ui.logOut.ZIndex = 3
+			bindAuxiliaryUiColor(ui.logOut, "BackgroundColor3", "Inset")
+			bindAuxiliaryUiColor(ui.logOut, "TextColor3", "SubText")
+			local logOutCorner = Instance.new("UICorner")
+			logOutCorner.CornerRadius = UDim.new(0, 7)
+			logOutCorner.Parent = ui.logOut
+			local logOutPadding = Instance.new("UIPadding")
+			logOutPadding.PaddingLeft = UDim.new(0, 10)
+			logOutPadding.PaddingRight = UDim.new(0, 10)
+			logOutPadding.Parent = ui.logOut
+			ui.logOut.Parent = spotifyWindow.headerRight
+
+			local function setMessage(content)
+				ui.message.Text = content or ""
+				ui.setupMessage.Text = content or ""
+			end
+			-- The window's height follows what's in it: the setup steps, or the player and any results.
+			local function fit()
+				local height
+				if ui.setup.Visible then
+					height = ui.setupLayout.AbsoluteContentSize.Y + 14
+				else
+					local listHeight = ui.resultsLayout.AbsoluteContentSize.Y
+					height = 228 + (listHeight > 0 and listHeight + 6 or 0) + 4
+				end
+				spotifyWindow.resize(340, 36 + math.ceil(height))
+			end
+			ui.setupLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fit)
+			ui.resultsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fit)
+			-- Colours that depend on what's on, read from the theme each time.
+			local function paint()
+				local theme = auxiliaryUiTheme
+				local playback = player.playback
+				local shuffleOn = playback ~= nil and playback.shuffle_state == true
+				local repeatOn = playback ~= nil and playback.repeat_state ~= nil and playback.repeat_state ~= "off"
+				ui.shuffleImage.ImageColor3 = shuffleOn and theme.AccentText or theme.SubText
+				ui.repeatImage.ImageColor3 = repeatOn and theme.AccentText or theme.SubText
+				ui.previousImage.ImageColor3 = theme.Text
+				ui.nextImage.ImageColor3 = theme.Text
+				ui.likeImage.ImageColor3 = theme.Text
+				ui.playImage.ImageColor3 = theme.OnAccent
+			end
+			table.insert(auxiliaryUiThemeListeners, paint)
+
+			-- Where the song is now: from where Spotify last said, plus the time since while it's playing.
+			local function currentProgress()
+				local playback = player.playback
+				if not playback then return 0 end
+				local progress = tonumber(playback.progress_ms) or 0
+				if playback.is_playing then progress += (os.clock() - player.fetchedAt) * 1000 end
+				local duration = type(playback.item) == "table" and tonumber(playback.item.duration_ms) or 0
+				return duration > 0 and math.min(progress, duration) or progress
+			end
+
+			---------------------------------------------------------------------------------------
+			-- Talking to Spotify, through the executor's web requests.
+			local function send(options)
+				if type(httprequest) ~= "function" then return nil end
+				local sent, response = pcall(httprequest, options)
+				if sent and type(response) == "table" then return response end
+				return nil
+			end
+			local function decode(body)
+				if type(body) ~= "string" or body == "" then return nil end
+				local decoded, data = pcall(function() return HttpService:JSONDecode(body) end)
+				return decoded and type(data) == "table" and data or nil
+			end
+			local function header(response, name)
+				local headers = response and response.Headers
+				if type(headers) ~= "table" then return nil end
+				for key, value in pairs(headers) do
+					if type(key) == "string" and key:lower() == name then return value end
+				end
+				return nil
+			end
+
+			-- Cover pictures: downloaded once each and shown from a file through getcustomasset, each under
+			-- its own name so Roblox never shows an old one from its cache. The one before is deleted.
+			local coverState = { url = nil, path = nil }
+			local function loadCover(url)
+				if url == coverState.url then return end
+				coverState.url = url
+				if not url then
+					ui.cover.Image = ""
+					ui.coverIcon.Visible = true
+					return
+				end
+				if type(waxgetcustomasset) ~= "function" or not writefile then return end
+				task.spawn(function()
+					local response = send({ Url = url, Method = "GET" })
+					if coverState.url ~= url or not response or response.StatusCode ~= 200 or type(response.Body) ~= "string" then return end
+					local folder = ""
+					if makefolder and isfolder then
+						local made = pcall(function()
+							if not isfolder(coverFolder) then makefolder(coverFolder) end
+						end)
+						if made then folder = coverFolder .. "/" end
+					end
+					local path = folder .. "cover_" .. (url:match("(%w+)$") or tostring(math.floor(os.clock() * 1000))) .. ".jpg"
+					writefile(path, response.Body, true)
+					local loaded, asset = pcall(waxgetcustomasset, path)
+					if coverState.url ~= url or not loaded or type(asset) ~= "string" then return end
+					ui.cover.Image = asset
+					ui.coverIcon.Visible = false
+					if coverState.path and coverState.path ~= path and type(delfile) == "function" then pcall(delfile, coverState.path) end
+					coverState.path = path
+				end)
+			end
+
+			local function render()
+				local connected = saved.refreshToken ~= ""
+				ui.setup.Visible = not connected
+				ui.player.Visible = connected
+				ui.logOut.Visible = connected
+				if connected then
+					local playback = player.playback
+					local item = playback and playback.item
+					if type(item) == "table" then
+						ui.title.Text = tostring(item.name or "")
+						ui.artist.Text = artistsOf(item)
+						local parts = {}
+						if type(item.album) == "table" and item.album.name then table.insert(parts, tostring(item.album.name)) end
+						-- Your device's name can have your name in it, so Streamer Mode leaves it out.
+						local device = type(playback.device) == "table" and playback.device.name
+						if device and not featureSettings.streamerMode then table.insert(parts, "on " .. tostring(device)) end
+						ui.detail.Text = table.concat(parts, "  ·  ")
+						ui.total.Text = clock(item.duration_ms)
+						loadCover(coverUrlOf(item))
+					else
+						ui.title.Text = playback and (playback.currently_playing_type == "ad" and "An ad" or "Playing") or "Nothing playing"
+						ui.artist.Text = playback and "" or "Start something in Spotify, on your PC or phone."
+						ui.detail.Text = ""
+						ui.total.Text = "0:00"
+						loadCover(nil)
+					end
+					local playing = playback ~= nil and playback.is_playing == true
+					setIcon(ui.play, ui.playImage, playing and "pause" or "play", playing and "Pause" or "Play")
+					setIcon(ui.repeatButton, ui.repeatImage, (playback and playback.repeat_state == "track") and "repeat-1" or "repeat", "Loop")
+					local device = playback and playback.device
+					local volume = type(device) == "table" and tonumber(device.volume_percent) or nil
+					if player.dragging ~= "volume" then
+						ui.volumeFill.Size = UDim2.fromScale((volume or 0) / 100, 1)
+						ui.volumeLabel.Text = volume and (math.floor(volume + 0.5) .. "%") or ""
+					end
+					paint()
+				end
+				fit()
+			end
+
+			-- The login's tokens: the access token lasts an hour, and the saved login gets a new one.
+			local function tokenRequest(fields)
+				local parts = {}
+				for key, value in pairs(fields) do
+					table.insert(parts, key .. "=" .. urlEncode(value))
+				end
+				local response = send({
+					Url = "https://accounts.spotify.com/api/token",
+					Method = "POST",
+					Headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
+					Body = table.concat(parts, "&"),
+				})
+				return response, response and decode(response.Body)
+			end
+			local function takeTokens(data)
+				token.value = data.access_token
+				token.expiresAt = os.clock() + (tonumber(data.expires_in) or 3600) - 60
+				-- Spotify sometimes sends a new login with it; the old one carries on otherwise.
+				if type(data.refresh_token) == "string" and data.refresh_token ~= "" then saved.refreshToken = data.refresh_token end
+				save()
+			end
+			-- Gets a new access token from the saved login. false when it can't.
+			local function refreshToken()
+				if saved.refreshToken == "" or saved.clientId == "" then return false end
+				while token.refreshing do task.wait(0.1) end
+				if token.value and os.clock() < token.expiresAt then return true end
+				token.refreshing = true
+				local response, data = tokenRequest({ grant_type = "refresh_token", refresh_token = saved.refreshToken, client_id = saved.clientId })
+				token.refreshing = false
+				if response and response.StatusCode == 200 and data and data.access_token then
+					takeTokens(data)
+					return true
+				end
+				if response and response.StatusCode == 400 then
+					-- The login was cancelled or ran out, so it has to be done again.
+					saved.refreshToken = ""
+					token.value = nil
+					player.playback = nil
+					save()
+					render()
+					setMessage("Spotify logged you out, so connect again: copy a new login link (step 3).")
+				end
+				return false
+			end
+			-- One call to the Web API. A token Spotify turns down is renewed once and the call made again.
+			local function call(method, path, query, body)
+				if not token.value or os.clock() >= token.expiresAt then
+					if not refreshToken() then return nil end
+				end
+				local function attempt()
+					local options = {
+						Url = "https://api.spotify.com/v1" .. path .. (query and ("?" .. query) or ""),
+						Method = method,
+						Headers = { Authorization = "Bearer " .. tostring(token.value) },
+					}
+					if body ~= nil then
+						options.Headers["Content-Type"] = "application/json"
+						options.Body = HttpService:JSONEncode(body)
+					elseif method ~= "GET" then
+						options.Body = ""
+					end
+					return send(options)
+				end
+				local response = attempt()
+				if response and response.StatusCode == 401 then
+					token.expiresAt = 0
+					if refreshToken() then response = attempt() end
+				end
+				return response
+			end
+			-- What went wrong, in words, for a call that didn't work.
+			local function explain(response)
+				if not response then return "Couldn't reach Spotify. Check your internet." end
+				local code = response.StatusCode
+				local data = decode(response.Body)
+				local problem = data and type(data.error) == "table" and data.error or {}
+				local reason, message = tostring(problem.reason or ""), tostring(problem.message or "")
+				if code == 429 then
+					local wait = tonumber(header(response, "retry-after")) or 15
+					player.quietUntil = os.clock() + wait
+					return "Spotify asked for a break, so it waits " .. math.ceil(wait) .. " s."
+				elseif reason == "PREMIUM_REQUIRED" then
+					return "That needs Spotify Premium."
+				elseif reason == "NO_ACTIVE_DEVICE" or code == 404 then
+					return "Start playing something in Spotify first, on your PC or phone."
+				elseif code == 403 and message:lower():find("regist") then
+					return "Your account isn't on the app's user list: add your Spotify email under User Management in the dashboard."
+				end
+				return "Spotify said: " .. (message ~= "" and message or ("error " .. tostring(code)))
+			end
+
+			-- What's playing, asked every few seconds while the window's open, and after each button.
+			local function poll()
+				if player.polling or saved.refreshToken == "" then return end
+				player.polling = true
+				player.askedAt = os.clock()
+				local response = call("GET", "/me/player", "additional_types=episode")
+				player.polling = false
+				if saved.refreshToken == "" then return end
+				if response and response.StatusCode == 204 then
+					player.playback = nil
+					setMessage("")
+				elseif response and response.StatusCode == 200 then
+					local data = decode(response.Body)
+					if data then
+						player.playback = data
+						player.fetchedAt = os.clock()
+						setMessage("")
+					end
+				else
+					setMessage(explain(response))
+				end
+				render()
+			end
+			-- A button's call, then a fresh look at what's playing. done runs when it worked.
+			local function act(method, path, query, body, done)
+				task.spawn(function()
+					local response = call(method, path, query, body)
+					if response and response.StatusCode >= 200 and response.StatusCode < 300 then
+						setMessage("")
+						if done then done() end
+					elseif saved.refreshToken ~= "" then
+						setMessage(explain(response))
+					end
+					task.wait(0.5)
+					poll()
+				end)
+			end
+			local function connected()
+				if saved.refreshToken ~= "" then return true end
+				notify("Spotify", "Connect your Spotify first: switch on Spotify in the Interface tab", 4)
+				return false
+			end
+			-- Runs then, after checking what's playing if the last look is old (for keys and commands).
+			local function withFreshState(thenRun)
+				task.spawn(function()
+					if os.clock() - player.fetchedAt > 5 then poll() end
+					thenRun()
+				end)
+			end
+			local function togglePlay()
+				if not connected() then return end
+				withFreshState(function()
+					local playback = player.playback
+					if playback and playback.is_playing then
+						playback.progress_ms = currentProgress()
+						playback.is_playing = false
+						player.fetchedAt = os.clock()
+						act("PUT", "/me/player/pause")
+					else
+						if playback then
+							playback.is_playing = true
+							player.fetchedAt = os.clock()
+						end
+						act("PUT", "/me/player/play")
+					end
+					render()
+				end)
+			end
+			local function skip(forward)
+				if not connected() then return end
+				act("POST", forward and "/me/player/next" or "/me/player/previous")
+			end
+			local function seekTo(fraction)
+				local playback = player.playback
+				local duration = playback and type(playback.item) == "table" and tonumber(playback.item.duration_ms) or 0
+				if duration <= 0 then return end
+				local position = math.floor(math.clamp(fraction, 0, 1) * duration)
+				playback.progress_ms = position
+				player.fetchedAt = os.clock()
+				act("PUT", "/me/player/seek", "position_ms=" .. position)
+			end
+			local function setVolume(percent)
+				if not connected() then return end
+				percent = math.clamp(math.floor(percent + 0.5), 0, 100)
+				local playback = player.playback
+				if playback and type(playback.device) == "table" then playback.device.volume_percent = percent end
+				render()
+				act("PUT", "/me/player/volume", "volume_percent=" .. percent)
+			end
+			local function toggleShuffle()
+				local playback = player.playback
+				local on = not (playback and playback.shuffle_state == true)
+				if playback then playback.shuffle_state = on end
+				paint()
+				act("PUT", "/me/player/shuffle", "state=" .. tostring(on))
+			end
+			local repeatAfter = { off = "context", context = "track", track = "off" }
+			local function cycleRepeat()
+				local playback = player.playback
+				local mode = repeatAfter[playback and playback.repeat_state or "off"] or "off"
+				if playback then playback.repeat_state = mode end
+				render()
+				act("PUT", "/me/player/repeat", "state=" .. mode)
+			end
+			local function like()
+				if not connected() then return end
+				withFreshState(function()
+					local item = player.playback and player.playback.item
+					if type(item) ~= "table" or type(item.uri) ~= "string" then
+						return notify("Spotify", "Nothing's playing to like", 3)
+					end
+					local name = tostring(item.name or "it")
+					act("PUT", "/me/library", "uris=" .. urlEncode(item.uri), nil, function()
+						notify("Spotify", "Saved " .. name .. " to your library", 3)
+					end)
+				end)
+			end
+			local function playTrack(track)
+				act("PUT", "/me/player/play", nil, { uris = { track.uri } })
+			end
+			local function queueTrack(track)
+				local name = tostring(track.name or "It")
+				act("POST", "/me/player/queue", "uri=" .. urlEncode(track.uri), nil, function()
+					notify("Spotify", name .. " is up next in your queue", 3)
+				end)
+			end
+			-- Up to five songs for a search, handed to found.
+			local function findTracks(query, found)
+				task.spawn(function()
+					local response = call("GET", "/search", "q=" .. urlEncode(query) .. "&type=track&limit=5")
+					if not response or response.StatusCode ~= 200 then
+						local problem = explain(response)
+						setMessage(problem)
+						return notify("Spotify", problem, 4)
+					end
+					local data = decode(response.Body)
+					local items = data and type(data.tracks) == "table" and data.tracks.items
+					if type(items) ~= "table" or type(items[1]) ~= "table" then
+						return notify("Spotify", "Nothing found for " .. query, 3)
+					end
+					found(items)
+				end)
+			end
+			local function clearResults()
+				for _, child in ipairs(ui.results:GetChildren()) do
+					if child:IsA("GuiObject") then child:Destroy() end
+				end
+			end
+			local function showResults(items)
+				clearResults()
+				local theme = auxiliaryUiTheme
+				for index, track in ipairs(items) do
+					if index > 5 or type(track) ~= "table" or type(track.uri) ~= "string" then break end
+					local row = Instance.new("Frame")
+					row.LayoutOrder = index
+					row.Size = UDim2.new(1, 0, 0, 30)
+					row.BorderSizePixel = 0
+					row.BackgroundColor3 = theme.Card
+					row.Parent = ui.results
+					local rowCorner = Instance.new("UICorner")
+					rowCorner.CornerRadius = UDim.new(0, 8)
+					rowCorner.Parent = row
+					local by = artistsOf(track)
+					local label = Instance.new("TextLabel")
+					label.Position = UDim2.fromOffset(10, 0)
+					label.Size = UDim2.new(1, -124, 1, 0)
+					label.BackgroundTransparency = 1
+					label.Font = Enum.Font.GothamMedium
+					label.Text = tostring(track.name or "") .. (by ~= "" and ("  ·  " .. by) or "")
+					label.TextColor3 = theme.Text
+					label.TextSize = 12
+					label.TextTruncate = Enum.TextTruncate.AtEnd
+					label.TextXAlignment = Enum.TextXAlignment.Left
+					label.Parent = row
+					local function rowButton(content, x, role, textRole)
+						local button = Instance.new("TextButton")
+						button.AnchorPoint = Vector2.new(0, 0.5)
+						button.Position = UDim2.new(1, x, 0.5, 0)
+						button.Size = UDim2.fromOffset(52, 22)
+						button.AutoButtonColor = false
+						button.BorderSizePixel = 0
+						button.Font = Enum.Font.GothamBold
+						button.Text = content
+						button.TextSize = 11
+						button.BackgroundColor3 = theme[role]
+						button.TextColor3 = theme[textRole]
+						button.Parent = row
+						local buttonCorner = Instance.new("UICorner")
+						buttonCorner.CornerRadius = UDim.new(0, 7)
+						buttonCorner.Parent = button
+						return button
+					end
+					rowButton("Play", -112, "Accent", "OnAccent").Activated:Connect(function()
+						playTrack(track)
+						clearResults()
+						ui.search.Text = ""
+					end)
+					rowButton("Queue", -56, "Inset", "SubText").Activated:Connect(function()
+						queueTrack(track)
+					end)
+				end
+			end
+			local function describeNow()
+				local playback = player.playback
+				local item = playback and playback.item
+				if type(item) ~= "table" then return "Nothing's playing" end
+				local by = artistsOf(item)
+				return tostring(item.name or "") .. (by ~= "" and (" by " .. by) or "") .. (playback.is_playing and "" or " (paused)")
+			end
+
+			---------------------------------------------------------------------------------------
+			-- The buttons.
+			local function copy(textToCopy, what)
+				if type(everyClipboard) == "function" and pcall(everyClipboard, textToCopy) then
+					setMessage(what .. " copied.")
+					return true
+				end
+				return false
+			end
+			ui.copyDashboard.Activated:Connect(function()
+				if not copy(dashboardUrl, "Dashboard link") then setMessage("Go to " .. dashboardUrl) end
+			end)
+			ui.copyRedirect.Activated:Connect(function()
+				if not copy(redirectUri, "Redirect URI") then setMessage("The Redirect URI is " .. redirectUri) end
+			end)
+			ui.clientId.FocusLost:Connect(function()
+				local typed = (ui.clientId.Text:gsub("%s", ""))
+				ui.clientId.Text = typed
+				if typed ~= saved.clientId then
+					saved.clientId = typed
+					save()
+				end
+			end)
+			ui.copyLogin.Activated:Connect(function()
+				local clientId = (ui.clientId.Text:gsub("%s", ""))
+				if #clientId ~= 32 or not clientId:match("^%x+$") then
+					return setMessage("Paste your app's Client ID first (step 2). It's 32 letters and numbers.")
+				end
+				if not loginWorks then
+					return setMessage("This executor works out the login's check differently, so the login can't start here.")
+				end
+				saved.clientId = clientId
+				saved.verifier = randomText(64)
+				saved.state = randomText(16)
+				save()
+				local link = "https://accounts.spotify.com/authorize?" .. table.concat({
+					"client_id=" .. urlEncode(clientId),
+					"response_type=code",
+					"redirect_uri=" .. urlEncode(redirectUri),
+					"code_challenge_method=S256",
+					"code_challenge=" .. challengeFor(saved.verifier),
+					"scope=" .. urlEncode(scopes),
+					"state=" .. saved.state,
+				}, "&")
+				if copy(link, "Login link") then
+					setMessage("Login link copied. Paste it into your browser's address bar, log in if it asks, and press Agree.")
+				else
+					-- Nothing to copy with, so it goes in the box to select and copy by hand.
+					ui.code.Text = link
+					setMessage("Your executor can't copy, so the login link is in the box below: select it all, copy it and open it in your browser.")
+				end
+			end)
+			local function connect()
+				if player.connecting then return end
+				local pasted = (ui.code.Text:gsub("%s", ""))
+				local denied = pasted:match("[?&#]error=([^&#]+)")
+				if denied then
+					return setMessage(denied == "access_denied" and "You pressed Cancel instead of Agree. Copy the login link again." or ("Spotify said: " .. denied))
+				end
+				local code = pasted:match("[?&#]code=([^&#]+)")
+				local returnedState = pasted:match("[?&#]state=([^&#]+)")
+				-- Just the code on its own works too.
+				if not code and #pasted > 40 and pasted:match("^[%w%-_]+$") then code = pasted end
+				if not code then
+					return setMessage("Paste the whole address your browser ended on. It starts with " .. redirectUri .. "?code=")
+				end
+				if saved.verifier == "" then
+					return setMessage("Copy the login link first (step 3), then try again.")
+				end
+				if returnedState and returnedState ~= saved.state then
+					return setMessage("That address is from an older login link. Copy the login link again and use the new one.")
+				end
+				player.connecting = true
+				setMessage("Connecting...")
+				task.spawn(function()
+					local response, data = tokenRequest({
+						grant_type = "authorization_code", code = code, redirect_uri = redirectUri,
+						client_id = saved.clientId, code_verifier = saved.verifier,
+					})
+					player.connecting = false
+					if response and response.StatusCode == 200 and data and data.access_token and data.refresh_token then
+						saved.verifier, saved.state = "", ""
+						takeTokens(data)
+						ui.code.Text = ""
+						setMessage("")
+						render()
+						notify("Spotify", "Connected", 3)
+						poll()
+					elseif response then
+						local problem = data and (data.error_description or data.error)
+						setMessage("Spotify said: " .. tostring(problem or ("error " .. tostring(response.StatusCode))) .. ". Copy the login link again and retry.")
+					else
+						setMessage(explain(nil))
+					end
+				end)
+			end
+			ui.connect.Activated:Connect(connect)
+			ui.code.FocusLost:Connect(function(enterPressed)
+				if enterPressed then connect() end
+			end)
+			local logOutArmedAt = 0
+			ui.logOut.Activated:Connect(function()
+				if os.clock() - logOutArmedAt > 3 then
+					logOutArmedAt = os.clock()
+					ui.logOut.Text = "Sure?"
+					task.delay(3, function()
+						if os.clock() - logOutArmedAt >= 3 then ui.logOut.Text = "Log out" end
+					end)
+					return
+				end
+				logOutArmedAt = 0
+				ui.logOut.Text = "Log out"
+				saved.refreshToken, saved.verifier, saved.state = "", "", ""
+				token.value, token.expiresAt = nil, 0
+				player.playback = nil
+				save()
+				clearResults()
+				render()
+				setMessage("Logged out. To cut the app off completely, remove it under Manage apps in your Spotify account.")
+			end)
+			ui.play.Activated:Connect(togglePlay)
+			ui.previous.Activated:Connect(function() skip(false) end)
+			ui.next.Activated:Connect(function() skip(true) end)
+			ui.shuffle.Activated:Connect(toggleShuffle)
+			ui.repeatButton.Activated:Connect(cycleRepeat)
+			ui.like.Activated:Connect(like)
+			ui.search.FocusLost:Connect(function(enterPressed)
+				local query = (ui.search.Text:gsub("^%s+", ""):gsub("%s+$", ""))
+				if query == "" then return clearResults() end
+				if enterPressed then findTracks(query, showResults) end
+			end)
+			-- Dragging along the progress bar seeks, and along the volume bar sets the volume, on letting go.
+			local function fractionAlong(back)
+				local x = UserInputService:GetMouseLocation().X
+				return math.clamp((x - back.AbsolutePosition.X) / math.max(back.AbsoluteSize.X, 1), 0, 1)
+			end
+			local function startDrag(which)
+				return function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+						player.dragging = which
+					end
+				end
+			end
+			ui.seekArea.InputBegan:Connect(startDrag("seek"))
+			ui.volumeArea.InputBegan:Connect(startDrag("volume"))
+			table.insert(spotifyWindow.connections, UserInputService.InputChanged:Connect(function(input)
+				if not player.dragging then return end
+				if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+				if player.dragging == "seek" then
+					local fraction = fractionAlong(ui.progress)
+					local playback = player.playback
+					local duration = playback and type(playback.item) == "table" and tonumber(playback.item.duration_ms) or 0
+					ui.progressFill.Size = UDim2.fromScale(fraction, 1)
+					ui.elapsed.Text = clock(fraction * duration)
+				else
+					local fraction = fractionAlong(ui.volume)
+					ui.volumeFill.Size = UDim2.fromScale(fraction, 1)
+					ui.volumeLabel.Text = math.floor(fraction * 100 + 0.5) .. "%"
+				end
+			end))
+			table.insert(spotifyWindow.connections, UserInputService.InputEnded:Connect(function(input)
+				if not player.dragging then return end
+				if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+				local which = player.dragging
+				player.dragging = nil
+				if which == "seek" then
+					seekTo(fractionAlong(ui.progress))
+				else
+					setVolume(fractionAlong(ui.volume) * 100)
+				end
+			end))
+			-- The progress bar moves along between looks, and a song that should have ended gets a look
+			-- straight away, so the next one shows up quickly.
+			table.insert(spotifyWindow.connections, RunService.Heartbeat:Connect(function()
+				if not spotifyWindow.isShown() or not ui.player.Visible or player.dragging == "seek" then return end
+				local playback = player.playback
+				local duration = playback and type(playback.item) == "table" and tonumber(playback.item.duration_ms) or 0
+				local progress = currentProgress()
+				ui.progressFill.Size = UDim2.fromScale(duration > 0 and math.clamp(progress / duration, 0, 1) or 0, 1)
+				ui.elapsed.Text = clock(progress)
+				-- Never more than once every 2 seconds, even if Spotify keeps answering with a problem.
+				if playback and playback.is_playing and duration > 0 and progress >= duration and not player.polling
+					and os.clock() - player.askedAt > 2 and os.clock() >= player.quietUntil then
+					task.spawn(poll)
+				end
+			end))
+
+			spotifyWindow.onShown = function()
+				render()
+				if saved.refreshToken ~= "" then task.spawn(poll) end
+			end
+			-- Every 3 seconds while a song plays and the window's open, every 6 while paused.
+			task.spawn(function()
+				while spotifyWindow.gui.Parent do
+					task.wait((player.playback and player.playback.is_playing) and 3 or 6)
+					if spotifyWindow.isShown() and saved.refreshToken ~= "" and os.clock() >= player.quietUntil then
+						pcall(poll)
+					end
+				end
+			end)
+			render()
+
+			menuModules.spotify = {
+				setEnabled = function(on)
+					spotifyWindow.setShown(on)
+				end,
+				togglePlay = togglePlay,
+				next = function() skip(true) end,
+				previous = function() skip(false) end,
+				resume = function()
+					if connected() then act("PUT", "/me/player/play") end
+				end,
+				playSearch = function(query)
+					if connected() then
+						findTracks(query, function(items)
+							playTrack(items[1])
+							notify("Spotify", "Playing " .. tostring(items[1].name or query), 3)
+						end)
+					end
+				end,
+				queueSearch = function(query)
+					if connected() then findTracks(query, function(items) queueTrack(items[1]) end) end
+				end,
+				setVolume = setVolume,
+				like = like,
+				nowPlaying = function()
+					if not connected() then return end
+					withFreshState(function() notify("Spotify", describeNow(), 4) end)
+				end,
+			}
+		end)
+
 		-- Switches that were on: the switches remembered between sessions (addRememberedToggle) come back
 		-- on now that what they switch has been built.
 		safeBuild("Switches that were on", function()
@@ -39092,6 +40224,41 @@ if rayfieldLoaded and Rayfield then
 				"Shows damage numbers and an X on your crosshair when you hit someone", "Stops the hit markers")
 			addSwitchCommands("Custom Crosshair", { { "crosshair" }, { "uncrosshair" }, "togglecrosshair" },
 				"Shows a crosshair of your own in the middle of the screen", "Hides your crosshair")
+
+			-- Spotify.
+			addSwitchCommands("Spotify", { { "spotify" }, { "unspotify" }, "togglespotify" },
+				"Shows your Spotify player (needs Premium)", "Hides the Spotify player", "the Spotify player")
+			local function spotifyRun(action, ...)
+				if not menuModules.spotify then return notify("Spotify", "Spotify didn't load") end
+				menuModules.spotify[action](...)
+			end
+			describe("sppause / spplaypause", "Plays or pauses your Spotify")
+			addcmd("sppause", { "spplaypause" }, function() spotifyRun("togglePlay") end)
+			describe("spnext / spskip", "Skips to the next song on Spotify")
+			addcmd("spnext", { "spskip" }, function() spotifyRun("next") end)
+			describe("spprev / spback", "Goes back a song on Spotify")
+			addcmd("spprev", { "spback" }, function() spotifyRun("previous") end)
+			describe("spplay [song]", "Plays a song on Spotify by name, or carries on playing if you leave the name out")
+			addcmd("spplay", {}, function(args)
+				local query = table.concat(args, " ")
+				if query == "" then spotifyRun("resume") else spotifyRun("playSearch", query) end
+			end)
+			describe("spqueue [song]", "Adds a song to your Spotify queue by name")
+			addcmd("spqueue", {}, function(args)
+				local query = table.concat(args, " ")
+				if query == "" then return notify("Spotify", "Give a song, like spqueue blinding lights") end
+				spotifyRun("queueSearch", query)
+			end)
+			describe("spvolume / spvol [0-100]", "Sets your Spotify volume")
+			addcmd("spvolume", { "spvol" }, function(args)
+				local volume = tonumber(args[1])
+				if not volume then return notify("Spotify", "Give a volume from 0 to 100, like spvolume 40") end
+				spotifyRun("setVolume", volume)
+			end)
+			describe("splike", "Saves the song that's playing on Spotify to your library")
+			addcmd("splike", {}, function() spotifyRun("like") end)
+			describe("spnow", "Shows what's playing on Spotify")
+			addcmd("spnow", {}, function() spotifyRun("nowPlaying") end)
 		end
 		-- Kept separate so a problem here can't stop the rest of the menu loading.
 		local menuCommandsOk, menuCommandsError = pcall(registerMenuCommands)
